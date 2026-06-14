@@ -74,9 +74,9 @@ the seams that will become repository calls.
 
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
-| Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Workspace fetches `/api/people` and `/api/drafts` at runtime. Other pages currently import from `lib/mock.ts` directly (transitional). | yes (client fetch) | no | no |
+| Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home, People, and History read async server helpers; Workspace fetches `/api/people` and `/api/drafts` at runtime; Profile is static settings UI. | yes (client fetch) | no | no |
 | API routes | `app/api/people/route.ts`, `app/api/drafts/route.ts` | Parse JSON, return JSON, set status. Delegate everything else. | yes | no | no |
-| Server services | `lib/server/people-payload/mock.server.ts`, `lib/server/draft-context/mock.server.ts`, `lib/server/draft-generator/mock.server.ts` | The mock seams. Each starts with `import "server-only"`. | no | no (mock) | no (mock) |
+| Server services | `lib/server/people-payload/mock.server.ts`, `lib/server/delivery-history/mock.server.ts`, `lib/server/draft-context/mock.server.ts`, `lib/server/draft-generator/mock.server.ts` | The mock seams. Each starts with `import "server-only"`. | no | no (mock) | no (mock) |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
 | Presentation | `lib/presentation.ts` | Maps `OccasionKind`/`Tone`/`Channel` → icon names, gradients, chip text. UI only. | no | no | no |
@@ -118,11 +118,12 @@ PR/agent prompt before touching.
 
 ## 4. Mock seams (what swaps when we wire the DB / LLM)
 
-Three files. They're the only ones that move when the back end goes real.
+Four files. They're the only ones that move when the back end goes real.
 
 | Seam | What it does today | What replaces it |
 |---|---|---|
 | `lib/server/people-payload/mock.server.ts` | `getPeoplePayload()` reads `peoplePayload()` from `lib/mock.ts`. | `PeopleRepository.listWithRelations(ownerId)` — one batched query under RLS. |
+| `lib/server/delivery-history/mock.server.ts` | `getDeliveryHistory()` reads `deliveries` from `lib/mock.ts`. | `DeliveryRepository.listHistory(ownerId)` — reverse-chronological sent history under RLS. |
 | `lib/server/draft-context/mock.server.ts` | `resolveDraftContext(input)` validates + finds person/relationship/culture/occasion in the mock store. | Composition of `PeopleRepository.findById` + `CatalogRepository.getRelationship/getCulture` + `PeopleRepository.findOccasionForPerson`, all inside a `db/transaction.server.ts` with `SET LOCAL app.user_id`. |
 | `lib/server/draft-generator/mock.server.ts` | `createMockDraftGenerator().generate(ctx)` builds a `MessageDraft` from `baseRecipe` + `applyInstruction` — pure data-driven heuristics. | A real `DraftGenerator` implementation backed by an LLM client. Same `DraftGenerator` interface from `lib/server/draft-generator/types.ts`. |
 
@@ -135,12 +136,13 @@ The route handlers do not move.
 | Current module | Future replacement | What should NOT change | Tests guarding it |
 |---|---|---|---|
 | `lib/server/people-payload/mock.server.ts` | `PeopleRepository.listWithRelations(ownerId)` impl, called from the same helper file (renamed to e.g. `people-payload/db.server.ts`) | `getPeoplePayload()` signature; `GET /api/people` returning a `PeoplePayload`; static route classification at build | `pnpm test:people` (15 assertions on shape + cultural wiring) |
+| `lib/server/delivery-history/mock.server.ts` | `DeliveryRepository.listHistory(ownerId)` impl, called from the same helper file (renamed to e.g. `delivery-history/db.server.ts`) | `getDeliveryHistory()` signature; History page receives `Delivery[]`; email/post remain badges rather than separate product modes | TODO: add `scripts/test-history.mjs` or page-level smoke |
 | `lib/server/draft-context/mock.server.ts` | Repository-backed resolver under RLS; same discriminated union return | `resolveDraftContext(input)` signature; `DraftContextResolution` shape (`ok:true ∣ ok:false+status+error`); `400 / 404 / 500` boundary | `pnpm test:drafts` (`missing fields → 400`, `unknown person → 404` indirectly via `Lin initial → 200`, `cross-person occasion → 404`) |
 | `lib/server/draft-generator/mock.server.ts` | LLM-backed implementation of `DraftGenerator` from `lib/server/draft-generator/types.ts` | `generate(ctx): Promise<MessageDraft>` signature; `DraftContext` input shape; `MessageDraft` output (paragraphs plain text, highlights array, attachedCard hints) | `pnpm test:drafts` (`tone = tender-intimate`, `tone = playful`, `tone = warm-festive`, no-Christmas, contains "Selamat Hari Raya") |
 | `lib/mock.ts` | Postgres queries via repos; this file is deleted, not migrated | The mock data shape (everything matches `lib/domain.ts`); the catalog ids (`'rel-partner'`, `'chinese'`, etc.) match `db/seed_catalog.sql` | Both smoke tests (any drift surfaces as a contract failure) |
 | `app/api/people/route.ts` | Unchanged | The 7-line shape: import server helper → return its result | `pnpm test:people` |
 | `app/api/drafts/route.ts` | Unchanged | Three-step shape: parse JSON → resolve → generate | `pnpm test:drafts` |
-| Pages directly importing `lib/mock.ts` | Server components that read via the helper / repo, or client components that fetch `/api/people` | The current visual contract (the prototype HTML stays the visual source of truth) | none yet — TODO: snapshot or visual diff once we wire repos |
+| Pages consuming mock-backed server helpers | Repo-backed server helpers, with client components continuing to receive serializable domain payloads | The current visual contract (the prototype HTML stays the visual source of truth) | none yet — TODO: snapshot or visual diff once we wire repos |
 
 ---
 

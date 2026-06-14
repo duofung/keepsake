@@ -1,5 +1,5 @@
 import Icon from "@/components/Icon";
-import { deliveries } from "@/lib/mock";
+import { getDeliveryHistory } from "@/lib/server/delivery-history/mock.server";
 import { cardGradientByHint, channelBadge, occasionIcon } from "@/lib/presentation";
 import type { Delivery, OccasionKind } from "@/lib/domain";
 
@@ -31,14 +31,17 @@ function shortDate(iso: string): string {
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric" });
 }
 
-export default function HistoryPage() {
-  const groups = groupByMonth(deliveries);
+export default async function HistoryPage() {
+  const history = await getDeliveryHistory();
+  const groups = groupByMonth(history);
+  const deliveryCount = history.length;
+
   return (
     <>
       <div style={{ padding: "24px 30px 14px" }}>
         <h1 style={{ fontSize: 20, fontWeight: 600, color: "var(--ink-2)" }}>History</h1>
         <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-          Everything you've sent · 23 keepsakes and counting
+          Everything you've sent · {deliveryCount} {deliveryCount === 1 ? "keepsake" : "keepsakes"} and counting
         </p>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "10px 30px 26px" }}>
