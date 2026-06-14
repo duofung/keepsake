@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "test:boundaries": "node scripts/test-boundaries.mjs",
+    "test:crypto": "node scripts/test-crypto-envelope.mjs",
     "test:db": "pnpm test:db:transaction && pnpm test:db:catalog",
     "test:db:transaction": "node scripts/test-db-transaction.mjs",
     "test:db:catalog": "node scripts/test-catalog-repository.mjs",

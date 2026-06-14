@@ -177,31 +177,29 @@ own implicit transaction when `tx` is omitted.
 [`db/schema.sql`](../../db/schema.sql). The repositories are the only
 callers; nothing else in the codebase needs to know an envelope exists.
 
-**Likely surface.**
+**Current dev surface.**
 
 ```ts
-export interface CryptoEnvelope {
-  encrypt(ownerId: OwnerId, table: string, column: string, plaintext: Uint8Array): Promise<Uint8Array>;
-  decrypt(ownerId: OwnerId, table: string, column: string, ciphertext: Uint8Array): Promise<Uint8Array>;
-}
-
-export function envelopeFor(ownerId: OwnerId): Promise<CryptoEnvelope>;
-                                      // resolves per-user DEK, caches for the request
+export function encrypt(ownerId: OwnerId, table: string, column: string, plaintext: Uint8Array): Promise<Uint8Array>;
+export function decrypt(ownerId: OwnerId, table: string, column: string, envelope: Uint8Array): Promise<Uint8Array>;
 ```
 
-**Where called.** Inside each `*.server.ts` repo implementation, never
-from a route handler directly.
+The current implementation is development-only. It reads one 32-byte
+base64 key from `DEV_ENCRYPTION_KEY_BASE64`; it does not touch KMS or
+`user_keys` yet. `pnpm test:crypto` verifies roundtrip, AAD mismatch, and
+ciphertext tampering.
+
+**Where called.** Inside future `*.server.ts` repo implementations, never
+from a route handler directly. No current route/page/repo calls it yet.
 
 **Design points.**
 - AES-256-GCM, 12-byte nonce, 16-byte tag. Envelope = `nonce ‖ ct ‖ tag`.
-- `AAD = ownerId ‖ table ‖ column`. Copying ciphertext between rows or
+- `AAD = ownerId | table | column`. Copying ciphertext between rows or
   columns fails to decrypt.
-- DEK lives in `user_keys`, wrapped by a KMS-held KEK. The KMS provider
-  (AWS / GCP / Cloudflare) is the deferred choice; the interface above
-  is provider-agnostic.
-- Per-request cache: `envelopeFor` resolves the DEK once per request and
-  hands the same object to every repo call in that request. Cache lives
-  in `AsyncLocalStorage` so it cannot leak across requests.
+- Future production pass: per-user DEK lives in `user_keys`, wrapped by a
+  KMS-held KEK. At that point this module grows a key-provider layer and
+  per-request cache; callers should keep using the same encrypt/decrypt
+  boundary.
 
 ### `draft-generator/generator.server.ts`
 
@@ -276,7 +274,7 @@ fields.
    `RelationshipKind` × `CultureId`. Out of scope for this design pass.
 3. **Worker process vs. request handler.** `db/worker-transaction.server.ts`
    needs the worker role; we'll add it when the send queue ships.
-4. **Local dev.** During development we want the mock generator without a
-   real KMS. `crypto/envelope.server.ts` will accept a `KeyProvider`
-   interface; one impl is `KmsKeyProvider`, another is `DevKeyProvider`
-   reading a key from `.env.local`. The repo layer doesn't know which.
+4. **Crypto production key provider.** The current envelope helper is
+   dev-only and reads `DEV_ENCRYPTION_KEY_BASE64`. Production still needs a
+   KMS-backed key provider, per-user DEK loading from `user_keys`, rotation
+   history, and request-local caching.
