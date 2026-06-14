@@ -1,26 +1,36 @@
-# `lib/server/` — server-only services (design only)
+# `lib/server/` — server-only seams and services
 
-Where the side-effectful pieces live: auth resolution, DB transactions,
-envelope encryption, the LLM call. **Nothing here is implemented yet.**
-This README defines the surface so we can talk about it before we build it.
+Where server-only orchestration lives. Today this directory contains four
+mock-backed seams that keep `app/` and `components/` away from `lib/mock.ts`.
+Tomorrow those same seams become the place where auth, transactions,
+repositories, crypto, and the LLM client are composed.
+
+The rule is simple: framework code calls `lib/server/*`; `lib/server/*`
+calls mocks today and repositories/services later.
 
 ## What lives here
 
-Each service is a single concern. They compose at the route handler — no
-service calls another from inside its own module unless it's a leaf
-dependency (e.g. `db/transaction` opens a connection for everyone).
+Each service is a single concern. The seams that exist now are real code;
+the auth/db/crypto services below are still design surfaces for the DB pass.
 
 ```
 lib/server/
-├── README.md              ← this file
-├── auth/                  ← who is the caller?
+├── README.md
+├── people-payload/
+│   └── mock.server.ts        ← current: GET /api/people + Home + People data
+├── delivery-history/
+│   └── mock.server.ts        ← current: History data
+├── draft-context/
+│   └── mock.server.ts        ← current: hydrate DraftContext from ids
+├── draft-generator/
+│   ├── types.ts              ← DraftContext / DraftGenerator contracts
+│   └── mock.server.ts        ← current: mock MessageDraft generator
+├── auth/                     ← future: who is the caller?
 │   └── current-user.server.ts
-├── db/                    ← how do we open a transaction?
+├── db/                       ← future: how do we open a transaction?
 │   └── transaction.server.ts
-├── crypto/                ← encrypt/decrypt the 🔒 columns
-│   └── envelope.server.ts
-└── draft-generator/       ← turn a hydrated context into a MessageDraft
-    └── generator.server.ts
+└── crypto/                   ← future: encrypt/decrypt the 🔒 columns
+    └── envelope.server.ts
 ```
 
 ### Naming
@@ -33,26 +43,48 @@ build-time guard that makes client-side imports fail rather than leaking
 server code into a browser bundle.
 
 Type-only files (signatures, input shapes) drop the `.server` suffix and
-sit next to the implementation. Route handlers and tests import from the
-plain `.ts` files; the framework links them to the `.server.ts` at build
-time.
+sit next to the implementation. Runtime implementations keep the suffix.
 
 ## Boundary rules
 
 1. **Server-only, by both filename and review policy.** Same rule as repos.
 2. **Each service owns one thing.** No "utils" grab-bag; each subfolder is
    its own contract.
-3. **No HTTP types past `auth/`.** Only `current-user` knows about
+3. **Only server code imports `lib/server/`.** Server components and route
+   handlers may import it. `"use client"` modules must not.
+4. **Only mock seams import `lib/mock.ts`.** Today that means
+   `people-payload/mock.server.ts`, `delivery-history/mock.server.ts`, and
+   `draft-context/mock.server.ts`. This is checked by `pnpm test:boundaries`.
+5. **No HTTP types past `auth/`.** Only `current-user` knows about
    `Request`, cookies, or session tokens; everyone else takes resolved
    values.
-4. **No domain logic in services.** Tone selection, prompt wording,
+6. **No domain logic in generic services.** Tone selection, prompt wording,
    relationship-aware fallbacks — those live in the route handler or in
    `draft-generator`. `db/`, `crypto/`, `auth/` stay generic.
-5. **Stateless calls.** Services may hold a connection pool or a KMS
+7. **Stateless calls.** Services may hold a connection pool or a KMS
    client at module scope, but a single request must not mutate
    module-level state observable to the next request.
 
 ## Services
+
+### Current mock seams
+
+These are the files that should move when the back end goes real. They are
+small on purpose.
+
+| Seam | Called by | Today | Future replacement | Guard |
+|---|---|---|---|---|
+| `people-payload/mock.server.ts` | `GET /api/people`, Home, People | `peoplePayload()` from `lib/mock.ts` | `PeopleRepository.listWithRelations(ownerId)` | `pnpm test:people`, `pnpm test:boundaries` |
+| `delivery-history/mock.server.ts` | History | `deliveries` from `lib/mock.ts` | `DeliveryRepository.listHistory(ownerId)` | `pnpm test:history`, `pnpm test:boundaries` |
+| `draft-context/mock.server.ts` | `POST /api/drafts` | validates ids and builds `DraftContext` from mock finders | `PeopleRepository.findById`, `CatalogRepository.getRelationship/getCulture`, `PeopleRepository.findOccasionForPerson` inside `transaction(ownerId, ...)` | `pnpm test:drafts`, `pnpm test:boundaries` |
+| `draft-generator/mock.server.ts` | `POST /api/drafts` | mock recipe + instruction rewrite to `MessageDraft` | LLM-backed `DraftGenerator` implementation | `pnpm test:drafts` |
+
+The `app/` tree should not import `lib/mock.ts` directly. If a page needs
+server data, make the page a server component and call one of these helpers,
+passing serializable domain payloads down to client components. If a client
+component needs live data, fetch an API route.
+
+### Future services
 
 ### `auth/current-user.server.ts`
 
@@ -144,7 +176,8 @@ from a route handler directly.
 
 **Purpose.** Turn `{ person, relationship, culture, occasion, userInstruction }`
 into the fields a `MessageDraft` needs. Today's mock generator lives at
-`app/api/drafts/route.ts`; it moves here when the LLM lands.
+`draft-generator/mock.server.ts`; a real implementation can sit next to it
+when the LLM lands.
 
 **Likely surface.**
 
