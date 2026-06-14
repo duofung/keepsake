@@ -1,6 +1,6 @@
 // PeopleRepository — per-user CRUD over `people` + `occasion_nodes`.
 //
-// Status: DESIGN ONLY. Interface declaration; no implementation.
+// Runtime read implementation: people.server.ts.
 //
 // Conventions:
 //   - Every method takes `ownerId` as the first argument. RLS already

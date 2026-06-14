@@ -3,8 +3,9 @@
 The boundary between Postgres and the rest of the app. Most files here are
 still TypeScript interface declarations that compile against
 [`lib/domain.ts`](../domain.ts) and pair with [`db/schema.sql`](../../db/schema.sql).
-The first real implementation is `catalog.server.ts`; the remaining repos
-will follow the same pattern as they land.
+The first real implementations are `catalog.server.ts` and the read side of
+`people.server.ts`; the remaining repo methods will follow the same pattern
+as they land.
 
 ## What lives here
 
@@ -16,6 +17,7 @@ will follow the same pattern as they land.
 | [`catalog.ts`](./catalog.ts) | `CatalogRepository` — catalog access to `relationships` + `cultures`. Relationships are owner-aware because user-custom rows share the table with system presets. |
 | [`catalog.server.ts`](./catalog.server.ts) | `PgCatalogRepository` — first server-only runtime implementation, backed by `pg` through `lib/server/db/transaction.server.ts`. |
 | [`people.ts`](./people.ts) | `PeopleRepository` — per-user CRUD over `people` + `occasion_nodes`. |
+| [`people.server.ts`](./people.server.ts) | `PgPeopleRepository` — read-only runtime implementation for people + occasions, including encrypted columns via `lib/server/crypto/envelope.server.ts`. Write methods intentionally throw for now. |
 | [`drafts.ts`](./drafts.ts) | `DraftRepository` — persistence for `message_drafts`. |
 | [`deliveries.ts`](./deliveries.ts) | `DeliveryRepository` — `deliveries` reads + the send/webhook write paths. |
 
@@ -122,6 +124,12 @@ user-custom rows.
 | `getCulture(id)` | `CultureRule \| null` | `/api/drafts` POST (internal) |
 
 ### PeopleRepository
+
+Runtime implementation: `people.server.ts` for read methods only. It is not
+used by the app yet; mock-backed server seams still power current
+routes/pages. `pnpm test:db:people` verifies decryption, RLS behavior,
+derived `nextOccasionId` / `isPrimary`, and `PeoplePayload` shape against
+temporary Postgres.
 
 Per-user. All methods take `ownerId: OwnerId` as the first argument and
 return decrypted domain types. Occasion CRUD lives here because every
