@@ -1,15 +1,10 @@
 import Link from "next/link";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
-import { findOccasion, occasions, people } from "@/lib/mock";
+import { getPeoplePayload } from "@/lib/server/people-payload/mock.server";
 import { nodeChipText, urgencyLevel } from "@/lib/presentation";
 
 const SOON_WINDOW_DAYS = 30;
-const peopleCount = people.length;
-const datesComingUp = occasions.filter(
-  (o) => o.daysUntil >= 0 && o.daysUntil <= SOON_WINDOW_DAYS,
-).length;
-const linAnniversaryDays = findOccasion("occ-lin-anniv")?.daysUntil ?? null;
 
 const metaColor: Record<string, string> = {
   soon: "var(--blue-deep)",
@@ -17,7 +12,17 @@ const metaColor: Record<string, string> = {
   far: "var(--gray-3)",
 };
 
-export default function HomePage() {
+export default async function HomePage() {
+  const { people, occasions } = await getPeoplePayload();
+  const occasionById = (id: string | null | undefined) =>
+    id ? occasions.find((o) => o.id === id) : undefined;
+
+  const peopleCount = people.length;
+  const datesComingUp = occasions.filter(
+    (o) => o.daysUntil >= 0 && o.daysUntil <= SOON_WINDOW_DAYS,
+  ).length;
+  const linAnniversaryDays = occasionById("occ-lin-anniv")?.daysUntil ?? null;
+
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "26px 30px 30px" }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 22 }}>
@@ -85,7 +90,7 @@ export default function HomePage() {
       <p style={sectionLabel}>PEOPLE YOU'RE WATCHING OVER</p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
         {people.map((p) => {
-          const occ = findOccasion(p.nextOccasionId);
+          const occ = occasionById(p.nextOccasionId);
           const days = occ?.daysUntil ?? -60;
           const label = occ?.label ?? "Last note";
           const text = nodeChipText(label, days);
