@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { peoplePayload } from "@/lib/mock";
+import { getPeoplePayload } from "@/lib/server/people-payload/mock.server";
 
 export const dynamic = "force-static";
 
 export async function GET() {
-  return NextResponse.json(peoplePayload());
+  return NextResponse.json(await getPeoplePayload());
 }
