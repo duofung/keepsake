@@ -21,17 +21,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <IconSprite />
+        {/* App shell: fills the viewport on desktop / MacBook fullscreen.
+            The 1080×680 prototype card has been retired — visual language
+            (colours, type, spacing inside each view) stays the same. */}
         <div
           style={{
-            width: "100%",
-            maxWidth: 1080,
-            height: 680,
+            width: "100vw",
+            height: "100dvh",
+            minHeight: "100vh",
             background: "#FFFFFF",
-            borderRadius: 22,
-            border: "0.5px solid #E3E8ED",
             overflow: "hidden",
             display: "flex",
-            boxShadow: "0 12px 48px -16px rgba(20,32,43,0.18)",
             position: "relative",
           }}
         >

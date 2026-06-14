@@ -22,16 +22,15 @@
 html, body { height: 100%; }
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #EDF1F5;
+  background: #FFFFFF;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
   margin: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  min-height: 100vh;
 }
+/* Mobile layout is intentionally not yet adapted — see the responsive TODO in
+   the brief. Below ~720px wide the existing prototype proportions still
+   apply; a proper small-screen pass is a separate task. */
 
 svg.ic {
   width: 1em;

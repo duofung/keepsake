@@ -131,7 +131,7 @@ export default function PeopleClient({ payload }: Props) {
               </span>
               {g.toUpperCase()}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 460px))", gap: 12 }}>
               {list.map((p) => {
                 const rel = relationshipById.get(p.relationshipId);
                 const culture = cultureById.get(p.cultureId);
