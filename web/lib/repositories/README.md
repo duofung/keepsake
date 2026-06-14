@@ -1,10 +1,10 @@
-# `lib/repositories/` — DB access layer (design only)
+# `lib/repositories/` — DB access layer
 
-The boundary between Postgres and the rest of the app. **No implementations
-yet** — only TypeScript interface declarations that compile against
+The boundary between Postgres and the rest of the app. Most files here are
+still TypeScript interface declarations that compile against
 [`lib/domain.ts`](../domain.ts) and pair with [`db/schema.sql`](../../db/schema.sql).
-When we wire a real client (`pg`, `postgres.js`, whatever wins), each
-interface gets an `Impl` class; nothing else in the app moves.
+The first real implementation is `catalog.server.ts`; the remaining repos
+will follow the same pattern as they land.
 
 ## What lives here
 
@@ -14,16 +14,16 @@ interface gets an `Impl` class; nothing else in the app moves.
 | [`index.ts`](./index.ts) | Type-only barrel. Re-exports the four interfaces and the plumbing types from `types.ts`. **Never** re-exports runtime values. |
 | [`types.ts`](./types.ts) | Shared types: `OwnerId`, `Tx`, `RepoError`, input shapes for write methods. No business types. |
 | [`catalog.ts`](./catalog.ts) | `CatalogRepository` — catalog access to `relationships` + `cultures`. Relationships are owner-aware because user-custom rows share the table with system presets. |
+| [`catalog.server.ts`](./catalog.server.ts) | `PgCatalogRepository` — first server-only runtime implementation, backed by `pg` through `lib/server/db/transaction.server.ts`. |
 | [`people.ts`](./people.ts) | `PeopleRepository` — per-user CRUD over `people` + `occasion_nodes`. |
 | [`drafts.ts`](./drafts.ts) | `DraftRepository` — persistence for `message_drafts`. |
 | [`deliveries.ts`](./deliveries.ts) | `DeliveryRepository` — `deliveries` reads + the send/webhook write paths. |
 
 ### Implementation file naming
 
-Today every file in this directory is types only. Once we wire a real DB
-client, **implementation files must be named `<repo>.server.ts`** — e.g.
-`people.server.ts`, `drafts.server.ts`. Each implementation file must also
-start with:
+Interface files are type-only. Runtime implementation files must be named
+`<repo>.server.ts` — e.g. `catalog.server.ts`, `people.server.ts`,
+`drafts.server.ts`. Each implementation file must also start with:
 
 ```ts
 import "server-only";
@@ -38,7 +38,7 @@ compile away. The split is:
 
 ```
 catalog.ts            ← interface,  importable from anywhere
-catalog.server.ts     ← class impl, imports "server-only" (future)
+catalog.server.ts     ← class impl, imports "server-only"
 index.ts              ← type-only barrel, importable from anywhere
 ```
 
@@ -104,6 +104,11 @@ Every repository method accepts an optional `tx?: Tx`. Omitting it means
 ## The four repositories
 
 ### CatalogRepository
+
+Runtime implementation: `catalog.server.ts`. It is intentionally not used
+by the app yet; mock-backed server seams still power current routes/pages.
+`pnpm test:db:catalog` verifies mapping and RLS behavior against temporary
+Postgres.
 
 Catalog reads. `cultures` are global today. `relationships` are owner-aware
 because the same table holds system rows (`owner_id IS NULL`) and future

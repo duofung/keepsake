@@ -1,6 +1,6 @@
 // CatalogRepository — access to the system catalog tables.
 //
-// Status: DESIGN ONLY. Interface declaration; no implementation.
+// Runtime implementation: catalog.server.ts.
 //
 // Scope: relationships (system + user-custom rows) and cultures (system only
 // for now). Cultures are safe to memoise for the lifetime of a process;

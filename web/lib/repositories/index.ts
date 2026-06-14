@@ -1,8 +1,9 @@
 // Barrel for the repository layer. Exports types only — never runtime values.
 //
-// Status: DESIGN ONLY. There are no implementations yet; this file lets
-// callers write `import type { PeopleRepository } from "@/lib/repositories"`
-// without coupling to a specific implementation file.
+// Runtime implementations live in sibling `*.server.ts` files. This barrel
+// remains type-only so callers can write
+// `import type { PeopleRepository } from "@/lib/repositories"` without
+// coupling to a specific implementation file.
 //
 // IMPORTANT: every export here is `export type`, not `export`. If a runtime
 // re-export ever appears in this file, a client-component import could pull

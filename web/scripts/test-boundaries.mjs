@@ -3,8 +3,9 @@
 // They guard the seams we want to preserve before the mock store is swapped
 // for repositories:
 // - only server mock seams may import lib/mock
-// - every *.server.ts file under lib/server starts with import "server-only"
-// - client components never import lib/server
+// - every *.server.ts file under lib/server and lib/repositories starts with
+//   import "server-only"
+// - client components never import server runtime modules
 // - the repository barrel stays type-only
 //
 // Run via: pnpm test:boundaries
@@ -70,6 +71,16 @@ function isLibServerImport(fromProjectPath, specifier) {
   return resolveSpecifier(fromProjectPath, specifier).startsWith("lib/server/");
 }
 
+function isRepositoryServerImport(fromProjectPath, specifier) {
+  const resolved = resolveSpecifier(fromProjectPath, specifier);
+  return resolved.startsWith("lib/repositories/") && (
+    resolved.endsWith(".server")
+    || resolved.endsWith(".server.ts")
+    || resolved.endsWith(".server.tsx")
+    || resolved.includes(".server/")
+  );
+}
+
 function isClientModule(source) {
   return source.trimStart().startsWith('"use client";')
     || source.trimStart().startsWith("'use client';");
@@ -115,12 +126,18 @@ for (const [projectPath, source] of sourceByPath) {
       mockImportViolations.push(`${projectPath} imports ${spec}`);
     }
 
-    if (isClientModule(source) && isLibServerImport(projectPath, spec)) {
+    if (
+      isClientModule(source)
+      && (isLibServerImport(projectPath, spec) || isRepositoryServerImport(projectPath, spec))
+    ) {
       clientServerImportViolations.push(`${projectPath} imports ${spec}`);
     }
   }
 
-  if (projectPath.startsWith("lib/server/") && projectPath.endsWith(".server.ts")) {
+  if (
+    (projectPath.startsWith("lib/server/") || projectPath.startsWith("lib/repositories/"))
+    && projectPath.endsWith(".server.ts")
+  ) {
     const firstLine = firstMeaningfulLine(source);
     if (firstLine !== 'import "server-only";' && firstLine !== "import 'server-only';") {
       missingServerOnly.push(`${projectPath} starts with ${JSON.stringify(firstLine)}`);
@@ -135,13 +152,13 @@ check(
 );
 
 check(
-  'every lib/server/*.server.ts starts with import "server-only"',
+  'every server runtime *.server.ts starts with import "server-only"',
   missingServerOnly.length === 0,
   missingServerOnly.join("; "),
 );
 
 check(
-  "client modules do not import lib/server",
+  "client modules do not import server runtime modules",
   clientServerImportViolations.length === 0,
   clientServerImportViolations.join("; "),
 );
