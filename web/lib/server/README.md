@@ -10,8 +10,9 @@ calls mocks today and repositories/services later.
 
 ## What lives here
 
-Each service is a single concern. The seams that exist now are real code;
-the auth/db/crypto services below are still design surfaces for the DB pass.
+Each service is a single concern. The seams and DB transaction helper that
+exist now are real code; auth and crypto are still design surfaces for later
+passes.
 
 ```
 lib/server/
@@ -27,7 +28,7 @@ lib/server/
 │   └── mock.server.ts        ← current: mock MessageDraft generator
 ├── auth/                     ← future: who is the caller?
 │   └── current-user.server.ts
-├── db/                       ← future: how do we open a transaction?
+├── db/                       ← current: request-path transaction helper
 │   └── transaction.server.ts
 └── crypto/                   ← future: encrypt/decrypt the 🔒 columns
     └── envelope.server.ts
@@ -84,7 +85,37 @@ server data, make the page a server component and call one of these helpers,
 passing serializable domain payloads down to client components. If a client
 component needs live data, fetch an API route.
 
-### Future services
+### Current DB runtime skeleton
+
+`db/transaction.server.ts` is now the request-path DB entrypoint:
+
+```ts
+await transaction(ownerId, async (tx) => {
+  // repository calls go here later
+});
+```
+
+The helper opens one Postgres transaction from the module-level `pg.Pool`,
+sets the caller context with `SET LOCAL app.user_id = ...`, then commits or
+rolls back before releasing the connection. The pool connection string comes
+from `DATABASE_URL`.
+
+`db/transaction.server.ts` also exports `query(tx, text, values)` for future
+`lib/repositories/*.server.ts` implementations. That is still server-only
+plumbing: route handlers, pages, and components should not write SQL or hold
+pg clients directly.
+
+The request role must be the app role: granted only the normal table
+privileges it needs, with Row-Level Security doing the ownership filtering,
+and no `BYPASSRLS`. `ownerId === null` is deliberately fail-closed: the
+helper sets `app.user_id` to the empty string, `current_user_id()` returns
+`NULL`, and per-user policies see no rows.
+
+This is only the DB base layer. No route, page, or component currently calls
+`transaction()`, and the shipped app remains mock-backed through the seams
+listed above.
+
+### Service contracts
 
 ### `auth/current-user.server.ts`
 
