@@ -9,7 +9,8 @@
     "lint": "next lint",
     "test:drafts": "node scripts/test-drafts.mjs",
     "test:people": "node scripts/test-people.mjs",
-    "test": "pnpm test:people && pnpm test:drafts"
+    "test:history": "node scripts/test-history.mjs",
+    "test": "pnpm test:people && pnpm test:drafts && pnpm test:history"
   },
   "dependencies": {
     "next": "^15.0.3",
