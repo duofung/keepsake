@@ -22,7 +22,7 @@
 html, body { height: 100%; }
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #FFFFFF;
+  background: #FBFCFD;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   margin: 0;
@@ -44,6 +44,55 @@ svg.ic {
   display: block;
 }
 svg.ic.fill { fill: currentColor; stroke: none; }
+
+.ks-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: #FBFCFD;
+}
+
+.ks-page--stack {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.ks-page-inner {
+  width: min(100%, 1120px);
+  margin: 0 auto;
+  padding: clamp(28px, 4vh, 44px) clamp(30px, 4vw, 54px) 42px;
+}
+
+.ks-page-inner--history {
+  width: min(100%, 1040px);
+}
+
+.ks-page-inner--profile {
+  width: min(100%, 920px);
+}
+
+.ks-page-inner--people {
+  width: min(100%, 920px);
+}
+
+.ks-workspace-frame {
+  flex: 1;
+  min-height: 0;
+  width: min(100%, 1280px);
+  margin: 0 auto;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  border-left: 0.5px solid var(--line);
+  border-right: 0.5px solid var(--line);
+}
+
+.ks-mail-body {
+  max-width: 720px;
+}
 
 ::-webkit-scrollbar { width: 7px; }
 ::-webkit-scrollbar-thumb { background: #D9DFE5; border-radius: 4px; }

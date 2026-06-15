@@ -127,7 +127,7 @@ function Workspace() {
   const nodeIcon = occasion ? occasionIcon[occasion.kind] : "i-bulb";
 
   return (
-    <>
+    <div className="ks-workspace-frame">
       {/* top bar */}
       <div style={{ padding: "13px 22px", display: "flex", alignItems: "center", gap: 11, justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
@@ -162,7 +162,7 @@ function Workspace() {
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         {/* assist panel */}
-        <div style={{ width: "38%", background: "var(--rail)", display: "flex", flexDirection: "column" }}>
+        <div style={{ width: "36%", minWidth: 360, maxWidth: 440, background: "var(--rail)", display: "flex", flexDirection: "column" }}>
           <div ref={logRef} style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
             {log.map((m, i) => (
               <div
@@ -310,7 +310,8 @@ function Workspace() {
             </div>
           </div>
 
-          <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "22px 30px" }}>
+            <div className="ks-mail-body">
             <div className="mail-text" style={{ fontSize: 14.5, lineHeight: 1.85, color: "var(--ink)" }}>
               {draft?.paragraphs.map((p, i) => (
                 <p key={i}>{renderParagraph(p)}</p>
@@ -375,6 +376,7 @@ function Workspace() {
                 </button>
               )}
             </div>
+            </div>
           </div>
 
           <div style={{
@@ -408,7 +410,7 @@ function Workspace() {
           <span>{toast}</span>
         </div>
       )}
-    </>
+    </div>
   );
 }
 

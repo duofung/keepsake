@@ -82,24 +82,26 @@ export default function PeopleClient({ payload }: Props) {
     : [];
 
   return (
-    <>
-      <div style={{ padding: "24px 30px 14px", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div>
-          <h1 style={{ fontSize: 20, fontWeight: 600, color: "var(--ink-2)" }}>People</h1>
-          <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-            {people.length} {people.length === 1 ? "relationship" : "relationships"} · the people you keep close
-          </p>
+    <div className="ks-page ks-page--stack">
+      <div className="ks-page-inner ks-page-inner--people" style={{ paddingBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+          <div>
+            <h1 style={{ fontSize: 20, fontWeight: 600, color: "var(--ink-2)" }}>People</h1>
+            <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
+              {people.length} {people.length === 1 ? "relationship" : "relationships"} · the people you keep close
+            </p>
+          </div>
+          <button style={{
+            padding: "10px 17px", fontSize: 13, fontWeight: 500, borderRadius: 13,
+            display: "flex", alignItems: "center", gap: 6,
+            background: "var(--blue)", color: "#fff", border: "none", cursor: "pointer",
+          }}>
+            <Icon name="i-plus" /> Add someone
+          </button>
         </div>
-        <button style={{
-          padding: "10px 17px", fontSize: 13, fontWeight: 500, borderRadius: 13,
-          display: "flex", alignItems: "center", gap: 6,
-          background: "var(--blue)", color: "#fff", border: "none", cursor: "pointer",
-        }}>
-          <Icon name="i-plus" /> Add someone
-        </button>
       </div>
 
-      <div style={{ padding: "0 30px", display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+      <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 0, paddingBottom: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -118,7 +120,8 @@ export default function PeopleClient({ payload }: Props) {
         ))}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 30px 26px" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 14 }}>
         {visibleEntries.map(([g, list]) => (
           <div key={g} style={{ marginBottom: 24 }}>
             <div style={{
@@ -131,7 +134,7 @@ export default function PeopleClient({ payload }: Props) {
               </span>
               {g.toUpperCase()}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 460px))", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 340px))", gap: 12 }}>
               {list.map((p) => {
                 const rel = relationshipById.get(p.relationshipId);
                 const culture = cultureById.get(p.cultureId);
@@ -188,6 +191,7 @@ export default function PeopleClient({ payload }: Props) {
             </div>
           </div>
         ))}
+        </div>
       </div>
 
       <PersonDrawer
@@ -197,6 +201,6 @@ export default function PeopleClient({ payload }: Props) {
         occasions={drawerOccasions}
         onClose={() => setOpenId(null)}
       />
-    </>
+    </div>
   );
 }

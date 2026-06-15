@@ -2,7 +2,8 @@ import Icon from "@/components/Icon";
 
 export default function ProfilePage() {
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "26px 30px" }}>
+    <div className="ks-page">
+      <div className="ks-page-inner ks-page-inner--profile">
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 26 }}>
         <div style={{
           width: 62, height: 62, fontSize: 24, background: "var(--blue)", color: "#fff",
@@ -40,6 +41,7 @@ export default function ProfilePage() {
         <Row icon="i-shield" title="Privacy & data" desc="Your relationships stay yours, encrypted" right={<Chev />} />
         <Row icon="i-logout" title="Sign out" last />
       </Section>
+      </div>
     </div>
   );
 }

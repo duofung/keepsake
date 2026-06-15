@@ -29,14 +29,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             width: "100vw",
             height: "100dvh",
             minHeight: "100vh",
-            background: "#FFFFFF",
+            background: "#FBFCFD",
             overflow: "hidden",
             display: "flex",
             position: "relative",
           }}
         >
           <Rail />
-          <main style={{ flex: 1, position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <main style={{ flex: 1, position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", background: "#FBFCFD" }}>
             {children}
           </main>
         </div>

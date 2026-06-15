@@ -37,14 +37,14 @@ export default async function HistoryPage() {
   const deliveryCount = history.length;
 
   return (
-    <>
-      <div style={{ padding: "24px 30px 14px" }}>
+    <div className="ks-page">
+      <div className="ks-page-inner ks-page-inner--history">
+      <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 20, fontWeight: 600, color: "var(--ink-2)" }}>History</h1>
         <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
           Everything you've sent · {deliveryCount} {deliveryCount === 1 ? "keepsake" : "keepsakes"} and counting
         </p>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "10px 30px 26px" }}>
         {groups.map((g) => (
           <div key={g.month}>
             <div style={{
@@ -108,6 +108,6 @@ export default async function HistoryPage() {
           </div>
         ))}
       </div>
-    </>
+    </div>
   );
 }

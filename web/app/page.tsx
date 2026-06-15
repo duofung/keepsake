@@ -24,7 +24,8 @@ export default async function HomePage() {
   const linAnniversaryDays = occasionById("occ-lin-anniv")?.daysUntil ?? null;
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "26px 30px 30px" }}>
+    <div className="ks-page">
+      <div className="ks-page-inner">
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 22 }}>
         <div>
           <h1 style={{ fontSize: 19, fontWeight: 600, color: "var(--ink-2)", letterSpacing: "-0.01em" }}>
@@ -46,7 +47,7 @@ export default async function HomePage() {
       </div>
 
       {/* Focus card */}
-      <div style={{ background: "var(--blue-wash)", borderRadius: 16, padding: 20, display: "flex", gap: 20, marginBottom: 28 }}>
+      <div style={{ background: "var(--blue-wash)", borderRadius: 16, padding: 22, display: "flex", gap: 22, marginBottom: 28 }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
             <span style={{ fontSize: 11, fontWeight: 500, color: "var(--blue-deep)", background: "var(--blue-chip)", padding: "4px 10px", borderRadius: 10 }}>
@@ -74,7 +75,7 @@ export default async function HomePage() {
         </div>
         <div
           style={{
-            width: 150, flexShrink: 0, background: "#fff", borderRadius: 13, padding: 13,
+            width: 210, flexShrink: 0, background: "#fff", borderRadius: 13, padding: 14,
             display: "flex", flexDirection: "column", justifyContent: "center",
             boxShadow: "0 6px 20px -10px rgba(20,32,43,0.15)",
           }}
@@ -88,7 +89,7 @@ export default async function HomePage() {
       </div>
 
       <p style={sectionLabel}>PEOPLE YOU'RE WATCHING OVER</p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
         {people.map((p) => {
           const occ = occasionById(p.nextOccasionId);
           const days = occ?.daysUntil ?? -60;
@@ -118,6 +119,7 @@ export default async function HomePage() {
           <span style={{ fontSize: 20 }}><Icon name="i-plus" /></span>
           <span style={{ fontSize: 11 }}>See all people</span>
         </Link>
+      </div>
       </div>
     </div>
   );
