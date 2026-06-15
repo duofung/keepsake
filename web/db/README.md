@@ -11,6 +11,7 @@ become migrations the day we wire up a real database.
 |---|---|
 | [`schema.sql`](./schema.sql) | Extensions, enums, tables, indexes, the `current_user_id()` helper, and RLS policies. Runs in a single transaction. **Not idempotent** — expects an empty target. |
 | [`seed_catalog.sql`](./seed_catalog.sql) | Catalog rows for `relationships` (10) and `cultures` (4). Idempotent (`ON CONFLICT (id) DO UPDATE`). Re-run anytime. |
+| [`../scripts/seed-dev-fixtures.mjs`](../scripts/seed-dev-fixtures.mjs) | Local-dev fixture seed for one owner: 5 people, 7 occasions, and 4 delivery history rows. Idempotent. |
 | [`README.md`](./README.md) | This file. |
 
 The canonical design lives in [`../docs/DB_SCHEMA.md`](../docs/DB_SCHEMA.md);
@@ -28,6 +29,7 @@ this README is purely operational.
 ```text
 schema.sql        # once, against an empty database
 seed_catalog.sql  # after schema; safe to re-run
+pnpm db:seed:dev  # optional local fixtures; safe to re-run
 ```
 
 Doing it in one shot against a throwaway Postgres:
@@ -51,8 +53,48 @@ docker exec keepsake-pg-test psql -U postgres -d keepsake \
 docker exec keepsake-pg-test psql -U postgres -d keepsake \
   -v ON_ERROR_STOP=1 -f /sql/seed_catalog.sql
 
+# Optional: seed one local-dev owner using encrypted fixture data.
+cd "$PWD/web"
+DATABASE_URL=postgres://postgres:test@localhost:55432/keepsake \
+DEV_ENCRYPTION_KEY_BASE64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+pnpm db:seed:dev
+
 # Tear it down.
 docker rm -f keepsake-pg-test
+```
+
+## Local dev fixture seed
+
+`pnpm db:seed:dev` expects `schema.sql` and `seed_catalog.sql` to have already
+run. It connects with `DATABASE_URL`, upserts one dev owner, then upserts:
+
+- 5 people from `lib/mock.ts`
+- 7 occasion nodes from `lib/mock.ts`
+- 4 delivery history rows from `lib/mock.ts`
+
+The script deliberately reuses `lib/server/crypto/envelope.server.ts`, so
+encrypted DB columns (`*_enc`) are seeded as AES-256-GCM envelopes rather than
+plain text. `DEV_ENCRYPTION_KEY_BASE64` must decode to 32 bytes and must match
+the key used by local server-side repository reads.
+
+Default dev owner values live in `.env.example`:
+
+```bash
+DEV_OWNER_ID=00000000-0000-4000-8000-000000000001
+DEV_OWNER_EMAIL=arthur@example.test
+DEV_OWNER_NAME=Arthur
+```
+
+Mock string IDs such as `p-lin` and `occ-lin-anniv` are mapped to stable UUIDs
+inside the seed script because the database schema uses UUID primary keys. This
+is a local-dev fixture concern only; it does not change the runtime API
+contracts.
+
+The Docker-backed verification is intentionally not part of default
+`pnpm test`. Run it with:
+
+```bash
+pnpm test:db:fixtures
 ```
 
 ## Table classification
