@@ -3,16 +3,18 @@
 Where server-only orchestration lives. This directory keeps `app/` and
 `components/` away from `lib/mock.ts`, SQL, crypto, and future auth/LLM
 clients. The people payload path is now the first real DB runtime vertical;
-draft and history paths are still mock-backed seams.
+the draft context path can also resolve from DB/RLS. Draft generation and
+history are still mock-backed seams.
 
 The rule is simple: framework code calls `lib/server/*`; `lib/server/*`
-calls mocks today and repositories/services later.
+dispatches to mocks or repositories/services without leaking that choice into
+`app/`.
 
 ## What lives here
 
-Each service is a single concern. The seams and DB transaction helper that
-exist now are real code; auth and crypto are still design surfaces for later
-passes.
+Each service is a single concern. The seams, dev auth owner resolver, crypto
+envelope helper, and DB transaction helper that exist now are real code;
+production auth/KMS remain later passes.
 
 ```
 lib/server/
@@ -24,7 +26,9 @@ lib/server/
 ├── delivery-history/
 │   └── mock.server.ts        ← current: History data
 ├── draft-context/
-│   └── mock.server.ts        ← current: hydrate DraftContext from ids
+│   ├── index.server.ts       ← current: mock/db dispatcher
+│   ├── mock.server.ts        ← current: mock fallback
+│   └── db.server.ts          ← current: DB-backed DraftContext
 ├── draft-generator/
 │   ├── types.ts              ← DraftContext / DraftGenerator contracts
 │   └── mock.server.ts        ← current: mock MessageDraft generator
@@ -70,7 +74,7 @@ sit next to the implementation. Runtime implementations keep the suffix.
 
 ## Services
 
-### Current mock seams
+### Current runtime seams
 
 These are the files that should move when the back end goes real. They are
 small on purpose.
@@ -81,7 +85,9 @@ small on purpose.
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
 | `delivery-history/mock.server.ts` | History | `deliveries` from `lib/mock.ts` | `DeliveryRepository.listHistory(ownerId)` | `pnpm test:history`, `pnpm test:boundaries` |
-| `draft-context/mock.server.ts` | `POST /api/drafts` | validates ids and builds `DraftContext` from mock finders | `PeopleRepository.findById`, `CatalogRepository.getRelationship/getCulture`, `PeopleRepository.findOccasionForPerson` inside `transaction(ownerId, ...)` | `pnpm test:drafts`, `pnpm test:boundaries` |
+| `draft-context/index.server.ts` | `POST /api/drafts` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:drafts`, `pnpm test:db:drafts-route`, `pnpm test:boundaries` |
+| `draft-context/mock.server.ts` | `draft-context/index.server.ts` | validates ids and builds `DraftContext` from mock finders | Deleted when DB is the only source | `pnpm test:drafts`, `pnpm test:boundaries` |
+| `draft-context/db.server.ts` | `draft-context/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + People/Catalog repo hydration | Same repository composition with real auth | `pnpm test:db:drafts-route` |
 | `draft-generator/mock.server.ts` | `POST /api/drafts` | mock recipe + instruction rewrite to `MessageDraft` | LLM-backed `DraftGenerator` implementation | `pnpm test:drafts` |
 
 The `app/` tree should not import `lib/mock.ts` directly. If a page needs
@@ -115,9 +121,16 @@ and no `BYPASSRLS`. `ownerId === null` is deliberately fail-closed: the
 helper sets `app.user_id` to the empty string, `current_user_id()` returns
 `NULL`, and per-user policies see no rows.
 
-`/api/people`, Home, and People can now reach this DB layer when
-`KEEPSAKE_DATA_SOURCE=db`. The default remains mock so local UI work does not
-require Postgres.
+`/api/people`, Home, People, and `/api/drafts` context resolution can now
+reach this DB layer when `KEEPSAKE_DATA_SOURCE=db`. The default remains mock
+so local UI work does not require Postgres, and draft generation itself is
+still handled by `draft-generator/mock.server.ts`.
+
+For `/api/drafts`, the route remains deliberately thin: parse the JSON body,
+call `resolveDraftContext(input)`, then pass the resolved context to the mock
+draft generator. The client contract is still only
+`{ personId, occasionId, userInstruction }`. Relationship, cultureRule, and
+tone are server-authoritative and are not accepted as client overrides.
 
 ### Service contracts
 
@@ -244,7 +257,7 @@ wired.
 route/repository composition layer when persistence lands; the public draft
 returned to the UI remains the `MessageDraft` shape.
 
-## How the four compose at the `/api/drafts` route
+## How these compose at the `/api/drafts` route
 
 ```
 POST /api/drafts
@@ -267,6 +280,11 @@ The client still sends only `{ personId, occasionId, userInstruction }`.
 client trying to specify a culture or relationship is rejected at
 `/api/drafts` request parsing — the route schema does not accept those
 fields.
+
+Current DB mode implements only the context-resolution half of this diagram:
+person, catalog, and occasion hydration happen under RLS, then the existing
+mock draft generator returns the `MessageDraft`. Draft persistence and LLM
+generation are still future work.
 
 ## Open questions
 

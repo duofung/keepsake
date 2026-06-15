@@ -17,7 +17,7 @@ export type DraftContextResolution =
   | { ok: true; ctx: DraftContext }
   | { ok: false; status: 400 | 404 | 500; error: string };
 
-export async function resolveDraftContext(
+export async function resolveMockDraftContext(
   input: DraftRequest,
 ): Promise<DraftContextResolution> {
   // 1. Required-field validation. The contract is intentionally narrow:

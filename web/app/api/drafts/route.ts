@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { DraftRequest } from "@/lib/domain";
-import { resolveDraftContext } from "@/lib/server/draft-context/mock.server";
+import { resolveDraftContext } from "@/lib/server/draft-context/index.server";
 import { createMockDraftGenerator } from "@/lib/server/draft-generator/mock.server";
 
 export const dynamic = "force-dynamic";

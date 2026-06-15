@@ -55,11 +55,13 @@ client                    server
   │                         │      │   1. await req.json()
   │                         │      │
   │                         │      ▼
-  │                         │  lib/server/draft-context/mock.server.ts
+  │                         │  lib/server/draft-context/index.server.ts
   │                         │      │   resolveDraftContext(input)
   │                         │      │     · validate required fields
-  │                         │      │     · findPerson / findRelationship / findCulture
-  │                         │      │     · findOccasion + cross-person check
+  │                         │      │     · mock by default
+  │                         │      │     · DB/RLS/repos when KEEPSAKE_DATA_SOURCE=db
+  │                         │      │     · hydrate person / relationship / culture / occasion
+  │                         │      │     · cross-person occasion check
   │                         │      │   → { ok:true, ctx } | { ok:false, status, error }
   │                         │      │
   │                         │      ▼ (if ok)
@@ -73,8 +75,8 @@ client                    server
   │                         │
 ```
 
-Route is `force-dynamic`. No DB call today; the `mock.server.ts` files are
-the seams that will become repository calls.
+Route is `force-dynamic`. The generator remains mock-backed; the context
+resolver is mock by default and DB-backed when `KEEPSAKE_DATA_SOURCE=db`.
 
 ---
 
@@ -83,14 +85,14 @@ the seams that will become repository calls.
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
 | Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; History reads its mock seam; Workspace fetches `/api/people` and `/api/drafts` at runtime; Profile is static settings UI. | yes (client fetch) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/people/route.ts`, `app/api/drafts/route.ts` | Parse/return JSON and delegate. `/api/people` can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` remains mock-context + mock-generator. | yes | `/api/people` in DB mode | no |
-| Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts`, mock seams for history/drafts | Server-only orchestration. The people payload seam is now the first DB runtime vertical; draft/history seams remain mock-backed. | no | yes for people DB mode | no (mock generator only) |
+| API routes | `app/api/people/route.ts`, `app/api/drafts/route.ts` | Parse/return JSON and delegate. `/api/people` and `/api/drafts` can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` still uses the mock generator. | yes | people + draft-context in DB mode | no |
+| Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts`, mock seams for history/generation | Server-only orchestration. People payload and draft context are DB-capable runtime verticals; history and draft generation remain mock-backed. | no | yes in DB mode | no (mock generator only) |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
 | Presentation | `lib/presentation.ts` | Maps `OccasionKind`/`Tone`/`Channel` → icon names, gradients, chip text. UI only. | no | no | no |
 | Repository implementations | `lib/repositories/catalog.server.ts`, `lib/repositories/people.server.ts` | Read-side Postgres implementations for catalog and people/occasion payloads; write methods are intentionally not implemented yet. | no | yes | no |
 | DB scripts | `db/schema.sql`, `db/seed_catalog.sql`, `scripts/seed-dev-fixtures.mjs` | Postgres 17 schema + catalog seed + encrypted local-dev fixture seed. | no | yes (manual/dev) | no |
-| Smoke tests | `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, DB Docker tests | Default `pnpm test` covers mock HTTP contracts. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths. | yes (HTTP) | DB suite only | no |
+| Smoke tests | `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, DB Docker tests | Default `pnpm test` covers mock HTTP contracts. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed `/api/people` and `/api/drafts`. | yes (HTTP) | DB suite only | no |
 
 ---
 
@@ -112,7 +114,8 @@ PR/agent prompt before touching.
 4. **`POST /api/drafts` response shape** = `MessageDraft`. Same coverage.
 5. **Culture rules resolve server-side only.** The client never sends a
    `CultureRule`; the server reads it from the person's `culture_id`.
-   Implementation in `lib/server/draft-context/mock.server.ts`.
+   Implementation in `lib/server/draft-context/index.server.ts`, backed by
+   mock by default or DB context when `KEEPSAKE_DATA_SOURCE=db`.
 6. **`MessageDraft.paragraphs[].text` is plain text.** Highlights live in
    `paragraphs[].highlights: string[]`, applied by the client renderer
    (see [`app/workspace/page.tsx`](../app/workspace/page.tsx) — the
@@ -126,7 +129,7 @@ PR/agent prompt before touching.
 
 ## 4. Runtime seams (what swaps when we wire the DB / LLM)
 
-Four files. They're the only ones that move when the back end goes real.
+These seams are the only places that move when the back end goes real.
 
 | Seam | What it does today | What replaces it |
 |---|---|---|
@@ -134,7 +137,9 @@ Four files. They're the only ones that move when the back end goes real.
 | `lib/server/people-payload/mock.server.ts` | `getMockPeoplePayload()` reads `peoplePayload()` from `lib/mock.ts`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/people-payload/db.server.ts` | `getDbPeoplePayload()` resolves dev owner, opens transaction, calls `PeopleRepository.listWithRelations(ownerId)`. | Real auth replaces `auth/current-user.server.ts`; repository call remains. |
 | `lib/server/delivery-history/mock.server.ts` | `getDeliveryHistory()` reads `deliveries` from `lib/mock.ts`. | `DeliveryRepository.listHistory(ownerId)` — reverse-chronological sent history under RLS. |
-| `lib/server/draft-context/mock.server.ts` | `resolveDraftContext(input)` validates + finds person/relationship/culture/occasion in the mock store. | Composition of `PeopleRepository.findById` + `CatalogRepository.getRelationship/getCulture` + `PeopleRepository.findOccasionForPerson`, all inside a `db/transaction.server.ts` with `SET LOCAL app.user_id`. |
+| `lib/server/draft-context/index.server.ts` | Dispatches to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. | Later auth replaces `DEV_OWNER_ID`; route import stays the same. |
+| `lib/server/draft-context/mock.server.ts` | `resolveMockDraftContext(input)` validates + finds person/relationship/culture/occasion in the mock store. | Kept as fallback until all runtime paths are DB-backed. |
+| `lib/server/draft-context/db.server.ts` | `resolveDbDraftContext(input)` resolves the owner, opens a transaction, hydrates person/catalog/occasion via repos under RLS. | Same repo composition with real auth. |
 | `lib/server/draft-generator/mock.server.ts` | `createMockDraftGenerator().generate(ctx)` builds a `MessageDraft` from `baseRecipe` + `applyInstruction` — pure data-driven heuristics. | A real `DraftGenerator` implementation backed by an LLM client. Same `DraftGenerator` interface from `lib/server/draft-generator/types.ts`. |
 
 The route handlers do not move.
@@ -148,7 +153,8 @@ The route handlers do not move.
 | `lib/server/people-payload/index.server.ts` | Keep as dispatcher until mock can be deleted | `getPeoplePayload()` signature; `GET /api/people` returning `PeoplePayload` | `pnpm test:people`, `pnpm test:db:people-route` |
 | `lib/server/people-payload/db.server.ts` | Real auth-backed owner resolution instead of `DEV_OWNER_ID` | Repository call and `PeoplePayload` shape | `pnpm test:db:people-route` |
 | `lib/server/delivery-history/mock.server.ts` | `DeliveryRepository.listHistory(ownerId)` impl, called from the same helper file (renamed to e.g. `delivery-history/db.server.ts`) | `getDeliveryHistory()` signature; History page receives `Delivery[]`; email/post remain badges rather than separate product modes | TODO: add `scripts/test-history.mjs` or page-level smoke |
-| `lib/server/draft-context/mock.server.ts` | Repository-backed resolver under RLS; same discriminated union return | `resolveDraftContext(input)` signature; `DraftContextResolution` shape (`ok:true ∣ ok:false+status+error`); `400 / 404 / 500` boundary | `pnpm test:drafts` (`missing fields → 400`, `unknown person → 404` indirectly via `Lin initial → 200`, `cross-person occasion → 404`) |
+| `lib/server/draft-context/index.server.ts` | Keep as dispatcher until mock can be deleted | `resolveDraftContext(input)` signature; `DraftContextResolution` shape (`ok:true ∣ ok:false+status+error`); `400 / 404 / 500` boundary | `pnpm test:drafts`, `pnpm test:db:drafts-route` |
+| `lib/server/draft-context/db.server.ts` | Real auth-backed owner resolution instead of `DEV_OWNER_ID` | Repo composition only; route still parse → resolve → generate; mock generator still produces `MessageDraft` | `pnpm test:db:drafts-route` |
 | `lib/server/draft-generator/mock.server.ts` | LLM-backed implementation of `DraftGenerator` from `lib/server/draft-generator/types.ts` | `generate(ctx): Promise<MessageDraft>` signature; `DraftContext` input shape; `MessageDraft` output (paragraphs plain text, highlights array, attachedCard hints) | `pnpm test:drafts` (`tone = tender-intimate`, `tone = playful`, `tone = warm-festive`, no-Christmas, contains "Selamat Hari Raya") |
 | `lib/mock.ts` | Postgres queries via repos; this file is deleted, not migrated | The mock data shape (everything matches `lib/domain.ts`); the catalog ids (`'rel-partner'`, `'chinese'`, etc.) match `db/seed_catalog.sql` | Both smoke tests (any drift surfaces as a contract failure) |
 | `app/api/people/route.ts` | Unchanged | The 7-line shape: import server helper → return its result | `pnpm test:people` |
