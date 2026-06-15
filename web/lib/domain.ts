@@ -155,7 +155,7 @@ export type DeliveryStatus = "queued" | "sent" | "delivered" | "opened";
 
 export interface Delivery {
   id: ID;
-  personId: ID;             // who it went to (recipient may not be in People if archived)
+  personId: ID | null;      // who it went to; null when the original person row is gone or the recipient was never in People
   recipientName: string;    // denormalized for history rendering
   occasionKind: OccasionKind;
   occasionLabel: string;    // "Lunar New Year", "Valentine's note"

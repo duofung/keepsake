@@ -3,9 +3,9 @@
 The boundary between Postgres and the rest of the app. Most files here are
 still TypeScript interface declarations that compile against
 [`lib/domain.ts`](../domain.ts) and pair with [`db/schema.sql`](../../db/schema.sql).
-The first real implementations are `catalog.server.ts` and the read side of
-`people.server.ts`; the remaining repo methods will follow the same pattern
-as they land.
+The first real implementations are `catalog.server.ts`, the read side of
+`people.server.ts`, and the read side of `deliveries.server.ts`; the
+remaining repo methods will follow the same pattern as they land.
 
 ## What lives here
 
@@ -20,6 +20,7 @@ as they land.
 | [`people.server.ts`](./people.server.ts) | `PgPeopleRepository` — read-only runtime implementation for people + occasions, including encrypted columns via `lib/server/crypto/envelope.server.ts`. Write methods intentionally throw for now. |
 | [`drafts.ts`](./drafts.ts) | `DraftRepository` — persistence for `message_drafts`. |
 | [`deliveries.ts`](./deliveries.ts) | `DeliveryRepository` — `deliveries` reads + the send/webhook write paths. |
+| [`deliveries.server.ts`](./deliveries.server.ts) | `PgDeliveryRepository` — read-only runtime implementation for sent delivery history, including encrypted recipient/occasion labels. Send/webhook/worker methods intentionally throw for now. |
 
 ### Implementation file naming
 
@@ -164,7 +165,13 @@ itself is **not** here — `save()` takes an already-formed `MessageDraft`.
 
 ### DeliveryRepository
 
-Per-user reads + write paths shared with workers.
+Runtime implementation: `deliveries.server.ts` for `listByMonth` only.
+`pnpm test:db:deliveries` verifies decryption, reverse-chronological ordering,
+RLS behavior, and explicit transaction reuse against temporary Postgres.
+
+Per-user reads + write paths shared with workers. The write/worker methods
+are still declared for the future send pipeline but intentionally throw in
+the current runtime implementation.
 
 | Method | Returns | Caller |
 |---|---|---|

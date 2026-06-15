@@ -3,8 +3,8 @@
 Where server-only orchestration lives. This directory keeps `app/` and
 `components/` away from `lib/mock.ts`, SQL, crypto, and future auth/LLM
 clients. The people payload path is now the first real DB runtime vertical;
-the draft context path can also resolve from DB/RLS. Draft generation and
-history are still mock-backed seams.
+the draft context and delivery history paths can also resolve from DB/RLS.
+Draft generation is still mock-backed.
 
 The rule is simple: framework code calls `lib/server/*`; `lib/server/*`
 dispatches to mocks or repositories/services without leaking that choice into
@@ -24,7 +24,9 @@ lib/server/
 │   ├── mock.server.ts        ← current: mock fallback
 │   └── db.server.ts          ← current: DB-backed PeoplePayload
 ├── delivery-history/
-│   └── mock.server.ts        ← current: History data
+│   ├── index.server.ts       ← current: mock/db dispatcher
+│   ├── mock.server.ts        ← current: mock fallback
+│   └── db.server.ts          ← current: DB-backed History data
 ├── draft-context/
 │   ├── index.server.ts       ← current: mock/db dispatcher
 │   ├── mock.server.ts        ← current: mock fallback
@@ -84,7 +86,9 @@ small on purpose.
 | `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
-| `delivery-history/mock.server.ts` | History | `deliveries` from `lib/mock.ts` | `DeliveryRepository.listHistory(ownerId)` | `pnpm test:history`, `pnpm test:boundaries` |
+| `delivery-history/index.server.ts` | History | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db`; `app/history/page.tsx` only calls this server helper | Real auth owner resolution; eventually delete mock fallback | `pnpm test:history`, `pnpm test:db:history-route`, `pnpm test:boundaries` |
+| `delivery-history/mock.server.ts` | `delivery-history/index.server.ts` | `deliveries` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:history`, `pnpm test:boundaries` |
+| `delivery-history/db.server.ts` | `delivery-history/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `DeliveryRepository.listByMonth(ownerId, { limit: 50 })`; read-only History DB mode | Same repository read with real auth; send/enqueue/webhook/worker remain separate future paths | `pnpm test:db:deliveries`, `pnpm test:db:history-route` |
 | `draft-context/index.server.ts` | `POST /api/drafts` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:drafts`, `pnpm test:db:drafts-route`, `pnpm test:boundaries` |
 | `draft-context/mock.server.ts` | `draft-context/index.server.ts` | validates ids and builds `DraftContext` from mock finders | Deleted when DB is the only source | `pnpm test:drafts`, `pnpm test:boundaries` |
 | `draft-context/db.server.ts` | `draft-context/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + People/Catalog repo hydration | Same repository composition with real auth | `pnpm test:db:drafts-route` |
@@ -121,16 +125,28 @@ and no `BYPASSRLS`. `ownerId === null` is deliberately fail-closed: the
 helper sets `app.user_id` to the empty string, `current_user_id()` returns
 `NULL`, and per-user policies see no rows.
 
-`/api/people`, Home, People, and `/api/drafts` context resolution can now
-reach this DB layer when `KEEPSAKE_DATA_SOURCE=db`. The default remains mock
-so local UI work does not require Postgres, and draft generation itself is
-still handled by `draft-generator/mock.server.ts`.
+`/api/people`, Home, People, `/api/drafts` context resolution, and History
+delivery reads can now reach this DB layer when `KEEPSAKE_DATA_SOURCE=db`.
+The default remains mock so local UI work does not require Postgres, and
+draft generation itself is still handled by `draft-generator/mock.server.ts`.
 
 For `/api/drafts`, the route remains deliberately thin: parse the JSON body,
 call `resolveDraftContext(input)`, then pass the resolved context to the mock
 draft generator. The client contract is still only
 `{ personId, occasionId, userInstruction }`. Relationship, cultureRule, and
 tone are server-authoritative and are not accepted as client overrides.
+
+For History, the page remains a server component that calls
+`getDeliveryHistory()`. In DB mode that helper opens a user-scoped
+transaction and returns decrypted `Delivery[]` rows from
+`DeliveryRepository.listByMonth(ownerId, { limit: 50 })`. This is read-only:
+enqueue, send workers, provider webhooks, and status updates are not wired to
+the app yet.
+
+`DeliveryRepository` currently has only one runtime implementation method:
+`listByMonth`. The write/worker surface declared in the interface
+(`enqueue`, `markStatus`, `findByProviderMessageId`, `nextQueued`) still
+throws `not implemented` in the Postgres implementation.
 
 ### Service contracts
 
@@ -285,6 +301,27 @@ Current DB mode implements only the context-resolution half of this diagram:
 person, catalog, and occasion hydration happen under RLS, then the existing
 mock draft generator returns the `MessageDraft`. Draft persistence and LLM
 generation are still future work.
+
+## How these compose at the History page
+
+```
+app/history/page.tsx
+  │
+  ├─ delivery-history/index.server.ts
+  │   ├─ mock.server.ts  → lib/mock.ts deliveries          (default)
+  │   └─ db.server.ts    → auth/current-user
+  │                         db/transaction
+  │                         DeliveryRepository.listByMonth (KEEPSAKE_DATA_SOURCE=db)
+  │
+  └─ render existing History UI from Delivery[]
+```
+
+The DB branch is intentionally only a read path over sent deliveries.
+`app/history/page.tsx` does not import repositories, SQL helpers, or mock data
+directly. The future `DeliveryRepository.enqueue`, `markStatus`,
+`findByProviderMessageId`, and `nextQueued` methods still throw in the
+runtime implementation; send buttons, provider webhooks, and worker drain
+logic are not wired.
 
 ## Open questions
 

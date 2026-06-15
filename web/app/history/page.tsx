@@ -1,5 +1,5 @@
 import Icon from "@/components/Icon";
-import { getDeliveryHistory } from "@/lib/server/delivery-history/mock.server";
+import { getDeliveryHistory } from "@/lib/server/delivery-history/index.server";
 import { cardGradientByHint, channelBadge, occasionIcon } from "@/lib/presentation";
 import type { Delivery, OccasionKind } from "@/lib/domain";
 
