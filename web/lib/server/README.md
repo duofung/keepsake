@@ -1,9 +1,9 @@
 # `lib/server/` — server-only seams and services
 
-Where server-only orchestration lives. Today this directory contains four
-mock-backed seams that keep `app/` and `components/` away from `lib/mock.ts`.
-Tomorrow those same seams become the place where auth, transactions,
-repositories, crypto, and the LLM client are composed.
+Where server-only orchestration lives. This directory keeps `app/` and
+`components/` away from `lib/mock.ts`, SQL, crypto, and future auth/LLM
+clients. The people payload path is now the first real DB runtime vertical;
+draft and history paths are still mock-backed seams.
 
 The rule is simple: framework code calls `lib/server/*`; `lib/server/*`
 calls mocks today and repositories/services later.
@@ -18,7 +18,9 @@ passes.
 lib/server/
 ├── README.md
 ├── people-payload/
-│   └── mock.server.ts        ← current: GET /api/people + Home + People data
+│   ├── index.server.ts       ← current: mock/db dispatcher
+│   ├── mock.server.ts        ← current: mock fallback
+│   └── db.server.ts          ← current: DB-backed PeoplePayload
 ├── delivery-history/
 │   └── mock.server.ts        ← current: History data
 ├── draft-context/
@@ -26,11 +28,11 @@ lib/server/
 ├── draft-generator/
 │   ├── types.ts              ← DraftContext / DraftGenerator contracts
 │   └── mock.server.ts        ← current: mock MessageDraft generator
-├── auth/                     ← future: who is the caller?
+├── auth/                     ← current: dev owner seam; future real auth
 │   └── current-user.server.ts
 ├── db/                       ← current: request-path transaction helper
 │   └── transaction.server.ts
-└── crypto/                   ← future: encrypt/decrypt the 🔒 columns
+└── crypto/                   ← current: dev AES-GCM envelope helper
     └── envelope.server.ts
 ```
 
@@ -75,7 +77,9 @@ small on purpose.
 
 | Seam | Called by | Today | Future replacement | Guard |
 |---|---|---|---|---|
-| `people-payload/mock.server.ts` | `GET /api/people`, Home, People | `peoplePayload()` from `lib/mock.ts` | `PeopleRepository.listWithRelations(ownerId)` | `pnpm test:people`, `pnpm test:boundaries` |
+| `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
+| `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
+| `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
 | `delivery-history/mock.server.ts` | History | `deliveries` from `lib/mock.ts` | `DeliveryRepository.listHistory(ownerId)` | `pnpm test:history`, `pnpm test:boundaries` |
 | `draft-context/mock.server.ts` | `POST /api/drafts` | validates ids and builds `DraftContext` from mock finders | `PeopleRepository.findById`, `CatalogRepository.getRelationship/getCulture`, `PeopleRepository.findOccasionForPerson` inside `transaction(ownerId, ...)` | `pnpm test:drafts`, `pnpm test:boundaries` |
 | `draft-generator/mock.server.ts` | `POST /api/drafts` | mock recipe + instruction rewrite to `MessageDraft` | LLM-backed `DraftGenerator` implementation | `pnpm test:drafts` |
@@ -111,17 +115,18 @@ and no `BYPASSRLS`. `ownerId === null` is deliberately fail-closed: the
 helper sets `app.user_id` to the empty string, `current_user_id()` returns
 `NULL`, and per-user policies see no rows.
 
-This is only the DB base layer. No route, page, or component currently calls
-`transaction()`, and the shipped app remains mock-backed through the seams
-listed above.
+`/api/people`, Home, and People can now reach this DB layer when
+`KEEPSAKE_DATA_SOURCE=db`. The default remains mock so local UI work does not
+require Postgres.
 
 ### Service contracts
 
 ### `auth/current-user.server.ts`
 
-**Purpose.** Resolve the authenticated `OwnerId` from a `Request`. The
-only place in the codebase that reads cookies / `Authorization` headers
-and verifies session tokens.
+**Purpose.** Resolve the authenticated `OwnerId`. Today this is a dev-only
+seam that reads `DEV_OWNER_ID`; later it becomes the only place in the
+codebase that reads cookies / `Authorization` headers and verifies session
+tokens.
 
 **Likely surface.**
 

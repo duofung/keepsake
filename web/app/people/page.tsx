@@ -1,4 +1,4 @@
-import { getPeoplePayload } from "@/lib/server/people-payload/mock.server";
+import { getPeoplePayload } from "@/lib/server/people-payload/index.server";
 import PeopleClient from "./PeopleClient";
 
 export default async function PeoplePage() {

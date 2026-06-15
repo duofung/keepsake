@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
-import { getPeoplePayload } from "@/lib/server/people-payload/mock.server";
+import { getPeoplePayload } from "@/lib/server/people-payload/index.server";
 import { nodeChipText, urgencyLevel } from "@/lib/presentation";
 
 const SOON_WINDOW_DAYS = 30;

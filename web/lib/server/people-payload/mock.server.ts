@@ -13,9 +13,9 @@ import "server-only";
 // instead of importing `lib/mock.ts` directly. Client components must not
 // import it at all (Next.js enforces this via the "server-only" guard).
 
-import type { PeoplePayload } from "@/lib/domain";
 import { peoplePayload } from "@/lib/mock";
+import type { PeoplePayload } from "@/lib/domain";
 
-export async function getPeoplePayload(): Promise<PeoplePayload> {
+export async function getMockPeoplePayload(): Promise<PeoplePayload> {
   return peoplePayload();
 }

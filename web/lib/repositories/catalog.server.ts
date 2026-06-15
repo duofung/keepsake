@@ -80,7 +80,7 @@ export class PgCatalogRepository implements CatalogRepository {
       const result = await query<CultureRow>(
         activeTx,
         `
-          SELECT id, label, dot_color, festivals, palette, greetings, taboos
+          SELECT id, label, dot_color, festivals::text[] AS festivals, palette, greetings, taboos
           FROM cultures
           ORDER BY label, id
         `,
@@ -110,7 +110,7 @@ export class PgCatalogRepository implements CatalogRepository {
       const result = await query<CultureRow>(
         activeTx,
         `
-          SELECT id, label, dot_color, festivals, palette, greetings, taboos
+          SELECT id, label, dot_color, festivals::text[] AS festivals, palette, greetings, taboos
           FROM cultures
           WHERE id = $1
           LIMIT 1
