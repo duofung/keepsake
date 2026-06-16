@@ -255,8 +255,11 @@ PR/agent prompt before touching.
    [`db/schema.sql`](../db/schema.sql) is built around them.
 2. **`GET /api/people` response shape** = `PeoplePayload`. Covered by
    `pnpm test:people` (15 assertions).
-3. **Current-user shape** = `{ id, email, name, initials }`. `GET /api/session`
-   returns it as `{ user }`; `app/page.tsx` renders `name` in the greeting,
+3. **Current-user shape** =
+   `{ id, email, name, initials, sendingAccount }`. `sendingAccount` is
+   `null` today; future Gmail OAuth fills
+   `{ provider: "gmail", email, status }`. `GET /api/session` returns the shape
+   as `{ user }`; `app/page.tsx` renders `name` in the greeting,
    `app/workspace/page.tsx` passes it to the client composer as read-only sender
    identity, and `app/profile/page.tsx` renders the same shape through the
    server auth helper.
@@ -307,7 +310,7 @@ These seams are the only places that move when the back end goes real.
 
 | Seam | What it does today | What replaces it |
 |---|---|---|
-| `lib/server/auth/current-user.server.ts` | Resolves `{ id, email, name, initials }` and `OwnerId` from validated `DEV_OWNER_*` env. This is the only owner resolver; DB helpers keep calling `currentUserIdOrThrow()`, while `/api/session`, Home, Workspace, and Profile call `currentUserOrThrow()`. | Real session cookie / OAuth verification inside this module only. `/api/session` keeps returning `{ user }`; Home, Workspace, and Profile keep rendering the same identity shape; DB helper call sites keep their owner-id contract. |
+| `lib/server/auth/current-user.server.ts` | Resolves `{ id, email, name, initials, sendingAccount }` and `OwnerId` from validated `DEV_OWNER_*` env. `sendingAccount` is `null` until Gmail OAuth is wired. This is the only owner resolver; DB helpers keep calling `currentUserIdOrThrow()`, while `/api/session`, Home, Workspace, and Profile call `currentUserOrThrow()`. | Real session cookie / OAuth verification and Gmail account lookup inside this module only. `/api/session` keeps returning `{ user }`; Home, Workspace, and Profile keep rendering the same identity shape; DB helper call sites keep their owner-id contract. |
 | `lib/server/people-payload/index.server.ts` | Dispatches to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. | Later auth replaces `DEV_OWNER_ID`; route/page imports stay the same. |
 | `lib/server/people-payload/mock.server.ts` | `getMockPeoplePayload()` reads `peoplePayload()` from `lib/mock.ts`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/people-payload/db.server.ts` | `getDbPeoplePayload()` resolves dev owner, opens transaction, calls `PeopleRepository.listWithRelations(ownerId)`. | Real auth replaces `auth/current-user.server.ts`; repository call remains. |
@@ -330,7 +333,7 @@ The route handlers do not move.
 
 | Current module | Future replacement | What should NOT change | Tests guarding it |
 |---|---|---|---|
-| `lib/server/auth/current-user.server.ts` | Real auth-backed current user resolver | `currentUserIdOrThrow(): OwnerId`; `currentUserOrThrow()` returning `{ id, email, name, initials }`; typed unauthenticated vs misconfigured errors | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:boundaries` |
+| `lib/server/auth/current-user.server.ts` | Real auth-backed current user resolver | `currentUserIdOrThrow(): OwnerId`; `currentUserOrThrow()` returning `{ id, email, name, initials, sendingAccount }`; typed unauthenticated vs misconfigured errors | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:boundaries` |
 | `app/api/session/route.ts` | Unchanged route contract over real auth | Thin shape: call auth service → return `{ user }`; 401 for missing auth; 500 for invalid server auth config; no DB/cookies/OAuth/Gmail writes in the route | `pnpm test:auth` |
 | `lib/server/people-payload/index.server.ts` | Keep as dispatcher until mock can be deleted | `getPeoplePayload()` signature; `GET /api/people` returning `PeoplePayload` | `pnpm test:people`, `pnpm test:db:people-route` |
 | `lib/server/people-payload/db.server.ts` | Real auth-backed owner resolution instead of `DEV_OWNER_ID` | Repository call and `PeoplePayload` shape | `pnpm test:db:people-route` |

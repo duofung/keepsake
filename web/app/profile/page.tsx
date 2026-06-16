@@ -31,7 +31,12 @@ export default function ProfilePage() {
       </div>
 
       <Section label="SENDING">
-        <Row icon="i-mail" title="Sending email" desc="Emails are sent from your connected address" right={<Connected />} />
+        <Row
+          icon="i-mail"
+          title="Sending email"
+          desc={user.sendingAccount ? `Emails send from ${user.sendingAccount.email}` : "No sending account connected yet"}
+          right={<SendingEmailStatus sendingAccount={user.sendingAccount} />}
+        />
         <Row icon="i-truck" title="Mailing address book" desc="Where printed cards get sent from" right={<Chev />} last />
       </Section>
 
@@ -97,11 +102,26 @@ function Val({ children }: { children: React.ReactNode }) {
 function Chev() {
   return <span style={{ color: "var(--gray-3)", fontSize: 17 }}><Icon name="i-chev" /></span>;
 }
-function Connected() {
+function SendingEmailStatus({ sendingAccount }: {
+  sendingAccount: { email: string; status: "connected" | "expired" } | null;
+}) {
+  if (!sendingAccount) {
+    return (
+      <span style={{ fontSize: 11, color: "var(--gray-2)", fontWeight: 500 }}>
+        Not connected
+      </span>
+    );
+  }
+
+  const connected = sendingAccount.status === "connected";
+
   return (
-    <span style={{ fontSize: 11, color: "#3F9E78", display: "flex", alignItems: "center", gap: 5, fontWeight: 500 }}>
-      <span style={{ fontSize: 13 }}><Icon name="i-check-plain" /></span>
-      Connected
+    <span style={{
+      fontSize: 11, color: connected ? "#3F9E78" : "var(--gray-2)",
+      display: "flex", alignItems: "center", gap: 5, fontWeight: 500,
+    }}>
+      {connected && <span style={{ fontSize: 13 }}><Icon name="i-check-plain" /></span>}
+      {connected ? "Connected" : "Expired"}
     </span>
   );
 }

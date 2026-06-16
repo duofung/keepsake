@@ -28,7 +28,8 @@ const cases = [
       return body?.user?.id === "22222222-2222-4222-8222-222222222222"
         && body.user.email === "session-owner@example.test"
         && body.user.name === "Session Owner"
-        && body.user.initials === "SO";
+        && body.user.initials === "SO"
+        && body.user.sendingAccount === null;
     },
   },
   {

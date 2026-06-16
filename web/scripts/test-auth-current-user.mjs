@@ -115,6 +115,7 @@ try {
     assert(user.email === validEmail, "valid env returns user.email");
     assert(user.name === validName, "valid env returns user.name");
     assert(user.initials === "AL", "valid env derives initials");
+    assert(user.sendingAccount === null, "valid env returns null sendingAccount");
     assert(currentUserIdOrThrow() === validOwnerId, "currentUserIdOrThrow returns OwnerId");
   });
 

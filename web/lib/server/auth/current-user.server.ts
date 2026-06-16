@@ -22,6 +22,13 @@ export interface CurrentUser {
   readonly email: string;
   readonly name: string;
   readonly initials: string;
+  readonly sendingAccount: SendingAccount | null;
+}
+
+export interface SendingAccount {
+  readonly provider: "gmail";
+  readonly email: string;
+  readonly status: "connected" | "expired";
 }
 
 export function currentUserIdOrThrow(): OwnerId {
@@ -57,6 +64,7 @@ export function currentUserOrThrow(): CurrentUser {
     email,
     name,
     initials: initialsFor(name, email),
+    sendingAccount: null,
   };
 }
 

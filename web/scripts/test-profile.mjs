@@ -95,6 +95,8 @@ try {
   check("renders current user email", body.includes(testUser.email));
   check("renders current user initials", body.includes(testUser.initials));
   check("does not render old hard-coded email", !body.includes("arthur@keepsake.app"));
+  check("sending email is not connected", body.includes("Not connected"));
+  check("does not render fake connected email status", !/>Connected</.test(body));
   check("keeps subscription badge", body.includes("Keepsake+"));
   check("keeps Sending section", body.includes("SENDING"));
   check("keeps Preferences section", body.includes("PREFERENCES"));

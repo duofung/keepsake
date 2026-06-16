@@ -99,6 +99,7 @@ try {
   check("renders sender name", body.includes(testUser.name));
   check("renders sender email", body.includes(testUser.email));
   check("renders sender initials", body.includes(testUser.initials));
+  check("renders missing sender configuration", body.includes("no sender configured"));
   check("keeps tone controls", body.includes("Tone:"));
   check("keeps send footer", body.includes("Send now, or schedule for the day"));
   check("does not mention Gmail", !/gmail/i.test(body));

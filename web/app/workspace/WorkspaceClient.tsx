@@ -23,6 +23,13 @@ export interface WorkspaceCurrentUser {
   readonly email: string;
   readonly name: string;
   readonly initials: string;
+  readonly sendingAccount: WorkspaceSendingAccount | null;
+}
+
+export interface WorkspaceSendingAccount {
+  readonly provider: "gmail";
+  readonly email: string;
+  readonly status: "connected" | "expired";
 }
 
 export default function WorkspaceClient({
@@ -228,6 +235,9 @@ export default function WorkspaceClient({
     : "Last note · 2 mo ago";
   const nodeIcon = occasion ? occasionIcon[occasion.kind] : "i-bulb";
   const activeVersionId = selectedVersionId ?? draft?.id ?? null;
+  const senderLabel = currentUser.sendingAccount
+    ? currentUser.sendingAccount.email
+    : `${currentUser.email} (no sender configured)`;
 
   return (
     <div className="ks-workspace-frame">
@@ -451,7 +461,7 @@ export default function WorkspaceClient({
                 {currentUser.initials}
               </span>
               <span style={{ color: "var(--ink)", fontWeight: 500 }}>{currentUser.name}</span>
-              <span style={{ color: "var(--gray-3)" }}>{currentUser.email}</span>
+              <span style={{ color: "var(--gray-3)" }}>{senderLabel}</span>
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "5px 0", fontSize: 12.5 }}>
               <span style={{ color: "var(--gray-3)", width: 48 }}>Subject</span>
