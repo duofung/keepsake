@@ -56,7 +56,9 @@ Current implementation:
 - Dynamic route.
 - Reads validated `DEV_OWNER_*` values through
   `lib/server/auth/current-user.server.ts`.
-- Returns `sendingAccount: null`.
+- Mock mode returns `sendingAccount: null`.
+- DB mode fills `sendingAccount` from the owner's primary `gmail_accounts`
+  row when one exists; missing row still returns `null`.
 - Returns 401 when dev auth is missing.
 - Returns 500 when dev auth is misconfigured.
 
@@ -64,7 +66,7 @@ Future implementation:
 
 - Keep `{ user }` stable.
 - Resolve session/cookies/OAuth inside `auth/current-user.server.ts`.
-- Fill `sendingAccount` after Gmail account lookup.
+- Fill the same `sendingAccount` shape from real session-backed account lookup.
 
 ## GET /api/oauth/gmail/start
 

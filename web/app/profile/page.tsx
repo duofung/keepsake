@@ -3,8 +3,8 @@ import { currentUserOrThrow } from "@/lib/server/auth/current-user.server";
 
 export const dynamic = "force-dynamic";
 
-export default function ProfilePage() {
-  const user = currentUserOrThrow();
+export default async function ProfilePage() {
+  const user = await currentUserOrThrow();
 
   return (
     <div className="ks-page">

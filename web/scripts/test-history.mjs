@@ -60,7 +60,12 @@ const nextBin = resolve(projectRoot, "node_modules/.bin/next");
 const child = spawn(nextBin, ["dev", "--port", String(PORT)], {
   cwd: projectRoot,
   stdio: ["ignore", "pipe", "pipe"],
-  env: { ...process.env, BROWSER: "none", NEXT_TELEMETRY_DISABLED: "1" },
+  env: {
+    ...process.env,
+    BROWSER: "none",
+    KEEPSAKE_DATA_SOURCE: "mock",
+    NEXT_TELEMETRY_DISABLED: "1",
+  },
 });
 
 let serverError = "";

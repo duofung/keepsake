@@ -93,7 +93,7 @@ small on purpose.
 
 | Seam | Called by | Today | Future replacement | Guard |
 |---|---|---|---|---|
-| `auth/current-user.server.ts` | `/api/session`, Home, Workspace, Profile, DB-backed server helpers | Resolves `{ id, email, name, initials, sendingAccount }` from `DEV_OWNER_*`; `sendingAccount` is `null` until Gmail OAuth is wired; `currentUserIdOrThrow()` remains the owner-id compatibility helper | Cookie/session/OAuth and Gmail account lookup inside this file only; route, Home, Workspace, Profile, and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:boundaries` |
+| `auth/current-user.server.ts` | `/api/session`, Home, Workspace, Profile, DB-backed server helpers | Resolves `{ id, email, name, initials, sendingAccount }` from `DEV_OWNER_*`; mock mode returns `sendingAccount: null`, DB mode hydrates it from the owner primary Gmail account; `currentUserIdOrThrow()` remains the synchronous owner-id compatibility helper | Cookie/session/OAuth inside this file only; route, Home, Workspace, Profile, and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:db:current-user`, `pnpm test:boundaries` |
 | `oauth/gmail.server.ts` | `GET /api/oauth/gmail/start`, `GET /api/oauth/gmail/callback` | Defines the Gmail OAuth start/callback contract and returns explicit 501 `not_configured` placeholders once the caller is authenticated. Callback also returns 400 for provider denial or missing `code/state`. | Google authorization URL generation, OAuth state semantics, token exchange, and account persistence through `GmailAccountRepository` over `gmail_accounts`. Route files stay parse/query → auth → delegate → JSON/redirect, and should only apply plain-data redirect/cookie instructions returned by the seam. | `pnpm test:oauth`, `pnpm test:boundaries` |
 | `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
@@ -246,7 +246,7 @@ export class AuthError extends Error {
   readonly kind: "unauthenticated" | "misconfigured";
 }
 
-export function currentUserOrThrow(): CurrentUser;
+export function currentUserOrThrow(): Promise<CurrentUser>;
 export function currentUserIdOrThrow(): OwnerId;
 ```
 
@@ -254,7 +254,12 @@ export function currentUserIdOrThrow(): OwnerId;
 guard, and `DEV_OWNER_NAME` must be non-empty. `sendingAccount` is `null`
 until a Gmail OAuth/account lookup exists. Missing `DEV_OWNER_ID` throws
 `AuthError { kind: "unauthenticated" }`; invalid owner env throws
-`AuthError { kind: "misconfigured" }`.
+`AuthError { kind: "misconfigured" }`. In mock mode `sendingAccount` stays
+`null`. In DB mode `currentUserOrThrow()` reads the owner's primary
+`gmail_accounts` row through `GmailAccountRepository.getPrimary()` and maps it
+to `{ provider: "gmail", email, status }`; missing rows still map to `null`.
+`currentUserIdOrThrow()` intentionally remains synchronous and never performs
+the Gmail account lookup.
 
 `pnpm env:init` runs `scripts/init-dev-env.mjs` to create `.env.local` from
 `.env.example`; it refuses to overwrite an existing `.env.local` unless
@@ -274,8 +279,9 @@ render the same identity shape without a client fetch. Workspace passes that
 shape into the client composer as read-only sender identity; when
 `sendingAccount` is `null`, it explicitly shows that no sender is configured.
 Profile uses the same field to avoid showing a fake connected state. This does
-not wire Gmail, OAuth, send/enqueue, or delivery worker paths. None of these
-paths touch DB, cookies, OAuth, Gmail, or write paths.
+not wire Google OAuth, provider SDKs, send/enqueue, or delivery worker paths.
+Only the full current-user helper performs the DB read in DB mode; the owner-id
+helper used by repository-backed seams remains a cheap env validation helper.
 
 **Provider choices to make later.** NextAuth / Auth.js vs. roll-our-own
 session table vs. Clerk / Supabase Auth. Decision deferred; the

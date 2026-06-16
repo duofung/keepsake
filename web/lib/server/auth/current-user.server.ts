@@ -4,6 +4,7 @@ import type { OwnerId } from "@/lib/repositories";
 
 const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL_TEXT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DATA_SOURCE_VALUES = new Set(["mock", "db"]);
 
 export type AuthErrorKind = "unauthenticated" | "misconfigured";
 
@@ -32,10 +33,19 @@ export interface SendingAccount {
 }
 
 export function currentUserIdOrThrow(): OwnerId {
-  return currentUserOrThrow().id;
+  return currentUserBaseOrThrow().id;
 }
 
-export function currentUserOrThrow(): CurrentUser {
+export async function currentUserOrThrow(): Promise<CurrentUser> {
+  const user = currentUserBaseOrThrow();
+
+  return {
+    ...user,
+    sendingAccount: await sendingAccountFor(user.id),
+  };
+}
+
+function currentUserBaseOrThrow(): Omit<CurrentUser, "sendingAccount"> {
   const id = process.env.DEV_OWNER_ID?.trim() ?? "";
   const email = process.env.DEV_OWNER_EMAIL?.trim() ?? "";
   const name = process.env.DEV_OWNER_NAME?.trim() ?? "";
@@ -64,8 +74,37 @@ export function currentUserOrThrow(): CurrentUser {
     email,
     name,
     initials: initialsFor(name, email),
-    sendingAccount: null,
   };
+}
+
+async function sendingAccountFor(ownerId: OwnerId): Promise<SendingAccount | null> {
+  if (dataSource() !== "db") return null;
+
+  const { createGmailAccountRepository } = await import(
+    "@/lib/repositories/gmail-accounts.server"
+  );
+  const account = await createGmailAccountRepository().getPrimary(ownerId);
+
+  if (!account) return null;
+
+  return {
+    provider: "gmail",
+    email: account.email,
+    status: account.status,
+  };
+}
+
+function dataSource(): "mock" | "db" {
+  const value = process.env.KEEPSAKE_DATA_SOURCE?.trim() || "mock";
+
+  if (!DATA_SOURCE_VALUES.has(value)) {
+    throw new AuthError(
+      "misconfigured",
+      `Unsupported KEEPSAKE_DATA_SOURCE "${value}".`,
+    );
+  }
+
+  return value as "mock" | "db";
 }
 
 function initialsFor(name: string, email: string): string {

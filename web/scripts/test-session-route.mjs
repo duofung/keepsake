@@ -11,7 +11,14 @@ import { dirname, resolve } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 const BASE_PORT = Number(process.env.TEST_SESSION_PORT ?? 3139);
-const AUTH_ENV_KEYS = ["DEV_OWNER_ID", "DEV_OWNER_EMAIL", "DEV_OWNER_NAME"];
+const AUTH_ENV_KEYS = [
+  "DEV_OWNER_ID",
+  "DEV_OWNER_EMAIL",
+  "DEV_OWNER_NAME",
+  "DATABASE_URL",
+  "DEV_ENCRYPTION_KEY_BASE64",
+  "KEEPSAKE_DATA_SOURCE",
+];
 const nextBin = resolve(projectRoot, "node_modules/.bin/next");
 
 const cases = [

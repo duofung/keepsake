@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    return NextResponse.json({ user: currentUserOrThrow() });
+    return NextResponse.json({ user: await currentUserOrThrow() });
   } catch (error) {
     if (error instanceof AuthError) {
       const unauthenticated = error.kind === "unauthenticated";

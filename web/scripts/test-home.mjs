@@ -70,6 +70,7 @@ const child = spawn(nextBin, ["dev", "--port", String(PORT)], {
     DEV_OWNER_ID: testUser.id,
     DEV_OWNER_EMAIL: testUser.email,
     DEV_OWNER_NAME: testUser.name,
+    KEEPSAKE_DATA_SOURCE: "mock",
     NEXT_TELEMETRY_DISABLED: "1",
   },
 });

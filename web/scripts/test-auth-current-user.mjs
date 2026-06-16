@@ -12,7 +12,12 @@ import ts from "typescript";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = normalize(join(__dirname, ".."));
-const AUTH_ENV_KEYS = ["DEV_OWNER_ID", "DEV_OWNER_EMAIL", "DEV_OWNER_NAME"];
+const AUTH_ENV_KEYS = [
+  "DEV_OWNER_ID",
+  "DEV_OWNER_EMAIL",
+  "DEV_OWNER_NAME",
+  "KEEPSAKE_DATA_SOURCE",
+];
 
 const validOwnerId = "11111111-1111-4111-8111-111111111111";
 const validEmail = "ada.lovelace@example.test";
@@ -25,7 +30,7 @@ function assert(condition, label, detail = "") {
   process.stdout.write(`  ✓ ${label}\n`);
 }
 
-function withAuthEnv(values, fn) {
+async function withAuthEnv(values, fn) {
   const previous = new Map(AUTH_ENV_KEYS.map((key) => [key, process.env[key]]));
 
   try {
@@ -39,7 +44,7 @@ function withAuthEnv(values, fn) {
       }
     }
 
-    return fn();
+    return await fn();
   } finally {
     for (const key of AUTH_ENV_KEYS) {
       const value = previous.get(key);
@@ -80,9 +85,9 @@ async function loadCurrentUserModule() {
   }
 }
 
-function assertAuthError(label, fn, expectedKind, AuthError) {
+async function assertAuthError(label, fn, expectedKind, AuthError) {
   try {
-    fn();
+    await fn();
   } catch (error) {
     assert(error instanceof AuthError, `${label} throws AuthError`);
     assert(
@@ -105,12 +110,12 @@ try {
     currentUserOrThrow,
   } = await loadCurrentUserModule();
 
-  withAuthEnv({
+  await withAuthEnv({
     DEV_OWNER_ID: validOwnerId,
     DEV_OWNER_EMAIL: validEmail,
     DEV_OWNER_NAME: validName,
-  }, () => {
-    const user = currentUserOrThrow();
+  }, async () => {
+    const user = await currentUserOrThrow();
     assert(user.id === validOwnerId, "valid env returns user.id");
     assert(user.email === validEmail, "valid env returns user.email");
     assert(user.name === validName, "valid env returns user.name");
@@ -119,11 +124,11 @@ try {
     assert(currentUserIdOrThrow() === validOwnerId, "currentUserIdOrThrow returns OwnerId");
   });
 
-  withAuthEnv({
+  await withAuthEnv({
     DEV_OWNER_EMAIL: validEmail,
     DEV_OWNER_NAME: validName,
-  }, () => {
-    assertAuthError(
+  }, async () => {
+    await assertAuthError(
       "missing DEV_OWNER_ID",
       () => currentUserOrThrow(),
       "unauthenticated",
@@ -131,12 +136,12 @@ try {
     );
   });
 
-  withAuthEnv({
+  await withAuthEnv({
     DEV_OWNER_ID: "not-a-uuid",
     DEV_OWNER_EMAIL: validEmail,
     DEV_OWNER_NAME: validName,
-  }, () => {
-    assertAuthError(
+  }, async () => {
+    await assertAuthError(
       "invalid DEV_OWNER_ID",
       () => currentUserOrThrow(),
       "misconfigured",
@@ -144,12 +149,12 @@ try {
     );
   });
 
-  withAuthEnv({
+  await withAuthEnv({
     DEV_OWNER_ID: validOwnerId,
     DEV_OWNER_EMAIL: "not-an-email",
     DEV_OWNER_NAME: validName,
-  }, () => {
-    assertAuthError(
+  }, async () => {
+    await assertAuthError(
       "invalid DEV_OWNER_EMAIL",
       () => currentUserOrThrow(),
       "misconfigured",
@@ -157,12 +162,12 @@ try {
     );
   });
 
-  withAuthEnv({
+  await withAuthEnv({
     DEV_OWNER_ID: validOwnerId,
     DEV_OWNER_EMAIL: validEmail,
     DEV_OWNER_NAME: "   ",
-  }, () => {
-    assertAuthError(
+  }, async () => {
+    await assertAuthError(
       "invalid DEV_OWNER_NAME",
       () => currentUserOrThrow(),
       "misconfigured",

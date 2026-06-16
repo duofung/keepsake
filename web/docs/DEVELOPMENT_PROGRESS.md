@@ -33,7 +33,7 @@ Rules:
 | People data | Stable read path | DB-backed people payload and repository reads. | People CRUD UI/API, imports, merge/archive semantics. |
 | Draft generation/persistence | Stable mock generator + DB persistence | DB-backed draft context/service, draft repository, latest/version reads. | Replace mock generator with real LLM behind same seam. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
-| Auth/current user | Stable dev seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring. | Real session/OAuth auth; DB-mode `sendingAccount` hydration. |
+| Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
 | Gmail OAuth | Contract only | OAuth route stubs, tests, repository contract + runtime token storage. | Real OAuth start/callback, state cookies, token exchange, account upsert. |
 | Sending account UI | Placeholder | Profile/Workspace can display connected/not connected shape. | Connect/disconnect behavior, expired state repair flow. |
 | Email send | Not started | No accidental send behavior. | Send endpoint, queue, Gmail send worker, delivery status updates. |
@@ -43,6 +43,8 @@ Rules:
 ## Immediate Execution Queue
 
 ### P0. Hydrate `CurrentUser.sendingAccount` From DB
+
+Status: done. Guarded by `pnpm test:db:current-user`.
 
 Goal: when `KEEPSAKE_DATA_SOURCE=db`, `currentUserOrThrow()` should use
 `GmailAccountRepository.getPrimary(ownerId)` to populate
@@ -272,4 +274,3 @@ Checkpoint when all are true:
 - CC has no blockers, or blockers have been fixed and re-reviewed.
 - `git status --short` is clean after commit.
 - No Keepsake test Docker containers or dev servers are left behind.
-

@@ -291,17 +291,19 @@ PR/agent prompt before touching.
 2. **`GET /api/people` response shape** = `PeoplePayload`. Covered by
    `pnpm test:people` (15 assertions).
 3. **Current-user shape** =
-   `{ id, email, name, initials, sendingAccount }`. `sendingAccount` is
-   `null` today; future Gmail OAuth fills
-   `{ provider: "gmail", email, status }`. `GET /api/session` returns the shape
+   `{ id, email, name, initials, sendingAccount }`. Mock mode returns
+   `sendingAccount: null`; DB mode fills it from the owner's primary
+   `gmail_accounts` row as `{ provider: "gmail", email, status }`.
+   `GET /api/session` returns the shape
    as `{ user }`; `app/page.tsx` renders `name` in the greeting,
    `app/workspace/page.tsx` passes it to the client composer as read-only sender
    identity, and `app/profile/page.tsx` renders the same shape through the
-   server auth helper.
+   server auth helper. Covered by `pnpm test:auth`, `pnpm test:home`,
+   `pnpm test:workspace`, `pnpm test:profile`, and
+   `pnpm test:db:current-user`.
    The route calls only `auth/current-user`, maps missing auth to 401, and
    maps invalid dev env to 500. It is the public contract that real auth will
-   preserve. Covered by `pnpm test:auth`, `pnpm test:home`,
-   `pnpm test:workspace`, and `pnpm test:profile`.
+   preserve.
 4. **Local env helpers** = `scripts/init-dev-env.mjs` and
    `scripts/check-dev-env.mjs`. `pnpm env:init` creates `.env.local` from
    `.env.example` and refuses to overwrite unless `--force` is passed.
@@ -354,7 +356,7 @@ These seams are the only places that move when the back end goes real.
 
 | Seam | What it does today | What replaces it |
 |---|---|---|
-| `lib/server/auth/current-user.server.ts` | Resolves `{ id, email, name, initials, sendingAccount }` and `OwnerId` from validated `DEV_OWNER_*` env. `sendingAccount` is `null` until Gmail OAuth is wired. This is the only owner resolver; DB helpers keep calling `currentUserIdOrThrow()`, while `/api/session`, Home, Workspace, and Profile call `currentUserOrThrow()`. | Real session cookie / OAuth verification and Gmail account lookup inside this module only. `/api/session` keeps returning `{ user }`; Home, Workspace, and Profile keep rendering the same identity shape; DB helper call sites keep their owner-id contract. |
+| `lib/server/auth/current-user.server.ts` | Resolves `{ id, email, name, initials, sendingAccount }` and `OwnerId` from validated `DEV_OWNER_*` env. Mock mode returns `sendingAccount: null`; DB mode reads the owner's primary Gmail account. This is the only owner resolver; DB helpers keep calling synchronous `currentUserIdOrThrow()`, while `/api/session`, Home, Workspace, and Profile await `currentUserOrThrow()`. | Real session cookie / OAuth verification inside this module only. `/api/session` keeps returning `{ user }`; Home, Workspace, and Profile keep rendering the same identity shape; DB helper call sites keep their owner-id contract. |
 | `lib/server/oauth/gmail.server.ts` | Defines the Gmail OAuth start/callback seam and returns authenticated 501 `not_configured` placeholders. Callback also validates provider denial and missing `code/state` as 400s. | Google authorization URL generation, state validation semantics, code exchange, persistence through `GmailAccountRepository` over `gmail_accounts`, and `sendingAccount` refresh. Route files stay thin and do not learn token storage or provider SDK details. |
 | `lib/server/people-payload/index.server.ts` | Dispatches to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. | Later auth replaces `DEV_OWNER_ID`; route/page imports stay the same. |
 | `lib/server/people-payload/mock.server.ts` | `getMockPeoplePayload()` reads `peoplePayload()` from `lib/mock.ts`. | Kept as fallback until all runtime paths are DB-backed. |
