@@ -14,6 +14,7 @@ export async function GET(req: Request) {
     const result = await startGmailOAuth({
       ownerId,
       returnTo: url.searchParams.get("returnTo")?.trim() || null,
+      origin: url.origin,
     });
 
     if (!result.ok) {
@@ -23,7 +24,9 @@ export async function GET(req: Request) {
       );
     }
 
-    return NextResponse.redirect(result.redirectTo);
+    const res = NextResponse.redirect(result.redirectTo);
+    res.cookies.set(result.setCookie.name, result.setCookie.value, result.setCookie.options);
+    return res;
   } catch (error) {
     return authFailureResponse(error);
   }

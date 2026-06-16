@@ -85,16 +85,18 @@ Current implementation:
 - Dynamic route.
 - Requires current-user auth.
 - Delegates to `lib/server/oauth/gmail.server.ts`.
-- Returns `501 { error, code: "not_configured" }` because Google OAuth is not
-  wired yet.
+- Returns `501 { error, code: "not_configured" }` when `GOOGLE_CLIENT_ID` or
+  `GOOGLE_REDIRECT_URI` is missing.
+- When those env vars are present, generates a Google authorization redirect
+  with `gmail.send` scope and stores an HttpOnly OAuth state cookie for later
+  callback verification.
 - Returns 401 for missing auth and 500 for misconfigured auth.
-- Does not read Google env vars, create OAuth state, exchange tokens, write
-  DB rows, or enqueue/send anything.
+- Does not exchange tokens, write DB rows, or enqueue/send anything.
 
 Future implementation:
 
-- Generate a Google authorization URL.
-- Store and validate OAuth state behind the OAuth seam.
+- Keep the start-route redirect and state cookie contract stable.
+- Validate the stored OAuth state on callback.
 - Redirect to the provider on success.
 - Keep the route shape thin: auth -> service -> JSON error or redirect.
 
@@ -122,8 +124,9 @@ Current implementation:
 - Returns `400 { error, code: "invalid_callback" }` when `code` or `state` is
   missing.
 - Returns `501 { error, code: "not_configured" }` for a syntactically valid
-  callback because Google OAuth is not wired yet.
-- Does not exchange tokens, persist Gmail accounts, or update
+  callback because token exchange and state verification are not wired yet.
+- Does not exchange tokens, persist Gmail accounts, validate the stored OAuth
+  state yet, or update
   `CurrentUser.sendingAccount`.
 
 Future implementation:

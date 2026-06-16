@@ -89,12 +89,22 @@ thin.
 
 Owner: Codex implementation agent after P0.
 
+Current slicing:
+
+- `P1-A` start route: Google redirect + state cookie, no token exchange.
+- `P1-B` callback: state validation + code exchange + account upsert.
+
+Status:
+
+- `P1-A` done. Guarded by `pnpm test:oauth`.
+
 In scope:
 
 - Generate Google authorization URL in `lib/server/oauth/gmail.server.ts`.
-- Validate state on callback.
-- Exchange code for tokens.
-- Persist account through `GmailAccountRepository.upsertPrimary`.
+- Store OAuth state behind the seam.
+- Later: validate state on callback.
+- Later: exchange code for tokens.
+- Later: persist account through `GmailAccountRepository.upsertPrimary`.
 - Return redirect/result through existing route contract.
 
 Out of scope:

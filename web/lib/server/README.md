@@ -105,7 +105,7 @@ small on purpose.
 | Seam | Called by | Today | Future replacement | Guard |
 |---|---|---|---|---|
 | `auth/current-user.server.ts` | `/api/session`, Home, Workspace, Profile, DB-backed server helpers | Resolves `{ id, email, name, initials, sendingAccount }` from `DEV_OWNER_*`; mock mode returns `sendingAccount: null`, DB mode hydrates it from the owner primary Gmail account; `currentUserIdOrThrow()` remains the synchronous owner-id compatibility helper | Cookie/session/OAuth inside this file only; route, Home, Workspace, Profile, and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:db:current-user`, `pnpm test:boundaries` |
-| `oauth/gmail.server.ts` | `GET /api/oauth/gmail/start`, `GET /api/oauth/gmail/callback` | Defines the Gmail OAuth start/callback contract and returns explicit 501 `not_configured` placeholders once the caller is authenticated. Callback also returns 400 for provider denial or missing `code/state`. | Google authorization URL generation, OAuth state semantics, token exchange, and account persistence through `GmailAccountRepository` over `gmail_accounts`. Route files stay parse/query → auth → delegate → JSON/redirect, and should only apply plain-data redirect/cookie instructions returned by the seam. | `pnpm test:oauth`, `pnpm test:boundaries` |
+| `oauth/gmail.server.ts` | `GET /api/oauth/gmail/start`, `GET /api/oauth/gmail/callback` | Defines the Gmail OAuth start/callback contract. Start returns a Google redirect plus state cookie when configured, otherwise 501 `not_configured`. Callback still returns 400 for provider denial or missing `code/state`, and 501 for the unimplemented token-exchange path. | OAuth state validation semantics, token exchange, and account persistence through `GmailAccountRepository` over `gmail_accounts`. Route files stay parse/query → auth → delegate → JSON/redirect, and should only apply plain-data redirect/cookie instructions returned by the seam. | `pnpm test:oauth`, `pnpm test:boundaries` |
 | `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
@@ -141,16 +141,18 @@ failures today:
 
 - missing dev auth → `401 { error: "Unauthenticated" }`
 - invalid dev auth → `500 { error: "Auth is misconfigured" }`
-- start route with valid auth → `501 { code: "not_configured", ... }`
+- start route with valid auth but missing Google env → `501 { code: "not_configured", ... }`
+- start route with valid auth and Google env → `307` redirect to Google + HttpOnly state cookie
 - callback with provider `error` → `400 { code: "provider_error", ... }`
 - callback missing `code` or `state` → `400 { code: "invalid_callback", ... }`
 - callback with `code` + `state` but no implementation → `501 { code: "not_configured", ... }`
 
-The stubs deliberately do not read Google env vars, create OAuth state,
-exchange tokens, write Gmail account rows, enqueue sends, or update
-`CurrentUser.sendingAccount`. The next implementation pass should keep those
-provider operations behind the `oauth/gmail.server.ts` seam while keeping
-`Request` / `Response` types in route handlers.
+The seam now reads `GOOGLE_CLIENT_ID` and `GOOGLE_REDIRECT_URI` to build the
+provider redirect and stores an HttpOnly state cookie. It still deliberately
+does not exchange tokens, validate callback state, write Gmail account rows,
+enqueue sends, or update `CurrentUser.sendingAccount`. The next implementation
+pass should keep those provider operations behind the `oauth/gmail.server.ts`
+seam while keeping `Request` / `Response` types in route handlers.
 
 ### Current DB runtime skeleton
 

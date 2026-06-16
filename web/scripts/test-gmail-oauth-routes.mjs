@@ -13,7 +13,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 const PORT = Number(process.env.TEST_GMAIL_OAUTH_PORT ?? 3145);
 const nextBin = resolve(projectRoot, "node_modules/.bin/next");
-const AUTH_ENV_KEYS = ["DEV_OWNER_ID", "DEV_OWNER_EMAIL", "DEV_OWNER_NAME"];
+const AUTH_ENV_KEYS = [
+  "DEV_OWNER_ID",
+  "DEV_OWNER_EMAIL",
+  "DEV_OWNER_NAME",
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_REDIRECT_URI",
+];
 
 const validAuth = {
   DEV_OWNER_ID: "77777777-7777-4777-8777-777777777777",
@@ -83,6 +89,10 @@ async function fetchJson(baseUrl, path) {
   return { status: res.status, body };
 }
 
+async function fetchResponse(baseUrl, path) {
+  return fetch(`${baseUrl}${path}`, { redirect: "manual" });
+}
+
 async function runServer({ name, port, authEnv, assertions }) {
   const baseUrl = `http://localhost:${port}`;
   const child = spawn(nextBin, ["dev", "--port", String(port)], {
@@ -112,7 +122,7 @@ async function runServer({ name, port, authEnv, assertions }) {
 process.stdout.write("running Gmail OAuth route stub checks:\n");
 
 await runServer({
-  name: "valid auth",
+  name: "valid auth / unconfigured",
   port: PORT,
   authEnv: validAuth,
   async assertions(baseUrl) {
@@ -134,6 +144,51 @@ await runServer({
     const validCallback = await fetchJson(baseUrl, "/api/oauth/gmail/callback?code=test-code&state=test-state");
     check("callback with code/state -> 501", validCallback.status === 501, `status=${validCallback.status}`);
     check("callback configured code = not_configured", validCallback.body?.code === "not_configured", JSON.stringify(validCallback.body));
+  },
+});
+
+await runServer({
+  name: "valid auth / configured start",
+  port: PORT + 2,
+  authEnv: {
+    ...validAuth,
+    GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
+    GOOGLE_REDIRECT_URI: "__ORIGIN__/api/oauth/gmail/callback",
+  },
+  async assertions(baseUrl) {
+    const start = await fetchResponse(baseUrl, "/api/oauth/gmail/start?returnTo=/workspace?person=p-lin");
+    check("configured start -> 307", start.status === 307, `status=${start.status}`);
+
+    const location = start.headers.get("location") ?? "";
+    const redirect = new URL(location);
+    check("configured start redirects to Google", redirect.origin === "https://accounts.google.com", location);
+    check("configured start sets client_id", redirect.searchParams.get("client_id") === "test-client-id.apps.googleusercontent.com", location);
+    check("configured start sets redirect_uri", redirect.searchParams.get("redirect_uri") === `${baseUrl}/api/oauth/gmail/callback`, location);
+    check("configured start sets response_type=code", redirect.searchParams.get("response_type") === "code", location);
+    check("configured start sets access_type=offline", redirect.searchParams.get("access_type") === "offline", location);
+    check("configured start sets prompt=consent", redirect.searchParams.get("prompt") === "consent", location);
+    check(
+      "configured start sets gmail.send scope",
+      redirect.searchParams.get("scope") === "https://www.googleapis.com/auth/gmail.send",
+      location,
+    );
+    check("configured start sets state", Boolean(redirect.searchParams.get("state")), location);
+
+    const setCookie = start.headers.get("set-cookie") ?? "";
+    check("configured start sets oauth state cookie", /keepsake_gmail_oauth_state=/.test(setCookie), setCookie);
+    check("oauth state cookie is httpOnly", /HttpOnly/i.test(setCookie), setCookie);
+    check("oauth state cookie is sameSite lax", /SameSite=Lax/i.test(setCookie), setCookie);
+    check("oauth state cookie is path root", /Path=\//i.test(setCookie), setCookie);
+
+    const fallback = await fetchResponse(baseUrl, "/api/oauth/gmail/start?returnTo=https://evil.example");
+    const fallbackLocation = fallback.headers.get("location") ?? "";
+    const fallbackRedirect = new URL(fallbackLocation);
+    check("configured start still redirects on unsafe returnTo", fallback.status === 307, `status=${fallback.status}`);
+    check("configured start keeps Google redirect for unsafe returnTo", fallbackRedirect.origin === "https://accounts.google.com", fallbackLocation);
+
+    const callback = await fetchJson(baseUrl, "/api/oauth/gmail/callback?code=test-code&state=test-state");
+    check("configured callback with code/state still -> 501", callback.status === 501, `status=${callback.status}`);
+    check("configured callback still not_configured", callback.body?.code === "not_configured", JSON.stringify(callback.body));
   },
 });
 

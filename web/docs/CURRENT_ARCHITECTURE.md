@@ -373,8 +373,10 @@ PR/agent prompt before touching.
    `lib/server/oauth/gmail.server.ts`. Today they return explicit JSON
    failures: 401 missing auth, 500 invalid dev auth, 400 invalid/provider-denied
    callback, and 501 `not_configured` for the unimplemented provider path.
-   They do not read Google env vars, create OAuth state, exchange
-   tokens, write Gmail accounts, or update `sendingAccount`. Covered by
+   When `GOOGLE_CLIENT_ID` and `GOOGLE_REDIRECT_URI` are configured, the start
+   route now redirects to Google and stores an HttpOnly OAuth state cookie.
+   Callback still does not validate state or exchange tokens. The routes do
+   not write Gmail accounts or update `sendingAccount`. Covered by
    `pnpm test:oauth`.
 6. **`POST /api/drafts` request shape** = `{ personId, occasionId, userInstruction }`,
    nothing else. Anything that smells like "let the client name a
@@ -412,7 +414,7 @@ These seams are the only places that move when the back end goes real.
 | Seam | What it does today | What replaces it |
 |---|---|---|
 | `lib/server/auth/current-user.server.ts` | Resolves `{ id, email, name, initials, sendingAccount }` and `OwnerId` from validated `DEV_OWNER_*` env. Mock mode returns `sendingAccount: null`; DB mode reads the owner's primary Gmail account. This is the only owner resolver; DB helpers keep calling synchronous `currentUserIdOrThrow()`, while `/api/session`, Home, Workspace, and Profile await `currentUserOrThrow()`. | Real session cookie / OAuth verification inside this module only. `/api/session` keeps returning `{ user }`; Home, Workspace, and Profile keep rendering the same identity shape; DB helper call sites keep their owner-id contract. |
-| `lib/server/oauth/gmail.server.ts` | Defines the Gmail OAuth start/callback seam and returns authenticated 501 `not_configured` placeholders. Callback also validates provider denial and missing `code/state` as 400s. | Google authorization URL generation, state validation semantics, code exchange, persistence through `GmailAccountRepository` over `gmail_accounts`, and `sendingAccount` refresh. Route files stay thin and do not learn token storage or provider SDK details. |
+| `lib/server/oauth/gmail.server.ts` | Defines the Gmail OAuth start/callback seam. Start returns a Google redirect + state cookie when configured, otherwise 501 `not_configured`; callback still validates provider denial and missing `code/state` as 400s and otherwise returns 501. | State validation semantics, code exchange, persistence through `GmailAccountRepository` over `gmail_accounts`, and `sendingAccount` refresh. Route files stay thin and do not learn token storage or provider SDK details. |
 | `lib/server/people-payload/index.server.ts` | Dispatches to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. | Later auth replaces `DEV_OWNER_ID`; route/page imports stay the same. |
 | `lib/server/people-payload/mock.server.ts` | `getMockPeoplePayload()` reads `peoplePayload()` from `lib/mock.ts`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/people-payload/db.server.ts` | `getDbPeoplePayload()` resolves dev owner, opens transaction, calls `PeopleRepository.listWithRelations(ownerId)`. | Real auth replaces `auth/current-user.server.ts`; repository call remains. |
@@ -437,8 +439,8 @@ The route handlers do not move.
 |---|---|---|---|
 | `lib/server/auth/current-user.server.ts` | Real auth-backed current user resolver | `currentUserIdOrThrow(): OwnerId`; `currentUserOrThrow()` returning `{ id, email, name, initials, sendingAccount }`; typed unauthenticated vs misconfigured errors | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:boundaries` |
 | `app/api/session/route.ts` | Unchanged route contract over real auth | Thin shape: call auth service → return `{ user }`; 401 for missing auth; 500 for invalid server auth config; no DB/cookies/OAuth/Gmail writes in the route | `pnpm test:auth` |
-| `app/api/oauth/gmail/start/route.ts` and `app/api/oauth/gmail/callback/route.ts` | Unchanged route contract over real Gmail OAuth | Thin shape: auth → delegate to `oauth/gmail.server.ts` → JSON failure or redirect; route files do not generate state, exchange tokens, write DB, or update `sendingAccount` directly | `pnpm test:oauth`, `pnpm test:boundaries` |
-| `lib/server/oauth/gmail.server.ts` | Real Gmail OAuth service | `startGmailOAuth` and `completeGmailOAuth` result union; 400 invalid/provider-denied callbacks; 501 until configured; account persistence only through `GmailAccountRepository`; no send/enqueue behavior | `pnpm test:oauth` |
+| `app/api/oauth/gmail/start/route.ts` and `app/api/oauth/gmail/callback/route.ts` | Unchanged route contract over real Gmail OAuth | Thin shape: auth → delegate to `oauth/gmail.server.ts` → JSON failure or redirect; route files do not exchange tokens, write DB, or update `sendingAccount` directly | `pnpm test:oauth`, `pnpm test:boundaries` |
+| `lib/server/oauth/gmail.server.ts` | Real Gmail OAuth service | `startGmailOAuth` and `completeGmailOAuth` result union; start can redirect to Google when configured; callback still 400 invalid/provider-denied or 501 until token exchange/state validation are wired; account persistence only through `GmailAccountRepository`; no send/enqueue behavior | `pnpm test:oauth` |
 | `lib/repositories/gmail-accounts.server.ts` | Auth/OAuth-facing Gmail account repository | Plaintext refresh token only appears in `GmailAccountUpsertInput`; repo encrypts `refresh_token_enc`; read methods never expose tokens; owner-scoped RLS remains active | `pnpm test:db:gmail-accounts` |
 | `lib/server/people-payload/index.server.ts` | Keep as dispatcher until mock can be deleted | `getPeoplePayload()` signature; `GET /api/people` returning `PeoplePayload` | `pnpm test:people`, `pnpm test:db:people-route` |
 | `lib/server/people-payload/db.server.ts` | Real auth-backed owner resolution instead of `DEV_OWNER_ID` | Repository call and `PeoplePayload` shape | `pnpm test:db:people-route` |
