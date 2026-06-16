@@ -91,7 +91,7 @@ small on purpose.
 
 | Seam | Called by | Today | Future replacement | Guard |
 |---|---|---|---|---|
-| `auth/current-user.server.ts` | `/api/session`, Home, Profile, DB-backed server helpers | Resolves `{ id, email, name, initials }` from `DEV_OWNER_*`; `currentUserIdOrThrow()` remains the owner-id compatibility helper | Cookie/session/OAuth verification inside this file only; route, Home, Profile, and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:home`, `pnpm test:profile`, `pnpm test:boundaries` |
+| `auth/current-user.server.ts` | `/api/session`, Home, Workspace, Profile, DB-backed server helpers | Resolves `{ id, email, name, initials }` from `DEV_OWNER_*`; `currentUserIdOrThrow()` remains the owner-id compatibility helper | Cookie/session/OAuth verification inside this file only; route, Home, Workspace, Profile, and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:boundaries` |
 | `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
@@ -232,9 +232,11 @@ the preflight.
 `currentUserIdOrThrow()` so their signatures stay compatible. The public
 session route, `GET /api/session`, calls `currentUserOrThrow()` and returns
 `{ user }`, mapping unauthenticated to 401 and misconfigured env to 500.
-Home and Profile also call `currentUserOrThrow()` server-side to render the
-same identity shape without a client fetch. None of these paths touch DB,
-cookies, OAuth, Gmail, or write paths.
+Home, Workspace, and Profile also call `currentUserOrThrow()` server-side to
+render the same identity shape without a client fetch. Workspace passes that
+shape into the client composer as read-only sender identity; it does not wire
+Gmail, OAuth, send/enqueue, or delivery worker paths. None of these paths touch
+DB, cookies, OAuth, Gmail, or write paths.
 
 **Provider choices to make later.** NextAuth / Auth.js vs. roll-our-own
 session table vs. Clerk / Supabase Auth. Decision deferred; the
