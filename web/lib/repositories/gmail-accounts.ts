@@ -1,6 +1,6 @@
 // GmailAccountRepository — Gmail sender account storage.
 //
-// Status: DESIGN ONLY. Interface declaration; no runtime implementation.
+// Runtime implementation: gmail-accounts.server.ts.
 //
 // Caller mapping:
 //   getPrimary       → future currentUserOrThrow() sendingAccount hydration

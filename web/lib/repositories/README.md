@@ -5,8 +5,8 @@ still TypeScript interface declarations that compile against
 [`lib/domain.ts`](../domain.ts) and pair with [`db/schema.sql`](../../db/schema.sql).
 The first real implementations are `catalog.server.ts`, the read side of
 `people.server.ts`, `drafts.server.ts`, and the read side of
-`deliveries.server.ts`; the remaining repo methods will follow the same
-pattern as they land. Gmail account storage is currently contract-only.
+`deliveries.server.ts`, and `gmail-accounts.server.ts`; the remaining repo
+methods will follow the same pattern as they land.
 
 ## What lives here
 
@@ -23,7 +23,8 @@ pattern as they land. Gmail account storage is currently contract-only.
 | [`drafts.server.ts`](./drafts.server.ts) | `PgDraftRepository` — runtime implementation for `message_drafts` persistence/cache, including encrypted subject/paragraph/note/instruction columns. |
 | [`deliveries.ts`](./deliveries.ts) | `DeliveryRepository` — `deliveries` reads + the send/webhook write paths. |
 | [`deliveries.server.ts`](./deliveries.server.ts) | `PgDeliveryRepository` — read-only runtime implementation for sent delivery history, including encrypted recipient/occasion labels. Send/webhook/worker methods intentionally throw for now. |
-| [`gmail-accounts.ts`](./gmail-accounts.ts) | `GmailAccountRepository` — contract for Gmail sender account metadata + encrypted refresh token storage. No runtime implementation yet. |
+| [`gmail-accounts.ts`](./gmail-accounts.ts) | `GmailAccountRepository` — contract for Gmail sender account metadata + encrypted refresh token storage. |
+| [`gmail-accounts.server.ts`](./gmail-accounts.server.ts) | `PgGmailAccountRepository` — runtime implementation for Gmail account metadata + encrypted refresh token storage. Not wired into auth/OAuth yet. |
 
 ### Implementation file naming
 
@@ -195,11 +196,16 @@ the current runtime implementation.
 
 ### GmailAccountRepository
 
-Runtime implementation: none yet. This contract backs the next OAuth pass and
-eventually hydrates `CurrentUser.sendingAccount`. It does **not** send mail,
-enqueue deliveries, or call Google APIs. It only describes account metadata
-plus the write boundary where a future OAuth callback hands over a plaintext
-refresh token for repository-side encryption.
+Runtime implementation: `gmail-accounts.server.ts`.
+`pnpm test:db:gmail-accounts` verifies encrypted refresh-token storage, RLS
+isolation, primary account switching, expired-account marking, disconnect, and
+explicit transaction reuse against temporary Postgres.
+
+This repository backs the next OAuth pass and eventually hydrates
+`CurrentUser.sendingAccount`. It does **not** send mail, enqueue deliveries,
+or call Google APIs. It stores account metadata plus the write boundary where
+a future OAuth callback hands over a plaintext refresh token for
+repository-side encryption.
 
 | Method | Returns | Caller |
 |---|---|---|
@@ -207,6 +213,12 @@ refresh token for repository-side encryption.
 | `upsertPrimary(ownerId, input)` | `GmailAccount` | Future Gmail OAuth callback after token exchange |
 | `markExpired(ownerId, accountId, input)` | `GmailAccount` | Future token-refresh/send failure path; keeps UI repairable |
 | `disconnect(ownerId, accountId)` | `void` | Future Profile disconnect action |
+
+`upsertPrimary` must first demote any existing primary row before promoting
+the new/updated account; otherwise the partial unique index
+`gmail_accounts_owner_primary_idx` will reject a second primary account.
+`markExpired` clips provider error strings before writing `last_error`, so
+provider output never grows the row unbounded.
 
 ## What stays in `domain.ts` vs `types.ts`
 

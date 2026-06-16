@@ -1,8 +1,8 @@
 // Shared types for the repository layer. Plumbing only — no business types
 // (those live in lib/domain.ts).
 //
-// Status: DESIGN ONLY. No DB client is imported anywhere; nothing here is
-// instantiated. Implementations land when the DB client is chosen.
+// Status: type-only plumbing. No DB client is imported here; runtime
+// implementations live in sibling `*.server.ts` files.
 
 import type {
   AttachedCard,
