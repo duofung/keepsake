@@ -240,7 +240,7 @@ to mock by default and to the DB implementation only when
 | Presentation | `lib/presentation.ts` | Maps `OccasionKind`/`Tone`/`Channel` → icon names, gradients, chip text. UI only. | no | no | no |
 | Repository implementations | `lib/repositories/catalog.server.ts`, `lib/repositories/people.server.ts`, `lib/repositories/drafts.server.ts`, `lib/repositories/deliveries.server.ts` | Postgres implementations for catalog, people/occasion reads, message draft persistence/cache, and delivery history reads; people writes and send/webhook/worker methods are intentionally not implemented yet. | no | yes | no |
 | DB scripts | `db/schema.sql`, `db/seed_catalog.sql`, `scripts/seed-dev-fixtures.mjs` | Postgres 17 schema + catalog seed + encrypted local-dev fixture seed. | no | yes (manual/dev) | no |
-| Dev guard + smoke tests | `scripts/check-dev-env.mjs`, `scripts/test-dev-env.mjs`, `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-home.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, DB Docker tests | `pnpm dev` first checks the local env needed by Home/Profile/session and, in DB mode, the DB/encryption vars. Default `pnpm test` covers that guard plus auth/session and mock HTTP/page contracts. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed `/api/people`, `/api/drafts`, and `/history`. | yes (HTTP/page smoke) | DB suite only | no |
+| Dev env helpers + smoke tests | `scripts/init-dev-env.mjs`, `scripts/check-dev-env.mjs`, `scripts/test-env-init.mjs`, `scripts/test-dev-env.mjs`, `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-home.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, DB Docker tests | `pnpm env:init` creates `.env.local` from `.env.example` without overwriting. `pnpm dev` first checks the local env needed by Home/Profile/session and, in DB mode, the DB/encryption vars. Default `pnpm test` covers both env helpers plus auth/session and mock HTTP/page contracts. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed `/api/people`, `/api/drafts`, and `/history`. | yes (HTTP/page smoke) | DB suite only | no |
 
 ---
 
@@ -263,11 +263,14 @@ PR/agent prompt before touching.
    maps invalid dev env to 500. It is the public contract that real auth will
    preserve. Covered by `pnpm test:auth`, `pnpm test:home`, and
    `pnpm test:profile`.
-4. **`pnpm dev` env preflight** = `scripts/check-dev-env.mjs`. Mock mode
-   requires `DEV_OWNER_ID`, `DEV_OWNER_EMAIL`, and `DEV_OWNER_NAME`; DB mode
-   additionally requires `DATABASE_URL` and a 32-byte
-   `DEV_ENCRYPTION_KEY_BASE64`. It reads real `.env*` files but deliberately
-   ignores `.env.example`. Covered by `pnpm test:dev-env`.
+4. **Local env helpers** = `scripts/init-dev-env.mjs` and
+   `scripts/check-dev-env.mjs`. `pnpm env:init` creates `.env.local` from
+   `.env.example` and refuses to overwrite unless `--force` is passed.
+   `pnpm dev` then preflights the resulting env: mock mode requires
+   `DEV_OWNER_ID`, `DEV_OWNER_EMAIL`, and `DEV_OWNER_NAME`; DB mode additionally
+   requires `DATABASE_URL` and a 32-byte `DEV_ENCRYPTION_KEY_BASE64`.
+   `.env.example` is documentation only for the preflight. Covered by
+   `pnpm test:env-init` and `pnpm test:dev-env`.
 5. **`POST /api/drafts` request shape** = `{ personId, occasionId, userInstruction }`,
    nothing else. Anything that smells like "let the client name a
    relationship / culture / tone override" violates the server-authoritative

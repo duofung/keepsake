@@ -219,11 +219,14 @@ guard, and `DEV_OWNER_NAME` must be non-empty. Missing `DEV_OWNER_ID` throws
 `AuthError { kind: "unauthenticated" }`; invalid owner env throws
 `AuthError { kind: "misconfigured" }`.
 
-`pnpm dev` runs `scripts/check-dev-env.mjs` before `next dev` so missing
-dev-only auth values fail with a clear setup message instead of a rendered
-500 in Home/Profile. In mock mode the guard checks only `DEV_OWNER_*`; in
-DB mode it also checks `DATABASE_URL` and a 32-byte
-`DEV_ENCRYPTION_KEY_BASE64`. `.env.example` remains documentation only.
+`pnpm env:init` runs `scripts/init-dev-env.mjs` to create `.env.local` from
+`.env.example`; it refuses to overwrite an existing `.env.local` unless
+`--force` is passed. `pnpm dev` then runs `scripts/check-dev-env.mjs` before
+`next dev` so missing dev-only auth values fail with a clear setup message
+instead of a rendered 500 in Home/Profile. In mock mode the guard checks only
+`DEV_OWNER_*`; in DB mode it also checks `DATABASE_URL` and a 32-byte
+`DEV_ENCRYPTION_KEY_BASE64`. `.env.example` remains documentation only for
+the preflight.
 
 **Where called.** DB-backed server helpers continue to call
 `currentUserIdOrThrow()` so their signatures stay compatible. The public
