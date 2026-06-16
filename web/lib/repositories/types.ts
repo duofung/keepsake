@@ -156,6 +156,41 @@ export interface DeliveryQueueItem {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Gmail sender account storage
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type GmailAccountStatus = "connected" | "expired";
+
+/**
+ * Decrypted account metadata safe to return to server auth/Profile/Workspace
+ * orchestration. It deliberately never includes refresh or access tokens.
+ */
+export interface GmailAccount {
+  id: ID;
+  ownerId: OwnerId;
+  email: string;
+  status: GmailAccountStatus;
+  scopes: string[];
+  isPrimary: boolean;
+  lastConnectedAtISO: string;
+  refreshTokenExpiresAtISO: string | null;
+  lastError: string | null;
+  createdAtISO: string;
+  updatedAtISO: string;
+}
+
+export interface GmailAccountUpsertInput {
+  email: string;
+  scopes: string[];
+  refreshToken: string;
+  refreshTokenExpiresAtISO?: string | null;
+}
+
+export interface GmailAccountMarkExpiredInput {
+  lastError?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Re-exports for convenience inside the repo layer
 // ─────────────────────────────────────────────────────────────────────────────
 

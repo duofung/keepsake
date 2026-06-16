@@ -6,14 +6,14 @@ still TypeScript interface declarations that compile against
 The first real implementations are `catalog.server.ts`, the read side of
 `people.server.ts`, `drafts.server.ts`, and the read side of
 `deliveries.server.ts`; the remaining repo methods will follow the same
-pattern as they land.
+pattern as they land. Gmail account storage is currently contract-only.
 
 ## What lives here
 
 | File | Role |
 |---|---|
 | [`README.md`](./README.md) | This file. The architectural contract. |
-| [`index.ts`](./index.ts) | Type-only barrel. Re-exports the four interfaces and the plumbing types from `types.ts`. **Never** re-exports runtime values. |
+| [`index.ts`](./index.ts) | Type-only barrel. Re-exports repository interfaces and plumbing types from `types.ts`. **Never** re-exports runtime values. |
 | [`types.ts`](./types.ts) | Shared types: `OwnerId`, `Tx`, `RepoError`, input shapes for write methods. No business types. |
 | [`catalog.ts`](./catalog.ts) | `CatalogRepository` — catalog access to `relationships` + `cultures`. Relationships are owner-aware because user-custom rows share the table with system presets. |
 | [`catalog.server.ts`](./catalog.server.ts) | `PgCatalogRepository` — first server-only runtime implementation, backed by `pg` through `lib/server/db/transaction.server.ts`. |
@@ -23,6 +23,7 @@ pattern as they land.
 | [`drafts.server.ts`](./drafts.server.ts) | `PgDraftRepository` — runtime implementation for `message_drafts` persistence/cache, including encrypted subject/paragraph/note/instruction columns. |
 | [`deliveries.ts`](./deliveries.ts) | `DeliveryRepository` — `deliveries` reads + the send/webhook write paths. |
 | [`deliveries.server.ts`](./deliveries.server.ts) | `PgDeliveryRepository` — read-only runtime implementation for sent delivery history, including encrypted recipient/occasion labels. Send/webhook/worker methods intentionally throw for now. |
+| [`gmail-accounts.ts`](./gmail-accounts.ts) | `GmailAccountRepository` — contract for Gmail sender account metadata + encrypted refresh token storage. No runtime implementation yet. |
 
 ### Implementation file naming
 
@@ -192,6 +193,21 @@ the current runtime implementation.
 | `findByProviderMessageId(providerMessageId)` | `Delivery \| null` | Webhook ingest — **no `ownerId`** because providers don't know it; the row's own `owner_id` is the auth proof. |
 | `nextQueued(limit)` | `DeliveryQueueItem[]` | Send worker — drains `status = 'queued'`. Privileged role, bypasses user RLS. |
 
+### GmailAccountRepository
+
+Runtime implementation: none yet. This contract backs the next OAuth pass and
+eventually hydrates `CurrentUser.sendingAccount`. It does **not** send mail,
+enqueue deliveries, or call Google APIs. It only describes account metadata
+plus the write boundary where a future OAuth callback hands over a plaintext
+refresh token for repository-side encryption.
+
+| Method | Returns | Caller |
+|---|---|---|
+| `getPrimary(ownerId)` | `GmailAccount \| null` | Future `currentUserOrThrow()` account lookup; Profile/Workspace sender display |
+| `upsertPrimary(ownerId, input)` | `GmailAccount` | Future Gmail OAuth callback after token exchange |
+| `markExpired(ownerId, accountId, input)` | `GmailAccount` | Future token-refresh/send failure path; keeps UI repairable |
+| `disconnect(ownerId, accountId)` | `void` | Future Profile disconnect action |
+
 ## What stays in `domain.ts` vs `types.ts`
 
 `domain.ts` is the persistent + API contract: `Person`, `OccasionNode`,
@@ -206,11 +222,14 @@ the current runtime implementation.
   `conflict`, `unavailable`) so route handlers can map to HTTP codes
   without parsing strings.
 - Write input shapes (`PersonCreateInput`, `OccasionUpsertInput`,
-  `MessageDraftSaveInput`, `DeliveryEnqueueInput`) — domain types minus
+  `MessageDraftSaveInput`, `DeliveryEnqueueInput`, `GmailAccountUpsertInput`) — domain types minus
   server-derived fields like `id`, `createdAt`.
 - `DeliveryQueueItem` — worker-only shape that includes contact fields needed
   to send. It is deliberately not the public `Delivery` domain type used by
   History.
+- `GmailAccount` — decrypted sender account metadata without provider tokens.
+  The refresh token appears only in `GmailAccountUpsertInput`, never in read
+  results.
 
 ## Current `/api/drafts` DB-mode walkthrough
 

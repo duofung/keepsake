@@ -14,12 +14,17 @@ export type { CatalogRepository } from "./catalog";
 export type { PeopleRepository } from "./people";
 export type { DraftRepository } from "./drafts";
 export type { DeliveryRepository } from "./deliveries";
+export type { GmailAccountRepository } from "./gmail-accounts";
 
 export type {
   DeliveriesListOptions,
   DeliveryEnqueueInput,
   DeliveryQueueItem,
   DeliveryStatus,
+  GmailAccount,
+  GmailAccountMarkExpiredInput,
+  GmailAccountStatus,
+  GmailAccountUpsertInput,
   MessageDraftSaveInput,
   OccasionUpsertInput,
   OwnerId,

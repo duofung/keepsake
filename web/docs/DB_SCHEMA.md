@@ -33,12 +33,12 @@ Conventions:
                   │  users    │  ← auth subject; one row per Keepsake account
                   └─────┬─────┘
             owner_id    │
-        ┌───────────────┼─────────────────────────────────┐
-        │               │                                 │
-        ▼               ▼                                 ▼
-┌───────────────┐ ┌──────────────────┐         ┌────────────────────┐
-│  people       │ │  message_drafts  │         │   deliveries       │
-└───────┬───────┘ └────────┬─────────┘         └──────────┬─────────┘
+        ┌───────────────┼─────────────────┬───────────────────┬────────────────┐
+        │               │                 │                   │                │
+        ▼               ▼                 ▼                   ▼                ▼
+┌───────────────┐ ┌──────────────────┐ ┌────────────────────┐ ┌────────────────┐
+│  people       │ │  message_drafts  │ │   deliveries       │ │ gmail_accounts │
+└───────┬───────┘ └────────┬─────────┘ └──────────┬─────────┘ └────────────────┘
         │ relationship_id  │ person_id                    │ person_id
         │ culture_id       │ occasion_id ─┐               │ draft_id ─┐
         │                  │              │               │           │
@@ -53,6 +53,8 @@ Conventions:
 ┌──────────────┐
 │  cultures    │  ← catalog, referenced by people.culture_id
 └──────────────┘
+
+gmail_accounts ← sender capability; encrypted refresh token
 ```
 
 ---
@@ -88,6 +90,8 @@ CREATE TYPE channel         AS ENUM ('email','post');
 CREATE TYPE delivery_status AS ENUM ('queued','sent','delivered','opened');
 
 CREATE TYPE subscription_status AS ENUM ('free','plus','churned');
+
+CREATE TYPE gmail_account_status AS ENUM ('connected','expired');
 ```
 
 > Adding a value to a Postgres enum is `ALTER TYPE ... ADD VALUE`; safe but
@@ -110,9 +114,6 @@ CREATE TABLE users (
   subscription_status      subscription_status NOT NULL DEFAULT 'free',
   subscription_renews_at   timestamptz,
 
-  gmail_refresh_token_enc  bytea,            -- 🔒
-  gmail_account_email      citext,           -- the sender address; not encrypted (UI shows it)
-
   created_at               timestamptz NOT NULL DEFAULT now(),
   updated_at               timestamptz NOT NULL DEFAULT now()
 );
@@ -123,13 +124,58 @@ CREATE INDEX users_subscription_idx ON users(subscription_status)
 
 **Notes**
 - `email` is the auth identity → indexed UNIQUE.
-- `gmail_refresh_token_enc` is the only field on `users` requiring app-level
-  encryption — it grants third-party send rights and must rotate independently
-  of the row.
+- Gmail capability tokens do **not** live on `users`; see `gmail_accounts`.
+  This keeps auth identity separate from provider account state and allows
+  reconnect/expiry/multiple-account evolution without widening the users row.
 - We do not store a password (OAuth-first; magic-link fallback uses ephemeral
   tokens in a separate `auth_tokens` table not modelled here).
 
-### 3.2 `relationships`
+### 3.2 `gmail_accounts`
+
+```sql
+CREATE TABLE gmail_accounts (
+  id                         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id                   uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+  email                      citext NOT NULL,              -- sender address shown in UI
+  status                     gmail_account_status NOT NULL DEFAULT 'connected',
+  scopes                     text[] NOT NULL DEFAULT '{}',
+  is_primary                 boolean NOT NULL DEFAULT true,
+
+  refresh_token_enc          bytea NOT NULL,               -- 🔒 Google refresh token
+  refresh_token_expires_at   timestamptz,
+  last_connected_at          timestamptz NOT NULL DEFAULT now(),
+  last_error                 text,
+
+  created_at                 timestamptz NOT NULL DEFAULT now(),
+  updated_at                 timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX gmail_accounts_owner_email_idx
+  ON gmail_accounts(owner_id, email);
+CREATE UNIQUE INDEX gmail_accounts_owner_primary_idx
+  ON gmail_accounts(owner_id)
+  WHERE is_primary;
+CREATE INDEX gmail_accounts_owner_status_idx
+  ON gmail_accounts(owner_id, status);
+```
+
+**Notes**
+- `refresh_token_enc` is a capability token. Theft means unauthorised email
+  send, so it is encrypted with the same app-layer envelope as relationship
+  content.
+- `email` is intentionally cleartext because Profile and Workspace display it
+  as the sender. This leaks the connected sending address to a DB reader, but
+  not the capability to send from it.
+- `is_primary` is a forward-compatible shape for multiple senders; MVP uses
+  one row. The partial unique index enforces a single primary account per
+  owner.
+- `status='expired'` means the account should remain visible so the user can
+  reconnect. It should map to `CurrentUser.sendingAccount.status = "expired"`.
+  A missing row maps to `CurrentUser.sendingAccount = null`.
+- This table is **not** a send queue. It stores OAuth account state only.
+
+### 3.3 `relationships`
 
 Catalog table. Ships with system rows (`'rel-partner'`, `'rel-mother'`, …) and
 holds user-created entries (`owner_id IS NOT NULL`).
@@ -157,7 +203,7 @@ CREATE INDEX relationships_group_idx ON relationships(group_name);
   and trivial seeding.
 - Palette fields are presentation, not sensitive — never encrypted.
 
-### 3.3 `cultures`
+### 3.4 `cultures`
 
 ```sql
 CREATE TABLE cultures (
@@ -184,7 +230,7 @@ CREATE INDEX cultures_festivals_gin ON cultures USING GIN (festivals);
   the relevant festival next week?".
 - No encryption: catalog rules are not private.
 
-### 3.4 `people`
+### 3.5 `people`
 
 ```sql
 CREATE TABLE people (
@@ -225,7 +271,7 @@ CREATE INDEX people_owner_relationship_idx
 - All free-text user content about another person is encrypted — the brief
   explicitly treats "your relationships stay yours" as a product promise.
 
-### 3.5 `occasion_nodes`
+### 3.6 `occasion_nodes`
 
 ```sql
 CREATE TABLE occasion_nodes (
@@ -262,7 +308,7 @@ CREATE INDEX occasion_nodes_date_idx         ON occasion_nodes(date_iso);
   it drives templates and is low-fidelity.
 - `isPrimary` is **not** stored — derived as "earliest future date for this person".
 
-### 3.6 `message_drafts`
+### 3.7 `message_drafts`
 
 ```sql
 CREATE TABLE message_drafts (
@@ -308,7 +354,7 @@ CREATE INDEX message_drafts_prompt_hash_idx
   session. Index is partial because most rows write `NULL` while we're on the
   mock generator.
 
-### 3.7 `deliveries`
+### 3.8 `deliveries`
 
 ```sql
 CREATE TABLE deliveries (
@@ -361,6 +407,7 @@ CREATE INDEX deliveries_status_idx
 
 | Screen / job | Query shape | Index used |
 |---|---|---|
+| Profile / Workspace sender display | `gmail_accounts` by `(owner_id, is_primary)` | `gmail_accounts_owner_primary_idx` |
 | Home: people grid | `people` by `owner_id` | `people_owner_idx` |
 | Home: dates coming up | `occasion_nodes` by `owner_id`, `date_iso BETWEEN now() AND now()+30d` | `occasion_nodes_owner_date_idx` |
 | Home: closest circle | `people` by `(owner_id, starred=true)` | `people_owner_starred_idx` |
@@ -381,7 +428,7 @@ CREATE INDEX deliveries_status_idx
 
 | Table | Columns | Why |
 |---|---|---|
-| `users` | `gmail_refresh_token_enc` | Capability token; theft = unauthorised email send |
+| `gmail_accounts` | `refresh_token_enc` | Capability token; theft = unauthorised email send |
 | `people` | `name_enc`, `since_enc`, `identity_tags_enc`, `known_facts_enc`, `personal_taboos_enc` | Free-text private context about a third party |
 | `occasion_nodes` | `label_enc`, `detail_enc` | Custom labels can disclose health / relationship status |
 | `message_drafts` | `subject_enc`, `paragraphs_enc`, `assistant_note_enc`, `user_instruction_enc` | The actual private writing |
@@ -393,7 +440,9 @@ CREATE INDEX deliveries_status_idx
 - Catalog content (`relationships.*`, `cultures.*`) — not private.
 - Presentation hints on drafts (`attached_card`, `quick_actions`, `tone`,
   `tone_label`) — generic UI metadata.
-- `users.email`, `users.gmail_account_email` — needed as identity / display.
+- `users.email`, `gmail_accounts.email`, `gmail_accounts.status`, and
+  `gmail_accounts.scopes` — needed for identity, display, and provider
+  capability checks. The capability itself stays encrypted.
 
 ### Cipher
 

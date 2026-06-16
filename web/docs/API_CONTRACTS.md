@@ -128,8 +128,10 @@ Future implementation:
 
 - Validate state.
 - Exchange code for tokens.
-- Persist encrypted refresh/access-token metadata.
-- Update the account state that later fills `CurrentUser.sendingAccount`.
+- Persist encrypted refresh-token metadata through the future
+  `GmailAccountRepository` over `gmail_accounts`.
+- Update account state so `CurrentUser.sendingAccount` can be filled from the
+  primary Gmail account.
 
 ## POST /api/drafts
 

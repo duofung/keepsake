@@ -71,6 +71,7 @@ CREATE TYPE tone AS ENUM (
 CREATE TYPE channel         AS ENUM ('email', 'post');
 CREATE TYPE delivery_status AS ENUM ('queued', 'sent', 'delivered', 'opened');
 CREATE TYPE subscription_status AS ENUM ('free', 'plus', 'churned');
+CREATE TYPE gmail_account_status AS ENUM ('connected', 'expired');
 
 -- TODO: `occasion_kind` will grow (Eid al-Adha, Songkran, Mid-Autumn).
 -- When that begins, migrate the column from ENUM to TEXT + CHECK constraint
@@ -92,10 +93,6 @@ CREATE TABLE users (
   subscription_status      subscription_status NOT NULL DEFAULT 'free',
   subscription_renews_at   timestamptz,
 
-  -- Gmail send capability — third-party scope, encrypted independently.
-  gmail_refresh_token_enc  bytea,
-  gmail_account_email      citext,
-
   created_at               timestamptz NOT NULL DEFAULT now(),
   updated_at               timestamptz NOT NULL DEFAULT now()
 );
@@ -104,11 +101,43 @@ CREATE INDEX users_subscription_idx
   ON users (subscription_status)
   WHERE subscription_status <> 'free';
 
-COMMENT ON COLUMN users.gmail_refresh_token_enc IS
-  'AES-256-GCM envelope. Key rotates independently of the row.';
+-- ───────────────────────────────────────────────────────────────────────────
+-- 3.2 gmail_accounts
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE gmail_accounts (
+  id                         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id                   uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+  email                      citext NOT NULL,      -- sender address shown in UI
+  status                     gmail_account_status NOT NULL DEFAULT 'connected',
+  scopes                     text[] NOT NULL DEFAULT '{}',
+  is_primary                 boolean NOT NULL DEFAULT true,
+
+  refresh_token_enc          bytea NOT NULL,       -- encrypted Google refresh token
+  refresh_token_expires_at   timestamptz,
+  last_connected_at          timestamptz NOT NULL DEFAULT now(),
+  last_error                 text,
+
+  created_at                 timestamptz NOT NULL DEFAULT now(),
+  updated_at                 timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX gmail_accounts_owner_email_idx
+  ON gmail_accounts (owner_id, email);
+
+CREATE UNIQUE INDEX gmail_accounts_owner_primary_idx
+  ON gmail_accounts (owner_id)
+  WHERE is_primary;
+
+CREATE INDEX gmail_accounts_owner_status_idx
+  ON gmail_accounts (owner_id, status);
+
+COMMENT ON COLUMN gmail_accounts.refresh_token_enc IS
+  'AES-256-GCM envelope. AAD = owner_id || gmail_accounts || refresh_token_enc.';
 
 -- ───────────────────────────────────────────────────────────────────────────
--- 3.2 relationships  (catalog + user-customs)
+-- 3.3 relationships  (catalog + user-customs)
 -- ───────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE relationships (
@@ -131,7 +160,7 @@ CREATE INDEX relationships_group_idx
   ON relationships (group_name);
 
 -- ───────────────────────────────────────────────────────────────────────────
--- 3.3 cultures  (catalog; the strategic asset)
+-- 3.4 cultures  (catalog; the strategic asset)
 -- ───────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE cultures (
@@ -154,7 +183,7 @@ CREATE INDEX cultures_festivals_gin
 -- Until then, cultures is global read-only and RLS stays off.
 
 -- ───────────────────────────────────────────────────────────────────────────
--- 3.4 people
+-- 3.5 people
 -- ───────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE people (
@@ -199,7 +228,7 @@ COMMENT ON COLUMN people.avatar_bg IS
 -- see docs/DB_SCHEMA.md §6.
 
 -- ───────────────────────────────────────────────────────────────────────────
--- 3.5 occasion_nodes
+-- 3.6 occasion_nodes
 -- ───────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE occasion_nodes (
@@ -242,7 +271,7 @@ CREATE INDEX occasion_nodes_date_idx
 -- date_iso for this person". See docs/DB_SCHEMA.md §6.
 
 -- ───────────────────────────────────────────────────────────────────────────
--- 3.6 message_drafts
+-- 3.7 message_drafts
 -- ───────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE message_drafts (
@@ -282,7 +311,7 @@ CREATE INDEX message_drafts_prompt_hash_idx
 -- name, move quick_actions/attached_card under the encrypted umbrella.
 
 -- ───────────────────────────────────────────────────────────────────────────
--- 3.7 deliveries
+-- 3.8 deliveries
 -- ───────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE deliveries (
@@ -327,7 +356,7 @@ CREATE INDEX deliveries_status_idx
   WHERE status IN ('queued', 'sent');
 
 -- ───────────────────────────────────────────────────────────────────────────
--- 3.8 user_keys  (envelope encryption — design stub)
+-- 3.9 user_keys  (envelope encryption — design stub)
 -- ───────────────────────────────────────────────────────────────────────────
 
 -- TODO: docs/DB_SCHEMA.md §5 specifies envelope encryption: a per-user random
@@ -352,6 +381,7 @@ CREATE TABLE user_keys (
 -- ═══════════════════════════════════════════════════════════════════════════
 
 ALTER TABLE users           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE gmail_accounts  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE relationships   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE people          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE occasion_nodes  ENABLE ROW LEVEL SECURITY;
@@ -359,12 +389,17 @@ ALTER TABLE message_drafts  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE deliveries      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_keys       ENABLE ROW LEVEL SECURITY;
 
--- cultures: catalog only, RLS intentionally OFF. See §3.3 TODO.
+-- cultures: catalog only, RLS intentionally OFF. See §3.4 TODO.
 
 -- users: see only your own row.
 CREATE POLICY users_self ON users
   USING      (id = current_user_id())
   WITH CHECK (id = current_user_id());
+
+-- gmail_accounts: account metadata + encrypted provider tokens are user-owned.
+CREATE POLICY gmail_accounts_owner ON gmail_accounts
+  USING      (owner_id = current_user_id())
+  WITH CHECK (owner_id = current_user_id());
 
 -- relationships: see system rows + your own customs; can only write your own.
 CREATE POLICY relationships_read ON relationships

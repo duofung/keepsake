@@ -1,5 +1,5 @@
 // Smoke test for the Gmail OAuth route stubs. These endpoints define the HTTP
-// contract before Google API, OAuth state cookies, token storage, or Gmail send
+// contract before Google API, OAuth state, token storage, or Gmail send
 // paths exist.
 //
 // Run via: pnpm test:oauth

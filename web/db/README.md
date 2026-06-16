@@ -111,6 +111,7 @@ pnpm test:db:fixtures
 | Table | Policy |
 |---|---|
 | `users` | `id = current_user_id()` |
+| `gmail_accounts` | `owner_id = current_user_id()` (sender account metadata + encrypted refresh token) |
 | `people` | `owner_id = current_user_id()` |
 | `occasion_nodes` | `owner_id = current_user_id()`; `(person_id, owner_id)` composite FK prevents cross-owner occasions |
 | `message_drafts` | `owner_id = current_user_id()` |
@@ -160,9 +161,9 @@ at a person owned by another user.
 First-pass verification against `postgres:17-alpine` (PostgreSQL 17.10):
 
 - `schema.sql` — single transaction, **succeeded**. Created: 2 extensions,
-  7 enums, 1 helper function, 8 tables, 17 indexes, 7 RLS-enables, 8 policies.
-  Note: 17 is the number of explicit `CREATE INDEX` statements; `pg_indexes`
-  reports 27 after primary-key and unique-constraint indexes are included.
+  8 enums, 1 helper function, 9 tables, 20 indexes, 8 RLS-enables, 9 policies.
+  Note: 20 is the number of explicit `CREATE INDEX` statements; `pg_indexes`
+  reports 31 after primary-key and unique-constraint indexes are included.
 - `seed_catalog.sql` — **succeeded** twice (idempotency verified): 10
   `relationships` rows, 4 `cultures` rows.
 - RLS isolation — verified that user A sees their own row, user B sees 0,
