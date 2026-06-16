@@ -240,7 +240,7 @@ to mock by default and to the DB implementation only when
 | Presentation | `lib/presentation.ts` | Maps `OccasionKind`/`Tone`/`Channel` → icon names, gradients, chip text. UI only. | no | no | no |
 | Repository implementations | `lib/repositories/catalog.server.ts`, `lib/repositories/people.server.ts`, `lib/repositories/drafts.server.ts`, `lib/repositories/deliveries.server.ts` | Postgres implementations for catalog, people/occasion reads, message draft persistence/cache, and delivery history reads; people writes and send/webhook/worker methods are intentionally not implemented yet. | no | yes | no |
 | DB scripts | `db/schema.sql`, `db/seed_catalog.sql`, `scripts/seed-dev-fixtures.mjs` | Postgres 17 schema + catalog seed + encrypted local-dev fixture seed. | no | yes (manual/dev) | no |
-| Smoke tests | `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-home.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, DB Docker tests | Default `pnpm test` covers auth/session plus mock HTTP/page contracts, including Home and Profile identity rendering from the auth seam. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed `/api/people`, `/api/drafts`, and `/history`. | yes (HTTP/page smoke) | DB suite only | no |
+| Dev guard + smoke tests | `scripts/check-dev-env.mjs`, `scripts/test-dev-env.mjs`, `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-home.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, DB Docker tests | `pnpm dev` first checks the local env needed by Home/Profile/session and, in DB mode, the DB/encryption vars. Default `pnpm test` covers that guard plus auth/session and mock HTTP/page contracts. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed `/api/people`, `/api/drafts`, and `/history`. | yes (HTTP/page smoke) | DB suite only | no |
 
 ---
 
@@ -263,29 +263,34 @@ PR/agent prompt before touching.
    maps invalid dev env to 500. It is the public contract that real auth will
    preserve. Covered by `pnpm test:auth`, `pnpm test:home`, and
    `pnpm test:profile`.
-4. **`POST /api/drafts` request shape** = `{ personId, occasionId, userInstruction }`,
+4. **`pnpm dev` env preflight** = `scripts/check-dev-env.mjs`. Mock mode
+   requires `DEV_OWNER_ID`, `DEV_OWNER_EMAIL`, and `DEV_OWNER_NAME`; DB mode
+   additionally requires `DATABASE_URL` and a 32-byte
+   `DEV_ENCRYPTION_KEY_BASE64`. It reads real `.env*` files but deliberately
+   ignores `.env.example`. Covered by `pnpm test:dev-env`.
+5. **`POST /api/drafts` request shape** = `{ personId, occasionId, userInstruction }`,
    nothing else. Anything that smells like "let the client name a
    relationship / culture / tone override" violates the server-authoritative
    contract. Extra body fields are ignored by the service and never included
    in DB prompt hashing. Covered by `pnpm test:drafts`.
-5. **`POST /api/drafts` response shape** = `MessageDraft`. Same coverage.
-6. **`GET /api/drafts` request shape** = query params `{ personId, occasionId? }`.
+6. **`POST /api/drafts` response shape** = `MessageDraft`. Same coverage.
+7. **`GET /api/drafts` request shape** = query params `{ personId, occasionId? }`.
    It never accepts relationship, culture, tone, or instruction overrides.
    It returns `MessageDraft` on 200 and no body on 204 miss.
-7. **`GET /api/drafts/versions` request shape** = query params
+8. **`GET /api/drafts/versions` request shape** = query params
    `{ personId, occasionId?, limit? }`. It returns `{ drafts: MessageDraft[] }`
    newest-first. Mock mode returns an empty list; DB mode is read-only and
    validates person/occasion ownership before calling `DraftRepository.listForPerson`.
-8. **Culture rules resolve server-side only.** The client never sends a
+9. **Culture rules resolve server-side only.** The client never sends a
    `CultureRule`; the server reads it from the person's `culture_id`.
    Implementation in `lib/server/draft-service/` plus
    `lib/server/draft-context/`, backed by mock by default or DB context when
    `KEEPSAKE_DATA_SOURCE=db`.
-9. **`MessageDraft.paragraphs[].text` is plain text.** Highlights live in
+10. **`MessageDraft.paragraphs[].text` is plain text.** Highlights live in
    `paragraphs[].highlights: string[]`, applied by the client renderer
    (see [`app/workspace/page.tsx`](../app/workspace/page.tsx) — the
    `renderParagraph` helper). No `<span>`, no HTML strings, ever.
-10. **Server-only modules must begin with `import "server-only"`.** Filename
+11. **Server-only modules must begin with `import "server-only"`.** Filename
    convention is `*.server.ts`. See
    [`lib/server/README.md`](../lib/server/README.md) and
    [`lib/repositories/README.md`](../lib/repositories/README.md#implementation-file-naming).
