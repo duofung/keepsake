@@ -1,9 +1,13 @@
 import "server-only";
 
 import type { DraftRequest } from "@/lib/domain";
-import { generateDbDraft } from "./db.server";
-import { generateMockDraft } from "./mock.server";
-import type { DraftServiceResult } from "./types";
+import { generateDbDraft, getLatestDbDraft } from "./db.server";
+import { generateMockDraft, getLatestMockDraft } from "./mock.server";
+import type {
+  DraftLatestInput,
+  DraftLatestResult,
+  DraftServiceResult,
+} from "./types";
 
 type DraftDataSource = "mock" | "db";
 
@@ -22,4 +26,12 @@ export async function generateDraft(
     : generateMockDraft(input);
 }
 
-export type { DraftServiceResult };
+export async function getLatestDraft(
+  input: DraftLatestInput,
+): Promise<DraftLatestResult> {
+  return draftDataSource() === "db"
+    ? getLatestDbDraft(input)
+    : getLatestMockDraft(input);
+}
+
+export type { DraftLatestInput, DraftLatestResult, DraftServiceResult };

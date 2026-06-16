@@ -1,8 +1,26 @@
 import { NextResponse } from "next/server";
 import type { DraftRequest } from "@/lib/domain";
-import { generateDraft } from "@/lib/server/draft-service/index.server";
+import {
+  generateDraft,
+  getLatestDraft,
+} from "@/lib/server/draft-service/index.server";
 
 export const dynamic = "force-dynamic";
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const personId = url.searchParams.get("personId")?.trim() ?? "";
+  const occasionId = url.searchParams.get("occasionId")?.trim() || null;
+
+  const result = await getLatestDraft({ personId, occasionId });
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
+  }
+
+  return result.draft
+    ? NextResponse.json(result.draft)
+    : new Response(null, { status: 204 });
+}
 
 export async function POST(req: Request) {
   // 1. Parse JSON.

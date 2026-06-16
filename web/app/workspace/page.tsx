@@ -63,6 +63,19 @@ function Workspace() {
     [payload, person],
   );
 
+  const applyDraft = useCallback((
+    next: MessageDraft,
+    logMode: "append" | "replace" = "append",
+  ) => {
+    setDraft(next);
+    setSubject(next.subject);
+    setHasCard(!!next.attachedCard);
+    setLog((prev) => {
+      const note = { who: "ai" as const, text: next.assistantNote };
+      return logMode === "replace" ? [note] : [...prev, note];
+    });
+  }, []);
+
   const requestDraft = useCallback(async (userInstruction: string) => {
     if (!person || !relationship || !culture) return;
     setLoading(true);
@@ -79,25 +92,63 @@ function Workspace() {
       });
       if (!res.ok) throw new Error(await res.text());
       const next = (await res.json()) as MessageDraft;
-      setDraft(next);
-      setSubject(next.subject);
-      setHasCard(!!next.attachedCard);
-      setLog((prev) => [...prev, { who: "ai", text: next.assistantNote }]);
+      applyDraft(next);
     } finally {
       setLoading(false);
     }
-  }, [person, relationship, culture, occasion]);
+  }, [person, relationship, culture, occasion, applyDraft]);
 
-  // Initial draft when person/relationship/culture become known
+  // Restore latest saved draft first; generate an initial draft only on miss.
   useEffect(() => {
     if (!person || !relationship || !culture) return;
     const key = `${person.id}:${person.nextOccasionId ?? "none"}`;
     if (initialDraftKeyRef.current === key) return;
     initialDraftKeyRef.current = key;
     setDraft(null);
+    setSubject("");
+    setHasCard(true);
     setLog([]);
-    void requestDraft("");
-  }, [person, relationship, culture, requestDraft]);
+
+    const query = new URLSearchParams({ personId: person.id });
+    if (occasion?.id) query.set("occasionId", occasion.id);
+
+    async function restoreOrGenerate() {
+      setLoading(true);
+      let shouldGenerate = false;
+
+      try {
+        const res = await fetch(`/api/drafts?${query.toString()}`);
+        if (initialDraftKeyRef.current !== key) return;
+
+        if (res.status === 200) {
+          const restored = (await res.json()) as MessageDraft;
+          applyDraft(restored, "replace");
+          return;
+        }
+
+        if (res.status !== 204) {
+          console.warn(`Could not restore latest draft (${res.status}): ${await res.text()}`);
+        }
+        shouldGenerate = true;
+      } catch (error) {
+        if (initialDraftKeyRef.current !== key) return;
+        console.warn("Could not restore latest draft", error);
+        shouldGenerate = true;
+      } finally {
+        if (!shouldGenerate && initialDraftKeyRef.current === key) {
+          setLoading(false);
+        }
+      }
+
+      if (initialDraftKeyRef.current === key) {
+        await requestDraft("").catch((error) => {
+          console.error(error);
+        });
+      }
+    }
+
+    void restoreOrGenerate();
+  }, [person, relationship, culture, occasion, requestDraft, applyDraft]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;

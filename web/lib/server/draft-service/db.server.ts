@@ -9,7 +9,11 @@ import { resolveDbDraftContextInTx } from "@/lib/server/draft-context/db.server"
 import type { DraftContext } from "@/lib/server/draft-generator/types";
 import { createMockDraftGenerator } from "@/lib/server/draft-generator/mock.server";
 import { transaction } from "@/lib/server/db/transaction.server";
-import type { DraftServiceResult } from "./types";
+import type {
+  DraftLatestInput,
+  DraftLatestResult,
+  DraftServiceResult,
+} from "./types";
 
 const MODEL_PROVIDER = "mock";
 const MODEL_VERSION = "mock-draft-generator:v1";
@@ -95,6 +99,14 @@ function validateInput(input: DraftRequest): DraftServiceResult | null {
     : null;
 }
 
+function validateLatestInput(input: DraftLatestInput): DraftLatestResult | null {
+  if (!input?.personId) {
+    return { ok: false, status: 400, error: "Missing fields: personId" };
+  }
+
+  return null;
+}
+
 export async function generateDbDraft(
   input: DraftRequest,
 ): Promise<DraftServiceResult> {
@@ -122,6 +134,46 @@ export async function generateDbDraft(
       );
 
       return { ok: true, draft: saved };
+    });
+  } catch (error) {
+    console.error(error);
+    return {
+      ok: false,
+      status: 500,
+      error: "Draft context resolver is unavailable",
+    };
+  }
+}
+
+export async function getLatestDbDraft(
+  input: DraftLatestInput,
+): Promise<DraftLatestResult> {
+  const invalid = validateLatestInput(input);
+  if (invalid) return invalid;
+
+  try {
+    const ownerId = currentUserIdOrThrow();
+
+    return await transaction(ownerId, async (tx) => {
+      const result = await resolveDbDraftContextInTx(
+        ownerId,
+        {
+          personId: input.personId,
+          occasionId: input.occasionId ?? null,
+          userInstruction: "",
+        },
+        tx,
+      );
+      if (!result.ok) return result;
+
+      const latest = await draftRepository.getLatestFor(
+        ownerId,
+        result.ctx.person.id,
+        result.ctx.occasion?.id ?? null,
+        tx,
+      );
+
+      return { ok: true, draft: latest };
     });
   } catch (error) {
     console.error(error);

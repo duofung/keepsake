@@ -135,6 +135,17 @@ async function postDraft(body) {
   return { status: res.status, body: json };
 }
 
+async function getLatestDraft({ personId, occasionId }) {
+  const query = new URLSearchParams({ personId });
+  if (occasionId) query.set("occasionId", occasionId);
+
+  const res = await fetch(`${base}/api/drafts?${query.toString()}`);
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
 function draftText(draft) {
   const paragraphs = Array.isArray(draft?.paragraphs)
     ? draft.paragraphs.map((paragraph) => paragraph?.text ?? "")
@@ -291,6 +302,22 @@ try {
     check("Lin + Aisha occasionId -> 404", status === 404, `status=${status}`);
   }
 
+  {
+    const { status } = await getLatestDraft({
+      personId: lin.id,
+      occasionId: aisha.nextOccasionId,
+    });
+    check("GET Lin + Aisha occasionId -> 404", status === 404, `status=${status}`);
+  }
+
+  {
+    const { status } = await getLatestDraft({
+      personId: lin.id,
+      occasionId: lin.nextOccasionId,
+    });
+    check("Lin latest before any draft -> 204", status === 204, `status=${status}`);
+  }
+
   let linInitialDraftId = null;
   {
     const { status, body } = await postDraft({
@@ -309,6 +336,19 @@ try {
   }
 
   {
+    const { status, body } = await getLatestDraft({
+      personId: lin.id,
+      occasionId: lin.nextOccasionId,
+    });
+    check("Lin latest after initial -> 200", status === 200, `status=${status}`);
+    check(
+      "Lin latest after initial returns initial draft id",
+      body?.id === linInitialDraftId,
+      `latest=${body?.id} initial=${linInitialDraftId}`,
+    );
+  }
+
+  {
     const { status, body } = await postDraft({
       personId: lin.id,
       occasionId: lin.nextOccasionId,
@@ -322,17 +362,33 @@ try {
     );
   }
 
+  let linFlirtyDraftId = null;
   {
-    const { body } = await postDraft({
+    const { status, body } = await postDraft({
       personId: lin.id,
       occasionId: lin.nextOccasionId,
       userInstruction: "Make it more flirty",
     });
+    check("Lin flirty -> 200", status === 200, `status=${status}`);
+    linFlirtyDraftId = body?.id ?? null;
     check("Lin flirty tone = playful", body?.tone === "playful", `tone=${body?.tone}`);
     check(
       "Lin flirty instruction returns different draft id",
       /^[0-9a-f-]{36}$/i.test(body?.id ?? "") && body.id !== linInitialDraftId,
       `initial=${linInitialDraftId} flirty=${body?.id}`,
+    );
+  }
+
+  {
+    const { status, body } = await getLatestDraft({
+      personId: lin.id,
+      occasionId: lin.nextOccasionId,
+    });
+    check("Lin latest after flirty -> 200", status === 200, `status=${status}`);
+    check(
+      "Lin latest after flirty returns flirty draft id",
+      body?.id === linFlirtyDraftId,
+      `latest=${body?.id} flirty=${linFlirtyDraftId}`,
     );
   }
 

@@ -1,5 +1,5 @@
 // Smoke test for /api/drafts. Boots `next dev` on an isolated port, runs
-// 9 assertions against the live HTTP surface, then tears the server down.
+// 10 assertions against the live HTTP surface, then tears the server down.
 // No DB, no LLM — just exercises the mock contract.
 //
 // Run via: pnpm test:drafts
@@ -20,6 +20,17 @@ async function postDraft(body) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
+async function getLatestDraft({ personId, occasionId }) {
+  const query = new URLSearchParams({ personId });
+  if (occasionId) query.set("occasionId", occasionId);
+
+  const res = await fetch(`${BASE}/api/drafts?${query.toString()}`);
   const json = res.headers.get("content-type")?.includes("json")
     ? await res.json().catch(() => null)
     : null;
@@ -67,6 +78,15 @@ try {
   process.stdout.write(`booting next dev on :${PORT}…\n`);
   await waitForReady();
   process.stdout.write(`server ready, running assertions:\n`);
+
+  // 0. Mock latest restore is a miss, so Workspace falls through to POST.
+  {
+    const { status } = await getLatestDraft({
+      personId: "p-lin",
+      occasionId: "occ-lin-anniv",
+    });
+    check("mock latest draft miss -> 204", status === 204, `status=${status}`);
+  }
 
   // 1. Missing required fields → 400
   {

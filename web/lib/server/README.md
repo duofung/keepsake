@@ -2,9 +2,10 @@
 
 Where server-only orchestration lives. This directory keeps `app/` and
 `components/` away from `lib/mock.ts`, SQL, crypto, and future auth/LLM
-clients. People payload, draft generation orchestration, draft context, and
-delivery history now have DB-capable runtime verticals. Draft generation is
-still mock-backed; only DB mode persists/caches generated message drafts.
+clients. People payload, draft generation orchestration, latest draft restore,
+draft context, and delivery history now have DB-capable runtime verticals.
+Draft generation is still mock-backed; only DB mode persists/caches generated
+message drafts and restores the newest saved draft.
 
 The rule is simple: framework code calls `lib/server/*`; `lib/server/*`
 dispatches to mocks or repositories/services without leaking that choice into
@@ -33,9 +34,9 @@ lib/server/
 │   └── db.server.ts          ← current: DB-backed DraftContext
 ├── draft-service/
 │   ├── index.server.ts       ← current: mock/db dispatcher for /api/drafts
-│   ├── mock.server.ts        ← current: original mock-only route behavior
-│   ├── db.server.ts          ← current: DB context + draft cache/save
-│   └── types.ts              ← DraftServiceResult contract
+│   ├── mock.server.ts        ← current: original mock-only POST + latest miss
+│   ├── db.server.ts          ← current: DB context + draft cache/save/latest
+│   └── types.ts              ← draft service contracts
 ├── draft-generator/
 │   ├── types.ts              ← DraftContext / DraftGenerator contracts
 │   └── mock.server.ts        ← current: mock MessageDraft generator
@@ -94,9 +95,9 @@ small on purpose.
 | `delivery-history/index.server.ts` | History | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db`; `app/history/page.tsx` only calls this server helper | Real auth owner resolution; eventually delete mock fallback | `pnpm test:history`, `pnpm test:db:history-route`, `pnpm test:boundaries` |
 | `delivery-history/mock.server.ts` | `delivery-history/index.server.ts` | `deliveries` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:history`, `pnpm test:boundaries` |
 | `delivery-history/db.server.ts` | `delivery-history/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `DeliveryRepository.listByMonth(ownerId, { limit: 50 })`; read-only History DB mode | Same repository read with real auth; send/enqueue/webhook/worker remain separate future paths | `pnpm test:db:deliveries`, `pnpm test:db:history-route` |
-| `draft-service/index.server.ts` | `POST /api/drafts` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Same route seam with real auth/LLM behind it | `pnpm test:drafts`, `pnpm test:db:drafts-route`, `pnpm test:boundaries` |
-| `draft-service/mock.server.ts` | `draft-service/index.server.ts` | Preserves original mock route behavior: mock context + mock generator, no DB writes | Deleted when DB is the only source | `pnpm test:drafts`, `pnpm test:boundaries` |
-| `draft-service/db.server.ts` | `draft-service/index.server.ts` | `currentUserIdOrThrow()` + one `transaction(ownerId)` for DB context, prompt hash lookup, mock generation on miss, and `DraftRepository.save` | Same orchestration with real auth and a future LLM generator | `pnpm test:db:drafts-repository`, `pnpm test:db:drafts-route` |
+| `draft-service/index.server.ts` | `GET /api/drafts`, `POST /api/drafts` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Same route seam with real auth/LLM behind it | `pnpm test:drafts`, `pnpm test:db:drafts-route`, `pnpm test:boundaries` |
+| `draft-service/mock.server.ts` | `draft-service/index.server.ts` | Preserves original mock POST behavior: mock context + mock generator, no DB writes. Latest restore returns a miss (`draft:null`) so Workspace falls through to initial generation. | Deleted when DB is the only source | `pnpm test:drafts`, `pnpm test:boundaries` |
+| `draft-service/db.server.ts` | `draft-service/index.server.ts` | `currentUserIdOrThrow()` + one `transaction(ownerId)` for DB context, prompt hash lookup, mock generation on miss, and `DraftRepository.save` on POST; same transaction + context validation + `DraftRepository.getLatestFor` on GET latest restore | Same orchestration with real auth and a future LLM generator | `pnpm test:db:drafts-repository`, `pnpm test:db:drafts-route` |
 | `draft-context/index.server.ts` | `POST /api/drafts` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:drafts`, `pnpm test:db:drafts-route`, `pnpm test:boundaries` |
 | `draft-context/mock.server.ts` | `draft-context/index.server.ts` | validates ids and builds `DraftContext` from mock finders | Deleted when DB is the only source | `pnpm test:drafts`, `pnpm test:boundaries` |
 | `draft-context/db.server.ts` | `draft-context/index.server.ts`, `draft-service/db.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + People/Catalog repo hydration; also exposes an in-transaction resolver for draft persistence | Same repository composition with real auth | `pnpm test:db:drafts-route` |
@@ -146,6 +147,16 @@ server-side inputs plus `userInstruction` and the mock generator identity,
 checks `message_drafts`, and saves cache misses. The client contract is still
 only `{ personId, occasionId, userInstruction }`; relationship, cultureRule,
 and tone are server-authoritative and are never read from client overrides.
+
+The same route now supports latest-draft restore with
+`GET /api/drafts?personId=...&occasionId=...`. The route reads query params,
+calls `getLatestDraft(input)`, and returns either a `MessageDraft` JSON body
+or 204 when no draft exists. In default mock mode this is always a miss. In
+DB mode the service opens one owner-scoped transaction, validates the person
+and occasion through `resolveDbDraftContextInTx`, then calls
+`DraftRepository.getLatestFor`. A supplied `occasionId` must belong to the
+person; an omitted `occasionId` falls back to `person.nextOccasionId`, or to
+the `NULL` occasion bucket when no next occasion exists.
 
 For History, the page remains a server component that calls
 `getDeliveryHistory()`. In DB mode that helper opens a user-scoped
@@ -293,10 +304,12 @@ Default mock mode:
 
 ```
 app/api/drafts/route.ts
-  └─ draft-service/index.server.ts
-     └─ mock.server.ts
-        ├─ draft-context/mock.server.ts
-        └─ draft-generator/mock.server.ts
+  ├─ POST → draft-service/index.server.ts
+  │          └─ mock.server.ts
+  │             ├─ draft-context/mock.server.ts
+  │             └─ draft-generator/mock.server.ts
+  └─ GET  → draft-service/index.server.ts
+             └─ mock.server.ts → draft:null
 ```
 
 No DB writes happen in this branch.
@@ -326,6 +339,27 @@ The client still sends only `{ personId, occasionId, userInstruction }`.
 client trying to specify a culture or relationship is ignored by this service
 and is not part of the prompt HMAC. DB mode now persists and caches
 `message_drafts`; LLM generation is still future work.
+
+```
+GET /api/drafts?personId=...&occasionId=...
+  │
+  ├─ draft-service/db.server
+  ├─ auth/current-user             → OwnerId
+  ├─ db/transaction                ┐ opens a tx, SET LOCAL app.user_id
+  │                                │
+  │   ├─ draft-context/db.server    │ validate person + occasion ownership
+  │   ├─ PeopleRepository           │ findById, findOccasionForPerson
+  │   ├─ CatalogRepository          │ getRelationship, getCulture
+  │   └─ DraftRepository            │ getLatestFor(ownerId, personId, occasionId)
+  │                                ┘
+  └─ crypto/envelope                decrypts the restored MessageDraft inside the repo
+```
+
+Workspace uses this GET first when the person/occasion is known. A 200 restores
+the saved draft into the compose view; a 204 miss falls back to
+`POST /api/drafts` with an empty `userInstruction` to generate the initial
+mock draft. Send, enqueue, webhooks, workers, and the LLM-backed generator
+remain future work.
 
 ## How these compose at the History page
 
