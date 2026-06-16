@@ -1,7 +1,8 @@
 // DB-backed smoke test for /api/drafts. Boots a throwaway Postgres, loads the
 // schema/catalog/dev fixtures, starts Next with KEEPSAKE_DATA_SOURCE=db, then
 // verifies that draft context is hydrated through repositories/RLS while the
-// existing mock draft generator still produces the MessageDraft.
+// existing mock draft generator still produces the MessageDraft. In DB mode,
+// /api/drafts also persists message_drafts and reuses cached prompt hashes.
 //
 // Run via: pnpm test:db:drafts-route
 
@@ -193,7 +194,19 @@ try {
     await client.query(`CREATE ROLE ${appRole} LOGIN PASSWORD '${appPassword}' NOBYPASSRLS`);
     await client.query(`GRANT CONNECT ON DATABASE keepsake TO ${appRole}`);
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
+    await client.query(`
+      GRANT USAGE ON TYPE
+        relationship_kind,
+        relationship_group,
+        occasion_kind,
+        tone,
+        channel,
+        delivery_status,
+        subscription_status
+      TO ${appRole}
+    `);
     await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes TO ${appRole}`);
+    await client.query(`GRANT SELECT, INSERT ON message_drafts TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 
@@ -278,6 +291,7 @@ try {
     check("Lin + Aisha occasionId -> 404", status === 404, `status=${status}`);
   }
 
+  let linInitialDraftId = null;
   {
     const { status, body } = await postDraft({
       personId: lin.id,
@@ -285,10 +299,26 @@ try {
       userInstruction: "",
     });
     check("Lin explicit next occasion -> 200", status === 200, `status=${status}`);
+    linInitialDraftId = body?.id ?? null;
+    check("Lin initial returns DB uuid id", /^[0-9a-f-]{36}$/i.test(linInitialDraftId ?? ""));
     check("Lin initial tone = tender-intimate", body?.tone === "tender-intimate", `tone=${body?.tone}`);
     check(
       "Lin initial has paragraphs[]",
       Array.isArray(body?.paragraphs) && body.paragraphs.length > 0,
+    );
+  }
+
+  {
+    const { status, body } = await postDraft({
+      personId: lin.id,
+      occasionId: lin.nextOccasionId,
+      userInstruction: "",
+    });
+    check("Lin repeated same input -> 200", status === 200, `status=${status}`);
+    check(
+      "Lin repeated same input returns same draft id (cache hit)",
+      body?.id === linInitialDraftId,
+      `first=${linInitialDraftId} second=${body?.id}`,
     );
   }
 
@@ -299,6 +329,11 @@ try {
       userInstruction: "Make it more flirty",
     });
     check("Lin flirty tone = playful", body?.tone === "playful", `tone=${body?.tone}`);
+    check(
+      "Lin flirty instruction returns different draft id",
+      /^[0-9a-f-]{36}$/i.test(body?.id ?? "") && body.id !== linInitialDraftId,
+      `initial=${linInitialDraftId} flirty=${body?.id}`,
+    );
   }
 
   {

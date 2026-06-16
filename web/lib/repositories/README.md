@@ -4,8 +4,9 @@ The boundary between Postgres and the rest of the app. Most files here are
 still TypeScript interface declarations that compile against
 [`lib/domain.ts`](../domain.ts) and pair with [`db/schema.sql`](../../db/schema.sql).
 The first real implementations are `catalog.server.ts`, the read side of
-`people.server.ts`, and the read side of `deliveries.server.ts`; the
-remaining repo methods will follow the same pattern as they land.
+`people.server.ts`, `drafts.server.ts`, and the read side of
+`deliveries.server.ts`; the remaining repo methods will follow the same
+pattern as they land.
 
 ## What lives here
 
@@ -19,6 +20,7 @@ remaining repo methods will follow the same pattern as they land.
 | [`people.ts`](./people.ts) | `PeopleRepository` — per-user CRUD over `people` + `occasion_nodes`. |
 | [`people.server.ts`](./people.server.ts) | `PgPeopleRepository` — read-only runtime implementation for people + occasions, including encrypted columns via `lib/server/crypto/envelope.server.ts`. Write methods intentionally throw for now. |
 | [`drafts.ts`](./drafts.ts) | `DraftRepository` — persistence for `message_drafts`. |
+| [`drafts.server.ts`](./drafts.server.ts) | `PgDraftRepository` — runtime implementation for `message_drafts` persistence/cache, including encrypted subject/paragraph/note/instruction columns. |
 | [`deliveries.ts`](./deliveries.ts) | `DeliveryRepository` — `deliveries` reads + the send/webhook write paths. |
 | [`deliveries.server.ts`](./deliveries.server.ts) | `PgDeliveryRepository` — read-only runtime implementation for sent delivery history, including encrypted recipient/occasion labels. Send/webhook/worker methods intentionally throw for now. |
 
@@ -108,8 +110,9 @@ Every repository method accepts an optional `tx?: Tx`. Omitting it means
 
 ### CatalogRepository
 
-Runtime implementation: `catalog.server.ts`. It is intentionally not used
-by the app yet; mock-backed server seams still power current routes/pages.
+Runtime implementation: `catalog.server.ts`. It backs `/api/people` and
+`/api/drafts` context resolution when `KEEPSAKE_DATA_SOURCE=db`; mock-backed
+server seams remain the default.
 `pnpm test:db:catalog` verifies mapping and RLS behavior against temporary
 Postgres.
 
@@ -126,9 +129,10 @@ user-custom rows.
 
 ### PeopleRepository
 
-Runtime implementation: `people.server.ts` for read methods only. It is not
-used by the app yet; mock-backed server seams still power current
-routes/pages. `pnpm test:db:people` verifies decryption, RLS behavior,
+Runtime implementation: `people.server.ts` for read methods only. It backs
+`/api/people` and `/api/drafts` context resolution when
+`KEEPSAKE_DATA_SOURCE=db`; mock-backed server seams remain the default.
+`pnpm test:db:people` verifies decryption, RLS behavior,
 derived `nextOccasionId` / `isPrimary`, and `PeoplePayload` shape against
 temporary Postgres.
 
@@ -153,8 +157,15 @@ occasion belongs to a person — a `personId` lookup already proves ownership.
 
 ### DraftRepository
 
-Per-user. Storage and cache lookup for `message_drafts`. The LLM call
-itself is **not** here — `save()` takes an already-formed `MessageDraft`.
+Runtime implementation: `drafts.server.ts`.
+`pnpm test:db:drafts-repository` verifies save/find/list behavior, encrypted
+field roundtrips, RLS isolation, prompt HMAC cache lookup, and explicit
+transaction reuse against temporary Postgres.
+
+Per-user. Storage and cache lookup for `message_drafts`. The LLM call itself
+is **not** here — `save()` takes an already-formed `MessageDraft`. Current
+DB mode composes it with the mock generator; a real LLM generator can replace
+that service later without changing the repository contract.
 
 | Method | Returns | Caller |
 |---|---|---|
@@ -201,20 +212,26 @@ the current runtime implementation.
   to send. It is deliberately not the public `Delivery` domain type used by
   History.
 
-## Future `/api/drafts` walkthrough
+## Current `/api/drafts` DB-mode walkthrough
 
 The route stays server-authoritative. The client still sends only
 `{ personId, occasionId, userInstruction }`.
 
 ```ts
-// app/api/drafts/route.ts (future, sketch)
+// app/api/drafts/route.ts
 export async function POST(req: Request) {
-  const ownerId = await currentUserIdOrThrow(req);   // 401 if missing
-  const { personId, occasionId, userInstruction } = await req.json();
+  const body = await req.json();
+  const result = await generateDraft(body);
+  return result.ok ? ok(result.draft) : error(result);
+}
 
-  return db.transaction(async (tx) => {
-    // 1. Authorise + hydrate person under RLS.
-    const person = await people.findById(ownerId, personId, tx);
+// lib/server/draft-service/db.server.ts
+export async function generateDbDraft(input: DraftRequest) {
+  const ownerId = currentUserIdOrThrow();
+
+  return transaction(ownerId, async (tx) => {
+    // 1. Validate + hydrate person under RLS.
+    const person = await people.findById(ownerId, input.personId, tx);
     if (!person) return notFound();
 
     // 2. Hydrate the catalog rows referenced by the person.
@@ -225,27 +242,39 @@ export async function POST(req: Request) {
     if (!relationship || !culture) return notFound();
 
     // 3. Hydrate the occasion if one was named.
-    const occasion = occasionId
-      ? await people.findOccasionForPerson(ownerId, personId, occasionId, tx)
+    const occasion = input.occasionId
+      ? await people.findOccasionForPerson(ownerId, input.personId, input.occasionId, tx)
       : null;
-    if (occasionId && !occasion) return notFound();
+    if (input.occasionId && !occasion) return notFound();
 
     // 4. Cache lookup.
     const promptHash = hashPromptInputs({
-      person, relationship, culture, occasion, userInstruction,
+      person,
+      relationship,
+      culture,
+      occasion,
+      userInstruction: input.userInstruction,
+      generator: { provider: "mock", version: "mock-draft-generator:v1" },
     });
     const cached = await drafts.findByPromptHash(ownerId, promptHash, tx);
     if (cached) return ok(cached);
 
-    // 5. LLM (later). For now this is the mock generator from the current route.
+    // 5. Generator is still mock today. LLM is later.
     const generated = await draftGenerator.generate({
-      person, relationship, culture, occasion, userInstruction,
+      person,
+      relationship,
+      culture,
+      occasion,
+      userInstruction: input.userInstruction,
     });
 
     // 6. Persist + return.
     const saved = await drafts.save(ownerId, {
       ...generated,
-      personId, occasionId, userInstruction, promptHash,
+      userInstruction: input.userInstruction,
+      promptHash,
+      modelProvider: "mock",
+      modelVersion: "mock-draft-generator:v1",
     }, tx);
     return ok(saved);
   });
@@ -264,6 +293,7 @@ What's notable:
   cross-person occasion → 404 behavior.
 - Caching is keyed by a hash that includes the resolved catalog rows, not
   the raw IDs — so a culture taboo edit invalidates old drafts naturally.
+- The default mock path does not call `DraftRepository` and does not write DB.
 
 ## Other route mappings
 
