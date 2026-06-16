@@ -1,5 +1,5 @@
 // Smoke test for /api/drafts. Boots `next dev` on an isolated port, runs
-// 10 assertions against the live HTTP surface, then tears the server down.
+// 11 assertions against the live HTTP surface, then tears the server down.
 // No DB, no LLM — just exercises the mock contract.
 //
 // Run via: pnpm test:drafts
@@ -31,6 +31,18 @@ async function getLatestDraft({ personId, occasionId }) {
   if (occasionId) query.set("occasionId", occasionId);
 
   const res = await fetch(`${BASE}/api/drafts?${query.toString()}`);
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
+async function getDraftVersions({ personId, occasionId, limit }) {
+  const query = new URLSearchParams({ personId });
+  if (occasionId) query.set("occasionId", occasionId);
+  if (limit !== undefined) query.set("limit", String(limit));
+
+  const res = await fetch(`${BASE}/api/drafts/versions?${query.toString()}`);
   const json = res.headers.get("content-type")?.includes("json")
     ? await res.json().catch(() => null)
     : null;
@@ -86,6 +98,15 @@ try {
       occasionId: "occ-lin-anniv",
     });
     check("mock latest draft miss -> 204", status === 204, `status=${status}`);
+  }
+
+  {
+    const { status, body } = await getDraftVersions({
+      personId: "p-lin",
+      occasionId: "occ-lin-anniv",
+      limit: 5,
+    });
+    check("mock draft versions -> []", status === 200 && Array.isArray(body?.drafts) && body.drafts.length === 0, `status=${status}`);
   }
 
   // 1. Missing required fields → 400

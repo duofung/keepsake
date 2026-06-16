@@ -146,6 +146,18 @@ async function getLatestDraft({ personId, occasionId }) {
   return { status: res.status, body: json };
 }
 
+async function getDraftVersions({ personId, occasionId, limit }) {
+  const query = new URLSearchParams({ personId });
+  if (occasionId) query.set("occasionId", occasionId);
+  if (limit !== undefined) query.set("limit", String(limit));
+
+  const res = await fetch(`${base}/api/drafts/versions?${query.toString()}`);
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
 function draftText(draft) {
   const paragraphs = Array.isArray(draft?.paragraphs)
     ? draft.paragraphs.map((paragraph) => paragraph?.text ?? "")
@@ -294,6 +306,22 @@ try {
   }
 
   {
+    const { status } = await getDraftVersions({
+      personId: "not-a-uuid",
+      occasionId: lin.nextOccasionId,
+    });
+    check("GET versions malformed personId -> 400", status === 400, `status=${status}`);
+  }
+
+  {
+    const { status } = await getDraftVersions({
+      personId: lin.id,
+      occasionId: "not-a-uuid",
+    });
+    check("GET versions malformed occasionId -> 404", status === 404, `status=${status}`);
+  }
+
+  {
     const { status } = await postDraft({
       personId: lin.id,
       occasionId: aisha.nextOccasionId,
@@ -311,11 +339,31 @@ try {
   }
 
   {
+    const { status } = await getDraftVersions({
+      personId: lin.id,
+      occasionId: aisha.nextOccasionId,
+    });
+    check("GET versions Lin + Aisha occasionId -> 404", status === 404, `status=${status}`);
+  }
+
+  {
     const { status } = await getLatestDraft({
       personId: lin.id,
       occasionId: lin.nextOccasionId,
     });
     check("Lin latest before any draft -> 204", status === 204, `status=${status}`);
+  }
+
+  {
+    const { status, body } = await getDraftVersions({
+      personId: lin.id,
+      occasionId: lin.nextOccasionId,
+    });
+    check("Lin versions before any draft -> 200", status === 200, `status=${status}`);
+    check(
+      "Lin versions before any draft -> []",
+      Array.isArray(body?.drafts) && body.drafts.length === 0,
+    );
   }
 
   let linInitialDraftId = null;
@@ -345,6 +393,21 @@ try {
       "Lin latest after initial returns initial draft id",
       body?.id === linInitialDraftId,
       `latest=${body?.id} initial=${linInitialDraftId}`,
+    );
+  }
+
+  {
+    const { status, body } = await getDraftVersions({
+      personId: lin.id,
+      occasionId: lin.nextOccasionId,
+    });
+    check("Lin versions after initial -> 200", status === 200, `status=${status}`);
+    check(
+      "Lin versions after initial -> [initial]",
+      Array.isArray(body?.drafts)
+        && body.drafts.length === 1
+        && body.drafts[0]?.id === linInitialDraftId,
+      `ids=${(body?.drafts ?? []).map((draft) => draft?.id).join(",")}`,
     );
   }
 
@@ -389,6 +452,22 @@ try {
       "Lin latest after flirty returns flirty draft id",
       body?.id === linFlirtyDraftId,
       `latest=${body?.id} flirty=${linFlirtyDraftId}`,
+    );
+  }
+
+  {
+    const { status, body } = await getDraftVersions({
+      personId: lin.id,
+      occasionId: lin.nextOccasionId,
+    });
+    check("Lin versions after flirty -> 200", status === 200, `status=${status}`);
+    check(
+      "Lin versions after flirty -> [flirty, initial]",
+      Array.isArray(body?.drafts)
+        && body.drafts.length === 2
+        && body.drafts[0]?.id === linFlirtyDraftId
+        && body.drafts[1]?.id === linInitialDraftId,
+      `ids=${(body?.drafts ?? []).map((draft) => draft?.id).join(",")}`,
     );
   }
 

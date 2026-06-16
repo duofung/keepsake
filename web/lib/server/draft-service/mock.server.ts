@@ -7,6 +7,8 @@ import type {
   DraftLatestInput,
   DraftLatestResult,
   DraftServiceResult,
+  DraftVersionsInput,
+  DraftVersionsResult,
 } from "./types";
 
 const draftGenerator = createMockDraftGenerator();
@@ -31,4 +33,14 @@ export async function getLatestMockDraft(
   }
 
   return { ok: true, draft: null };
+}
+
+export async function listMockDraftVersions(
+  input: DraftVersionsInput,
+): Promise<DraftVersionsResult> {
+  if (!input?.personId) {
+    return { ok: false, status: 400, error: "Missing fields: personId" };
+  }
+
+  return { ok: true, drafts: [] };
 }

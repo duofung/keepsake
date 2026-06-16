@@ -25,6 +25,8 @@ function Workspace() {
 
   const [payload, setPayload] = useState<PeoplePayload | null>(null);
   const [draft, setDraft] = useState<MessageDraft | null>(null);
+  const [versions, setVersions] = useState<MessageDraft[]>([]);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [subject, setSubject] = useState("");
   const [hasCard, setHasCard] = useState(true);
   const [log, setLog] = useState<Msg[]>([]);
@@ -68,6 +70,7 @@ function Workspace() {
     logMode: "append" | "replace" = "append",
   ) => {
     setDraft(next);
+    setSelectedVersionId(next.id);
     setSubject(next.subject);
     setHasCard(!!next.attachedCard);
     setLog((prev) => {
@@ -75,6 +78,38 @@ function Workspace() {
       return logMode === "replace" ? [note] : [...prev, note];
     });
   }, []);
+
+  const fetchVersions = useCallback(async () => {
+    if (!person) {
+      setVersions([]);
+      return;
+    }
+
+    const key = `${person.id}:${occasion?.id ?? "none"}`;
+    const query = new URLSearchParams({
+      personId: person.id,
+      limit: "5",
+    });
+    if (occasion?.id) query.set("occasionId", occasion.id);
+
+    try {
+      const res = await fetch(`/api/drafts/versions?${query.toString()}`);
+      if (initialDraftKeyRef.current !== key) return;
+
+      if (!res.ok) {
+        console.warn(`Could not load draft versions (${res.status}): ${await res.text()}`);
+        setVersions([]);
+        return;
+      }
+
+      const body = (await res.json()) as { drafts?: MessageDraft[] };
+      setVersions(Array.isArray(body.drafts) ? body.drafts.slice(0, 5) : []);
+    } catch (error) {
+      if (initialDraftKeyRef.current !== key) return;
+      console.warn("Could not load draft versions", error);
+      setVersions([]);
+    }
+  }, [person, occasion]);
 
   const requestDraft = useCallback(async (userInstruction: string) => {
     if (!person || !relationship || !culture) return;
@@ -93,10 +128,11 @@ function Workspace() {
       if (!res.ok) throw new Error(await res.text());
       const next = (await res.json()) as MessageDraft;
       applyDraft(next);
+      await fetchVersions();
     } finally {
       setLoading(false);
     }
-  }, [person, relationship, culture, occasion, applyDraft]);
+  }, [person, relationship, culture, occasion, applyDraft, fetchVersions]);
 
   // Restore latest saved draft first; generate an initial draft only on miss.
   useEffect(() => {
@@ -105,6 +141,8 @@ function Workspace() {
     if (initialDraftKeyRef.current === key) return;
     initialDraftKeyRef.current = key;
     setDraft(null);
+    setVersions([]);
+    setSelectedVersionId(null);
     setSubject("");
     setHasCard(true);
     setLog([]);
@@ -123,6 +161,7 @@ function Workspace() {
         if (res.status === 200) {
           const restored = (await res.json()) as MessageDraft;
           applyDraft(restored, "replace");
+          await fetchVersions();
           return;
         }
 
@@ -148,7 +187,7 @@ function Workspace() {
     }
 
     void restoreOrGenerate();
-  }, [person, relationship, culture, occasion, requestDraft, applyDraft]);
+  }, [person, relationship, culture, occasion, requestDraft, applyDraft, fetchVersions]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -168,6 +207,15 @@ function Workspace() {
     setTimeout(() => { setToast(null); router.push("/"); }, 2000);
   }
 
+  function showVersion(version: MessageDraft) {
+    if ((selectedVersionId ?? draft?.id) === version.id) return;
+    setDraft(version);
+    setSelectedVersionId(version.id);
+    setSubject(version.subject);
+    setHasCard(!!version.attachedCard);
+    setLog((prev) => [...prev, { who: "ai", text: "Restored that version." }]);
+  }
+
   if (!person || !relationship || !culture) {
     return <div style={{ padding: 24, color: "var(--gray-2)", fontSize: 13 }}>Loading…</div>;
   }
@@ -176,6 +224,7 @@ function Workspace() {
     ? nodeChipText(occasion.label, occasion.daysUntil)
     : "Last note · 2 mo ago";
   const nodeIcon = occasion ? occasionIcon[occasion.kind] : "i-bulb";
+  const activeVersionId = selectedVersionId ?? draft?.id ?? null;
 
   return (
     <div className="ks-workspace-frame">
@@ -341,6 +390,47 @@ function Workspace() {
                 {alt.label}
               </button>
             ))}
+            {versions.length > 1 && (
+              <div style={{
+                marginLeft: "auto", height: 28, display: "flex", alignItems: "center",
+                gap: 5, minWidth: 0,
+              }}>
+                <span style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 500 }}>
+                  Versions
+                </span>
+                {versions.slice(0, 5).map((version, index) => {
+                  const active = version.id === activeVersionId;
+                  return (
+                    <button
+                      key={version.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => showVersion(version)}
+                      title={version.subject}
+                      style={{
+                        height: 28, minWidth: index === 0 ? 76 : 46, maxWidth: 104,
+                        padding: "0 9px", borderRadius: 10, cursor: "pointer",
+                        border: active ? "0.5px solid var(--blue)" : "0.5px solid #E1E6EB",
+                        background: active ? "var(--blue-wash)" : "#fff",
+                        color: active ? "var(--blue-deep)" : "var(--gray-2)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        gap: 5, fontSize: 11.5, fontWeight: active ? 600 : 500,
+                        overflow: "hidden", flexShrink: 0,
+                      }}
+                    >
+                      <span style={{ fontSize: 12, flexShrink: 0 }}>
+                        <Icon name={toneIcon[version.tone]} />
+                      </span>
+                      <span style={{
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      }}>
+                        {index === 0 ? "Current" : `v${index + 1}`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div style={{ padding: "0 22px 12px", borderBottom: "0.5px solid var(--line)" }}>

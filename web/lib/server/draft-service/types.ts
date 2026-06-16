@@ -12,3 +12,13 @@ export interface DraftLatestInput {
 export type DraftLatestResult =
   | { ok: true; draft: MessageDraft | null }
   | { ok: false; status: 400 | 404 | 500; error: string };
+
+export interface DraftVersionsInput {
+  personId: ID;
+  occasionId?: ID | null;
+  limit?: number;
+}
+
+export type DraftVersionsResult =
+  | { ok: true; drafts: MessageDraft[] }
+  | { ok: false; status: 400 | 404 | 500; error: string };

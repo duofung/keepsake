@@ -13,6 +13,8 @@ import type {
   DraftLatestInput,
   DraftLatestResult,
   DraftServiceResult,
+  DraftVersionsInput,
+  DraftVersionsResult,
 } from "./types";
 
 const MODEL_PROVIDER = "mock";
@@ -21,6 +23,7 @@ const PROMPT_HASH_VERSION = "message-drafts-prompt-hmac:v1";
 
 const draftGenerator = createMockDraftGenerator();
 const draftRepository = createDraftRepository();
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -107,6 +110,27 @@ function validateLatestInput(input: DraftLatestInput): DraftLatestResult | null 
   return null;
 }
 
+function safeVersionsLimit(limit: number | undefined): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) return 5;
+  return Math.min(10, Math.max(1, Math.trunc(limit)));
+}
+
+function validateVersionsInput(input: DraftVersionsInput): DraftVersionsResult | null {
+  if (!input?.personId) {
+    return { ok: false, status: 400, error: "Missing fields: personId" };
+  }
+
+  if (!UUID_RE.test(input.personId)) {
+    return { ok: false, status: 400, error: "Invalid personId" };
+  }
+
+  if (input.occasionId && !UUID_RE.test(input.occasionId)) {
+    return { ok: false, status: 404, error: "Occasion not found" };
+  }
+
+  return null;
+}
+
 export async function generateDbDraft(
   input: DraftRequest,
 ): Promise<DraftServiceResult> {
@@ -174,6 +198,54 @@ export async function getLatestDbDraft(
       );
 
       return { ok: true, draft: latest };
+    });
+  } catch (error) {
+    console.error(error);
+    return {
+      ok: false,
+      status: 500,
+      error: "Draft context resolver is unavailable",
+    };
+  }
+}
+
+export async function listDbDraftVersions(
+  input: DraftVersionsInput,
+): Promise<DraftVersionsResult> {
+  const invalid = validateVersionsInput(input);
+  if (invalid) return invalid;
+
+  try {
+    const ownerId = currentUserIdOrThrow();
+    const safeLimit = safeVersionsLimit(input.limit);
+    const readLimit = Math.min(30, Math.max(safeLimit * 3, safeLimit));
+
+    return await transaction(ownerId, async (tx) => {
+      const result = await resolveDbDraftContextInTx(
+        ownerId,
+        {
+          personId: input.personId,
+          occasionId: input.occasionId ?? null,
+          userInstruction: "",
+        },
+        tx,
+      );
+      if (!result.ok) return result;
+
+      const resolvedOccasionId = result.ctx.occasion?.id ?? null;
+      const drafts = await draftRepository.listForPerson(
+        ownerId,
+        result.ctx.person.id,
+        readLimit,
+        tx,
+      );
+
+      return {
+        ok: true,
+        drafts: drafts
+          .filter((draft) => draft.occasionId === resolvedOccasionId)
+          .slice(0, safeLimit),
+      };
     });
   } catch (error) {
     console.error(error);
