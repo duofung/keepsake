@@ -44,6 +44,8 @@ lib/server/
 │   └── mock.server.ts        ← current: mock MessageDraft generator
 ├── auth/                     ← current: dev owner seam; future real auth
 │   └── current-user.server.ts
+├── oauth/                    ← current: provider route contracts only
+│   └── gmail.server.ts
 ├── db/                       ← current: request-path transaction helper
 │   └── transaction.server.ts
 └── crypto/                   ← current: dev AES-GCM envelope helper
@@ -92,6 +94,7 @@ small on purpose.
 | Seam | Called by | Today | Future replacement | Guard |
 |---|---|---|---|---|
 | `auth/current-user.server.ts` | `/api/session`, Home, Workspace, Profile, DB-backed server helpers | Resolves `{ id, email, name, initials, sendingAccount }` from `DEV_OWNER_*`; `sendingAccount` is `null` until Gmail OAuth is wired; `currentUserIdOrThrow()` remains the owner-id compatibility helper | Cookie/session/OAuth and Gmail account lookup inside this file only; route, Home, Workspace, Profile, and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:boundaries` |
+| `oauth/gmail.server.ts` | `GET /api/oauth/gmail/start`, `GET /api/oauth/gmail/callback` | Defines the Gmail OAuth start/callback contract and returns explicit 501 `not_configured` placeholders once the caller is authenticated. Callback also returns 400 for provider denial or missing `code/state`. | Google authorization URL generation, OAuth state semantics, token exchange, and account persistence behind this seam plus a future repository/service. Route files stay parse/query → auth → delegate → JSON/redirect, and should only apply plain-data redirect/cookie instructions returned by the seam. | `pnpm test:oauth`, `pnpm test:boundaries` |
 | `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
@@ -110,6 +113,32 @@ The `app/` tree should not import `lib/mock.ts` directly. If a page needs
 server data, make the page a server component and call one of these helpers,
 passing serializable domain payloads down to client components. If a client
 component needs live data, fetch an API route.
+
+### Current OAuth route stubs
+
+Gmail OAuth has a route contract but no provider implementation yet:
+
+```text
+GET /api/oauth/gmail/start
+GET /api/oauth/gmail/callback
+```
+
+Both routes are `force-dynamic`. They authenticate through
+`currentUserIdOrThrow()`, delegate to `oauth/gmail.server.ts`, and return JSON
+failures today:
+
+- missing dev auth → `401 { error: "Unauthenticated" }`
+- invalid dev auth → `500 { error: "Auth is misconfigured" }`
+- start route with valid auth → `501 { code: "not_configured", ... }`
+- callback with provider `error` → `400 { code: "provider_error", ... }`
+- callback missing `code` or `state` → `400 { code: "invalid_callback", ... }`
+- callback with `code` + `state` but no implementation → `501 { code: "not_configured", ... }`
+
+The stubs deliberately do not read Google env vars, create OAuth state,
+exchange tokens, write Gmail account rows, enqueue sends, or update
+`CurrentUser.sendingAccount`. The next implementation pass should keep those
+provider operations behind the `oauth/gmail.server.ts` seam while keeping
+`Request` / `Response` types in route handlers.
 
 ### Current DB runtime skeleton
 

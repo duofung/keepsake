@@ -67,6 +67,41 @@ touch DB, cookies, OAuth, Gmail, or write paths. Future cookie/OAuth work
 replaces the internals of `lib/server/auth/current-user.server.ts`; the route
 continues to return `{ user }`.
 
+### `GET /api/oauth/gmail/start` and `GET /api/oauth/gmail/callback`
+
+```
+client                    server
+  │                         │
+  │  GET /api/oauth/gmail/start
+  ├────────────────────────►│
+  │                         │  app/api/oauth/gmail/start/route.ts
+  │                         │      │
+  │                         │      ├─ auth/current-user.server.ts
+  │                         │      │    currentUserIdOrThrow()
+  │                         │      ▼
+  │                         │  lib/server/oauth/gmail.server.ts
+  │                         │      │
+  │  ◄──── { error, code } ─┤  501 not_configured today
+  │                         │
+  │  GET /api/oauth/gmail/callback?code=...&state=...
+  ├────────────────────────►│
+  │                         │  app/api/oauth/gmail/callback/route.ts
+  │                         │      │
+  │                         │      ├─ auth/current-user.server.ts
+  │                         │      │    currentUserIdOrThrow()
+  │                         │      ▼
+  │                         │  lib/server/oauth/gmail.server.ts
+  │                         │      │
+  │  ◄──── { error, code } ─┤  400 invalid_callback/provider_error or 501 not_configured
+  │                         │
+```
+
+These are route stubs only. They define the provider boundary before Google
+API calls, OAuth state, token exchange, Gmail account persistence, or
+send/enqueue/worker paths exist. Missing auth maps to 401, invalid dev auth
+maps to 500, and a future successful implementation will redirect rather than
+return JSON from the provider seam.
+
 ### `POST /api/drafts`
 
 ```
@@ -233,14 +268,14 @@ to mock by default and to the DB implementation only when
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
 | Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts`; History calls the delivery-history dispatcher. | yes (Workspace draft fetches) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/session/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` still uses the mock generator for POST and has DB latest/version read paths for GET. | yes | people + draft persistence/cache/latest/version reads in DB mode only; `/api/session` never touches DB | no |
-| Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts`, mock seam for generation | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; people payload, drafts, draft context, and delivery history are DB-capable runtime verticals; draft generation remains mock-backed. | no | yes in DB mode | no (mock generator only) |
+| API routes | `app/api/session/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; Gmail OAuth routes currently expose only authenticated 501/400 stubs; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` still uses the mock generator for POST and has DB latest/version read paths for GET. | yes | people + draft persistence/cache/latest/version reads in DB mode only; `/api/session` and OAuth stubs never touch DB | no |
+| Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts`, mock seam for generation | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the future Gmail provider boundary; people payload, drafts, draft context, and delivery history are DB-capable runtime verticals; draft generation remains mock-backed. | no | yes in DB mode | no (mock generator only) |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
 | Presentation | `lib/presentation.ts` | Maps `OccasionKind`/`Tone`/`Channel` → icon names, gradients, chip text. UI only. | no | no | no |
 | Repository implementations | `lib/repositories/catalog.server.ts`, `lib/repositories/people.server.ts`, `lib/repositories/drafts.server.ts`, `lib/repositories/deliveries.server.ts` | Postgres implementations for catalog, people/occasion reads, message draft persistence/cache, and delivery history reads; people writes and send/webhook/worker methods are intentionally not implemented yet. | no | yes | no |
 | DB scripts | `db/schema.sql`, `db/seed_catalog.sql`, `scripts/seed-dev-fixtures.mjs` | Postgres 17 schema + catalog seed + encrypted local-dev fixture seed. | no | yes (manual/dev) | no |
-| Dev env helpers + smoke tests | `scripts/init-dev-env.mjs`, `scripts/check-dev-env.mjs`, `scripts/test-env-init.mjs`, `scripts/test-dev-env.mjs`, `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-home.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, `scripts/test-workspace.mjs`, DB Docker tests | `pnpm env:init` creates `.env.local` from `.env.example` without overwriting. `pnpm dev` first checks the local env needed by Home/Profile/session and, in DB mode, the DB/encryption vars. Default `pnpm test` covers both env helpers plus auth/session and mock HTTP/page contracts, including Workspace sender identity. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed `/api/people`, `/api/drafts`, and `/history`. | yes (HTTP/page smoke) | DB suite only | no |
+| Dev env helpers + smoke tests | `scripts/init-dev-env.mjs`, `scripts/check-dev-env.mjs`, `scripts/test-env-init.mjs`, `scripts/test-dev-env.mjs`, `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-gmail-oauth-routes.mjs`, `scripts/test-home.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, `scripts/test-workspace.mjs`, DB Docker tests | `pnpm env:init` creates `.env.local` from `.env.example` without overwriting. `pnpm dev` first checks the local env needed by Home/Profile/session and, in DB mode, the DB/encryption vars. Default `pnpm test` covers both env helpers plus auth/session, OAuth stubs, and mock HTTP/page contracts, including Workspace sender identity. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed `/api/people`, `/api/drafts`, and `/history`. | yes (HTTP/page smoke) | DB suite only | no |
 
 ---
 
@@ -275,29 +310,38 @@ PR/agent prompt before touching.
    requires `DATABASE_URL` and a 32-byte `DEV_ENCRYPTION_KEY_BASE64`.
    `.env.example` is documentation only for the preflight. Covered by
    `pnpm test:env-init` and `pnpm test:dev-env`.
-5. **`POST /api/drafts` request shape** = `{ personId, occasionId, userInstruction }`,
+5. **Gmail OAuth route stubs** =
+   `GET /api/oauth/gmail/start` and `GET /api/oauth/gmail/callback`.
+   They require current-user auth, then delegate to
+   `lib/server/oauth/gmail.server.ts`. Today they return explicit JSON
+   failures: 401 missing auth, 500 invalid dev auth, 400 invalid/provider-denied
+   callback, and 501 `not_configured` for the unimplemented provider path.
+   They do not read Google env vars, create OAuth state, exchange
+   tokens, write Gmail accounts, or update `sendingAccount`. Covered by
+   `pnpm test:oauth`.
+6. **`POST /api/drafts` request shape** = `{ personId, occasionId, userInstruction }`,
    nothing else. Anything that smells like "let the client name a
    relationship / culture / tone override" violates the server-authoritative
    contract. Extra body fields are ignored by the service and never included
    in DB prompt hashing. Covered by `pnpm test:drafts`.
-6. **`POST /api/drafts` response shape** = `MessageDraft`. Same coverage.
-7. **`GET /api/drafts` request shape** = query params `{ personId, occasionId? }`.
+7. **`POST /api/drafts` response shape** = `MessageDraft`. Same coverage.
+8. **`GET /api/drafts` request shape** = query params `{ personId, occasionId? }`.
    It never accepts relationship, culture, tone, or instruction overrides.
    It returns `MessageDraft` on 200 and no body on 204 miss.
-8. **`GET /api/drafts/versions` request shape** = query params
+9. **`GET /api/drafts/versions` request shape** = query params
    `{ personId, occasionId?, limit? }`. It returns `{ drafts: MessageDraft[] }`
    newest-first. Mock mode returns an empty list; DB mode is read-only and
    validates person/occasion ownership before calling `DraftRepository.listForPerson`.
-9. **Culture rules resolve server-side only.** The client never sends a
+10. **Culture rules resolve server-side only.** The client never sends a
    `CultureRule`; the server reads it from the person's `culture_id`.
    Implementation in `lib/server/draft-service/` plus
    `lib/server/draft-context/`, backed by mock by default or DB context when
    `KEEPSAKE_DATA_SOURCE=db`.
-10. **`MessageDraft.paragraphs[].text` is plain text.** Highlights live in
+11. **`MessageDraft.paragraphs[].text` is plain text.** Highlights live in
    `paragraphs[].highlights: string[]`, applied by the client renderer
    (see [`app/workspace/page.tsx`](../app/workspace/page.tsx) — the
    `renderParagraph` helper). No `<span>`, no HTML strings, ever.
-11. **Server-only modules must begin with `import "server-only"`.** Filename
+12. **Server-only modules must begin with `import "server-only"`.** Filename
    convention is `*.server.ts`. See
    [`lib/server/README.md`](../lib/server/README.md) and
    [`lib/repositories/README.md`](../lib/repositories/README.md#implementation-file-naming).
@@ -311,6 +355,7 @@ These seams are the only places that move when the back end goes real.
 | Seam | What it does today | What replaces it |
 |---|---|---|
 | `lib/server/auth/current-user.server.ts` | Resolves `{ id, email, name, initials, sendingAccount }` and `OwnerId` from validated `DEV_OWNER_*` env. `sendingAccount` is `null` until Gmail OAuth is wired. This is the only owner resolver; DB helpers keep calling `currentUserIdOrThrow()`, while `/api/session`, Home, Workspace, and Profile call `currentUserOrThrow()`. | Real session cookie / OAuth verification and Gmail account lookup inside this module only. `/api/session` keeps returning `{ user }`; Home, Workspace, and Profile keep rendering the same identity shape; DB helper call sites keep their owner-id contract. |
+| `lib/server/oauth/gmail.server.ts` | Defines the Gmail OAuth start/callback seam and returns authenticated 501 `not_configured` placeholders. Callback also validates provider denial and missing `code/state` as 400s. | Google authorization URL generation, state validation semantics, code exchange, Gmail account persistence, and `sendingAccount` refresh. Route files stay thin and do not learn token storage or provider SDK details. |
 | `lib/server/people-payload/index.server.ts` | Dispatches to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. | Later auth replaces `DEV_OWNER_ID`; route/page imports stay the same. |
 | `lib/server/people-payload/mock.server.ts` | `getMockPeoplePayload()` reads `peoplePayload()` from `lib/mock.ts`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/people-payload/db.server.ts` | `getDbPeoplePayload()` resolves dev owner, opens transaction, calls `PeopleRepository.listWithRelations(ownerId)`. | Real auth replaces `auth/current-user.server.ts`; repository call remains. |
@@ -335,6 +380,8 @@ The route handlers do not move.
 |---|---|---|---|
 | `lib/server/auth/current-user.server.ts` | Real auth-backed current user resolver | `currentUserIdOrThrow(): OwnerId`; `currentUserOrThrow()` returning `{ id, email, name, initials, sendingAccount }`; typed unauthenticated vs misconfigured errors | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:boundaries` |
 | `app/api/session/route.ts` | Unchanged route contract over real auth | Thin shape: call auth service → return `{ user }`; 401 for missing auth; 500 for invalid server auth config; no DB/cookies/OAuth/Gmail writes in the route | `pnpm test:auth` |
+| `app/api/oauth/gmail/start/route.ts` and `app/api/oauth/gmail/callback/route.ts` | Unchanged route contract over real Gmail OAuth | Thin shape: auth → delegate to `oauth/gmail.server.ts` → JSON failure or redirect; route files do not generate state, exchange tokens, write DB, or update `sendingAccount` directly | `pnpm test:oauth`, `pnpm test:boundaries` |
+| `lib/server/oauth/gmail.server.ts` | Real Gmail OAuth service | `startGmailOAuth` and `completeGmailOAuth` result union; 400 invalid/provider-denied callbacks; 501 until configured; no send/enqueue behavior | `pnpm test:oauth` |
 | `lib/server/people-payload/index.server.ts` | Keep as dispatcher until mock can be deleted | `getPeoplePayload()` signature; `GET /api/people` returning `PeoplePayload` | `pnpm test:people`, `pnpm test:db:people-route` |
 | `lib/server/people-payload/db.server.ts` | Real auth-backed owner resolution instead of `DEV_OWNER_ID` | Repository call and `PeoplePayload` shape | `pnpm test:db:people-route` |
 | `lib/server/delivery-history/index.server.ts` | Keep as dispatcher until mock can be deleted | `getDeliveryHistory()` signature; History page receives `Delivery[]`; email/post remain badges rather than separate product modes | `pnpm test:history`, `pnpm test:db:history-route` |

@@ -28,6 +28,109 @@ Future implementation:
 - Derive `daysUntil` from `dateISO`.
 - Keep the response shape stable unless `domain.ts` changes deliberately.
 
+## GET /api/session
+
+Returns the current user identity used by Home, Profile, Workspace, and
+owner-scoped server helpers.
+
+Response:
+
+```ts
+{
+  user: {
+    id: OwnerId;
+    email: string;
+    name: string;
+    initials: string;
+    sendingAccount: {
+      provider: "gmail";
+      email: string;
+      status: "connected" | "expired";
+    } | null;
+  };
+}
+```
+
+Current implementation:
+
+- Dynamic route.
+- Reads validated `DEV_OWNER_*` values through
+  `lib/server/auth/current-user.server.ts`.
+- Returns `sendingAccount: null`.
+- Returns 401 when dev auth is missing.
+- Returns 500 when dev auth is misconfigured.
+
+Future implementation:
+
+- Keep `{ user }` stable.
+- Resolve session/cookies/OAuth inside `auth/current-user.server.ts`.
+- Fill `sendingAccount` after Gmail account lookup.
+
+## GET /api/oauth/gmail/start
+
+Starts Gmail OAuth for the current user.
+
+Query:
+
+```ts
+{
+  returnTo?: string;
+}
+```
+
+Current implementation:
+
+- Dynamic route.
+- Requires current-user auth.
+- Delegates to `lib/server/oauth/gmail.server.ts`.
+- Returns `501 { error, code: "not_configured" }` because Google OAuth is not
+  wired yet.
+- Returns 401 for missing auth and 500 for misconfigured auth.
+- Does not read Google env vars, create OAuth state, exchange tokens, write
+  DB rows, or enqueue/send anything.
+
+Future implementation:
+
+- Generate a Google authorization URL.
+- Store and validate OAuth state behind the OAuth seam.
+- Redirect to the provider on success.
+- Keep the route shape thin: auth -> service -> JSON error or redirect.
+
+## GET /api/oauth/gmail/callback
+
+Completes Gmail OAuth for the current user.
+
+Query:
+
+```ts
+{
+  code?: string;
+  state?: string;
+  error?: string;
+}
+```
+
+Current implementation:
+
+- Dynamic route.
+- Requires current-user auth.
+- Delegates to `lib/server/oauth/gmail.server.ts`.
+- Returns `400 { error, code: "provider_error" }` when the provider sends
+  `error`.
+- Returns `400 { error, code: "invalid_callback" }` when `code` or `state` is
+  missing.
+- Returns `501 { error, code: "not_configured" }` for a syntactically valid
+  callback because Google OAuth is not wired yet.
+- Does not exchange tokens, persist Gmail accounts, or update
+  `CurrentUser.sendingAccount`.
+
+Future implementation:
+
+- Validate state.
+- Exchange code for tokens.
+- Persist encrypted refresh/access-token metadata.
+- Update the account state that later fills `CurrentUser.sendingAccount`.
+
 ## POST /api/drafts
 
 Generates or revises an email draft.
