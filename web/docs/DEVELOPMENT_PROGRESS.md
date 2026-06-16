@@ -34,9 +34,9 @@ Rules:
 | Draft generation/persistence | Stable mock generator + DB persistence | DB-backed draft context/service, draft repository, latest/version reads. | Replace mock generator with real LLM behind same seam. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
 | Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
-| Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Send pipeline (P3), token refresh + markExpired on send failure. |
+| Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
-| Email send | Not started | No accidental send behavior. | Send endpoint, queue, Gmail send worker, delivery status updates. |
+| Email send | Stable enqueue boundary | `POST /api/deliveries` + `lib/server/delivery-send/*` enqueue queued rows with sender precondition (email) and ownership checks. Returns 202 "queued/accepted"; no Gmail call yet. | Gmail send worker, status updates, webhooks, Workspace send button wiring. |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -159,21 +159,43 @@ Out of scope:
 
 ### P3. Send Boundary Contract
 
+Status: done. Guarded by `pnpm test:deliveries` and `pnpm test:db:deliveries-route`.
+
 Goal: define the server-side contract for turning a draft into a queued/sent
 delivery without implementing Gmail send yet.
 
-Owner: Codex implementation agent, with CC review before implementation if the
-shape is uncertain.
+Shipped:
 
-In scope:
+- `POST /api/deliveries` thin route that parses JSON, runs
+  `currentUserIdOrThrow()` for the auth 401/500 contract, and delegates to the
+  send-boundary seam.
+- `lib/server/delivery-send/{index,mock,db}.server.ts` dispatcher matching the
+  draft-service pattern: env switch in `index`, shared request validation in
+  `mock`, full DB path in `db`.
+- DB path: validates the request, resolves person/occasion ownership through
+  the shared `resolveDbDraftContextInTx` helper, looks up the latest draft, and
+  on success calls `DeliveryRepository.enqueue` inside a single RLS-scoped
+  transaction. Email channel requires the primary Gmail account to be
+  `connected` (409 `sender_not_connected` / `sender_expired`); post channel
+  bypasses the sender precondition.
+- `DeliveryRepository.enqueue` real implementation inserts an encrypted row
+  with `status='queued'` and `sent_at=NULL`, returning a `QueuedDelivery` shape
+  (deliberately distinct from the history-shaped `Delivery` type so we do not
+  force-fit a queued row into a sent row).
+- Mock dispatcher returns a synthetic `QueuedDelivery` so the default smoke can
+  run without Docker.
 
-- API/service shape for send action.
-- Delivery enqueue repository method design or implementation.
-- UI toast states can remain optimistic/stubbed if clearly labeled.
+Returns 202 with "queued/accepted" semantics — not fake "sent". No Gmail API
+call, no worker, no status mutation.
 
-Out of scope:
+Out of scope (next slices):
 
 - No Gmail API send call until the queue and delivery model are reviewed.
+- No worker that drains queued rows.
+- No webhook or status update.
+- No Workspace send button wiring (current compose has client-local editing
+  state with no clear "which draft is the canonical one" contract — needs its
+  own slice).
 
 ### P4. Real Draft Generator
 

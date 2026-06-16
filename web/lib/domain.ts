@@ -164,6 +164,30 @@ export interface Delivery {
   status: DeliveryStatus;
 }
 
+// `DeliveryRequest` is the wire shape accepted by `POST /api/deliveries`.
+// Intentionally minimal: the server resolves the recipient name, draft id,
+// and occasion metadata from the owner-scoped person/occasion/draft rows.
+export interface DeliveryRequest {
+  personId: ID;
+  occasionId: ID | null;
+  channel: Channel;
+}
+
+// `QueuedDelivery` is the "I queued it, here's the receipt" shape returned
+// by enqueue. It is deliberately not a `Delivery` because `Delivery` carries
+// a non-null `sentAtISO` and is the History/post-send shape — a queued row
+// has not been sent and `sent_at` is null in the DB.
+export interface QueuedDelivery {
+  id: ID;
+  personId: ID;
+  occasionId: ID | null;
+  draftId: ID;
+  channel: Channel;
+  status: "queued";
+  scheduledForISO: string | null;
+  createdAtISO: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // API contracts
 // ─────────────────────────────────────────────────────────────────────────────

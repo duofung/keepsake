@@ -290,6 +290,53 @@ lives behind `lib/server/delivery-history/index.server.ts`, which dispatches
 to mock by default and to the DB implementation only when
 `KEEPSAKE_DATA_SOURCE=db`.
 
+### `POST /api/deliveries`
+
+```
+browser                   server
+  │                         │
+  │  POST /api/deliveries   │   body = { personId, occasionId | null, channel }
+  ├────────────────────────►│
+  │                         │  app/api/deliveries/route.ts
+  │                         │      │  parse JSON → 400 invalid_request on failure
+  │                         │      │  currentUserIdOrThrow() → 401/500 on auth failure
+  │                         │      ▼
+  │                         │  lib/server/delivery-send/index.server.ts
+  │                         │      │  enqueueDelivery(input)
+  │                         │      ├─ KEEPSAKE_DATA_SOURCE unset/mock
+  │                         │      │    ▼
+  │                         │      │  delivery-send/mock.server.ts → synthetic QueuedDelivery
+  │                         │      │
+  │                         │      └─ KEEPSAKE_DATA_SOURCE=db
+  │                         │           ▼
+  │                         │         delivery-send/db.server.ts
+  │                         │           │  validate UUIDs + channel → 400
+  │                         │           │  transaction(ownerId)
+  │                         │           │     resolveDbDraftContextInTx
+  │                         │           │       → 404 person_not_found / occasion_not_found
+  │                         │           │     channel === "email":
+  │                         │           │       GmailAccountRepository.getPrimary
+  │                         │           │         → 409 sender_not_connected / sender_expired
+  │                         │           │     DraftRepository.getLatestFor
+  │                         │           │       → 409 no_draft
+  │                         │           │     DeliveryRepository.enqueue
+  │                         │           │       INSERT deliveries (status='queued',
+  │                         │           │         sent_at=NULL, encrypted recipient_*)
+  │                         │           ▼
+  │  ◄── 202 QueuedDelivery ┤  { id, personId, occasionId, draftId, channel,
+  │                         │     status:"queued", scheduledForISO:null, createdAtISO }
+  │                         │
+```
+
+The route is the queue boundary: it accepts a request to send and persists a
+`queued` row, but does not call Gmail and does not drain the queue. Email
+channel requires a `connected` primary Gmail account; post channel skips the
+sender check entirely. The thin route only does parse → auth → delegate →
+JSON; all ownership, sender, and draft preconditions live behind the seam.
+The `QueuedDelivery` shape is deliberately distinct from the sent-history
+`Delivery` shape so we never force-fit a queued row (no `sent_at`) into a
+history row.
+
 ---
 
 ### Future: command channel platform
@@ -352,8 +399,8 @@ interactive buttons.
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
 | Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts`; History calls the delivery-history dispatcher. | yes (Workspace draft fetches) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/session/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; Gmail OAuth routes currently expose only authenticated 501/400 stubs; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` still uses the mock generator for POST and has DB latest/version read paths for GET. | yes | people + draft persistence/cache/latest/version reads in DB mode only; `/api/session` and OAuth stubs never touch DB | no |
-| Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts`, mock seam for generation | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the future Gmail provider boundary; people payload, drafts, draft context, and delivery history are DB-capable runtime verticals; draft generation remains mock-backed. | no | yes in DB mode | no (mock generator only) |
+| API routes | `app/api/session/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` still uses the mock generator for POST and has DB latest/version read paths for GET; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail. | yes | people + draft persistence/cache/latest/version reads, gmail-account read for sender precondition, delivery enqueue in DB mode only | no |
+| Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts`, mock seam for generation | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; draft generation remains mock-backed; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | no (mock generator only) |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
 | Presentation | `lib/presentation.ts` | Maps `OccasionKind`/`Tone`/`Channel` → icon names, gradients, chip text. UI only. | no | no | no |
@@ -436,7 +483,18 @@ PR/agent prompt before touching.
    `paragraphs[].highlights: string[]`, applied by the client renderer
    (see [`app/workspace/page.tsx`](../app/workspace/page.tsx) — the
    `renderParagraph` helper). No `<span>`, no HTML strings, ever.
-12. **Server-only modules must begin with `import "server-only"`.** Filename
+12. **`POST /api/deliveries` request shape** = `{ personId, occasionId | null, channel: "email" | "post" }`.
+    Returns 202 `QueuedDelivery` on success
+    (`{ id, personId, occasionId, draftId, channel, status: "queued",
+    scheduledForISO: null, createdAtISO }`), 400 `invalid_request` for parse
+    or shape failures, 401 missing auth / 500 misconfigured auth, 404
+    `person_not_found` / `occasion_not_found`, 409 `sender_not_connected` /
+    `sender_expired` (email channel only) / `no_draft`. The route is a queue
+    boundary: it never calls Gmail and never mutates delivery status. Covered
+    by `pnpm test:deliveries` (mock + validation) and
+    `pnpm test:db:deliveries-route` (full DB happy path + sender precondition
+    + ownership + encrypted row inspection).
+13. **Server-only modules must begin with `import "server-only"`.** Filename
    convention is `*.server.ts`. See
    [`lib/server/README.md`](../lib/server/README.md) and
    [`lib/repositories/README.md`](../lib/repositories/README.md#implementation-file-naming).
@@ -464,6 +522,9 @@ These seams are the only places that move when the back end goes real.
 | `lib/server/draft-context/mock.server.ts` | `resolveMockDraftContext(input)` validates + finds person/relationship/culture/occasion in the mock store. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/draft-context/db.server.ts` | `resolveDbDraftContext(input)` resolves the owner, opens a transaction, hydrates person/catalog/occasion via repos under RLS. Also exposes `resolveDbDraftContextInTx` so draft persistence can reuse the outer transaction. | Same repo composition with real auth. |
 | `lib/server/draft-generator/mock.server.ts` | `createMockDraftGenerator().generate(ctx)` builds a `MessageDraft` from `baseRecipe` + `applyInstruction` — pure data-driven heuristics. | A real `DraftGenerator` implementation backed by an LLM client. Same `DraftGenerator` interface from `lib/server/draft-generator/types.ts`. |
+| `lib/server/delivery-send/index.server.ts` | Dispatches `enqueueDelivery(input)` to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. Returns a `SendBoundaryResult` discriminated union the route maps to HTTP status. | Real auth replaces `currentUserIdOrThrow()`; future Gmail send worker reads queued rows out-of-band. The route signature does not move. |
+| `lib/server/delivery-send/mock.server.ts` | Shared `validateRequest` (UUIDs + channel) and `enqueueMockDelivery` that returns a synthetic `QueuedDelivery`. | Kept as fallback until all runtime paths are DB-backed. |
+| `lib/server/delivery-send/db.server.ts` | `enqueueDbDelivery` resolves the owner, opens one transaction, reuses `resolveDbDraftContextInTx` for person/occasion ownership, enforces the email sender precondition via `GmailAccountRepository.getPrimary`, looks up the latest draft, and calls `DeliveryRepository.enqueue`. No Gmail call; row inserted with `status='queued'` and `sent_at=NULL`. | Same orchestration with real auth; a future Gmail worker drains queued rows and updates status. |
 
 The route handlers do not move.
 

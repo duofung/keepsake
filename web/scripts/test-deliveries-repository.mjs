@@ -212,7 +212,14 @@ try {
     await client.query(`CREATE ROLE ${appRole} LOGIN PASSWORD '${appPassword}' NOBYPASSRLS`);
     await client.query(`GRANT CONNECT ON DATABASE keepsake TO ${appRole}`);
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
-    await client.query(`GRANT SELECT ON deliveries TO ${appRole}`);
+    await client.query(`
+      GRANT USAGE ON TYPE
+        occasion_kind,
+        channel,
+        delivery_status
+      TO ${appRole}
+    `);
+    await client.query(`GRANT SELECT, INSERT ON deliveries TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 
@@ -295,6 +302,76 @@ try {
     const insideTx = await deliveries.listByMonth(ownerId, { limit: 50 }, tx);
     assertEqual(insideTx.length, 4, "explicit Tx reuse works");
   });
+
+  process.stdout.write("verifying queued rows stay out of listByMonth:\n");
+  // Fixtures don't seed message_drafts, but enqueue requires a real draft_id
+  // (FK to message_drafts). Insert a minimal draft via the admin connection;
+  // the test never decrypts it, so the bytea content is opaque filler.
+  const linDraftRow = await withClient(adminUrl, async (client) => {
+    const result = await client.query(
+      `
+        INSERT INTO message_drafts (
+          owner_id, person_id, tone, tone_label,
+          subject_enc, paragraphs_enc, assistant_note_enc, user_instruction_enc,
+          model_provider, model_version
+        )
+        SELECT $1, id, 'tender-intimate', 'Tender · Intimate',
+               '\\x00'::bytea, '\\x00'::bytea, '\\x00'::bytea, '\\x00'::bytea,
+               'mock', 'queued-guard-test'
+        FROM people
+        WHERE owner_id = $1
+        LIMIT 1
+        RETURNING id::text AS id, person_id::text AS person_id
+      `,
+      [ownerId],
+    );
+    return result.rows[0];
+  });
+  assert(linDraftRow?.id && linDraftRow?.person_id, "inserted a draft to attach to the queued row");
+
+  const queuedRecipient = "QueuedRecipient-DoNotShowInHistory";
+  const queuedLabel = "QueuedLabel-DoNotShowInHistory";
+  const queued = await db.transaction(ownerId, async (tx) =>
+    deliveries.enqueue(
+      ownerId,
+      {
+        personId: linDraftRow.person_id,
+        occasionId: null,
+        draftId: linDraftRow.id,
+        recipientName: queuedRecipient,
+        occasionKind: "lunar-new-year",
+        occasionLabel: queuedLabel,
+        channel: "email",
+      },
+      tx,
+    ),
+  );
+  assertEqual(queued.status, "queued", "enqueue returns status=queued");
+  assertEqual(queued.draftId, linDraftRow.id, "enqueue echoes draftId");
+
+  const afterEnqueue = await deliveries.listByMonth(ownerId, { limit: 50 });
+  assertEqual(afterEnqueue.length, 4, "listByMonth still returns 4 sent rows (queued excluded)");
+  assert(
+    !afterEnqueue.some((delivery) => delivery.recipientName === queuedRecipient),
+    "queued recipient does not appear in listByMonth",
+  );
+  assert(
+    !afterEnqueue.some((delivery) => delivery.occasionLabel === queuedLabel),
+    "queued occasion label does not appear in listByMonth",
+  );
+
+  // Belt-and-suspenders: the row is in the table, just filtered out.
+  const rawQueuedRows = await withClient(adminUrl, async (client) => {
+    const result = await client.query(
+      `SELECT id::text AS id, status, sent_at
+       FROM deliveries
+       WHERE owner_id = $1 AND status = 'queued'`,
+      [ownerId],
+    );
+    return result.rows;
+  });
+  assertEqual(rawQueuedRows.length, 1, "queued row is present in the table");
+  assertEqual(rawQueuedRows[0]?.sent_at, null, "queued row sent_at is null");
 
   process.stdout.write("\nall deliveries repository checks passed\n");
 } catch (error) {

@@ -3,8 +3,8 @@
 Where server-only orchestration lives. This directory keeps `app/` and
 `components/` away from `lib/mock.ts`, SQL, crypto, and future auth/LLM
 clients. People payload, draft generation orchestration, latest draft restore,
-draft version history, draft context, and delivery history now have DB-capable
-runtime verticals.
+draft version history, draft context, delivery history, and the
+send-boundary queue now have DB-capable runtime verticals.
 Draft generation is still mock-backed; only DB mode persists/caches generated
 message drafts, restores the newest saved draft, and lists recent draft
 versions for Workspace.
@@ -30,6 +30,11 @@ lib/server/
 │   ├── index.server.ts       ← current: mock/db dispatcher
 │   ├── mock.server.ts        ← current: mock fallback
 │   └── db.server.ts          ← current: DB-backed History data
+├── delivery-send/
+│   ├── index.server.ts       ← current: mock/db dispatcher for POST /api/deliveries
+│   ├── mock.server.ts        ← current: validates + synthetic QueuedDelivery
+│   ├── db.server.ts          ← current: validate → ownership → sender → latest draft → enqueue
+│   └── types.ts              ← SendBoundaryResult contract
 ├── draft-context/
 │   ├── index.server.ts       ← current: mock/db dispatcher
 │   ├── mock.server.ts        ← current: mock fallback
@@ -113,6 +118,9 @@ small on purpose.
 | `delivery-history/index.server.ts` | History | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db`; `app/history/page.tsx` only calls this server helper | Real auth owner resolution; eventually delete mock fallback | `pnpm test:history`, `pnpm test:db:history-route`, `pnpm test:boundaries` |
 | `delivery-history/mock.server.ts` | `delivery-history/index.server.ts` | `deliveries` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:history`, `pnpm test:boundaries` |
 | `delivery-history/db.server.ts` | `delivery-history/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `DeliveryRepository.listByMonth(ownerId, { limit: 50 })`; read-only History DB mode | Same repository read with real auth; send/enqueue/webhook/worker remain separate future paths | `pnpm test:db:deliveries`, `pnpm test:db:history-route` |
+| `delivery-send/index.server.ts` | `POST /api/deliveries` | Dispatches `enqueueDelivery(input)` by `KEEPSAKE_DATA_SOURCE` and returns a `SendBoundaryResult` discriminated union the route maps to HTTP status. The route is a queue boundary — no Gmail call, no status mutation. | Real auth replaces `currentUserIdOrThrow()`; a future Gmail send worker drains queued rows out-of-band. | `pnpm test:deliveries`, `pnpm test:db:deliveries-route`, `pnpm test:boundaries` |
+| `delivery-send/mock.server.ts` | `delivery-send/index.server.ts` | Shared `validateRequest` (UUID + channel guards) plus `enqueueMockDelivery` returning a synthetic `QueuedDelivery`. | Deleted when DB is the only source. | `pnpm test:deliveries`, `pnpm test:boundaries` |
+| `delivery-send/db.server.ts` | `delivery-send/index.server.ts` | `currentUserIdOrThrow()` + one `transaction(ownerId)` for `resolveDbDraftContextInTx` (ownership), `GmailAccountRepository.getPrimary` (email-only sender precondition), `DraftRepository.getLatestFor` (no-draft check), and `DeliveryRepository.enqueue` (status=queued, sent_at=NULL, encrypted recipient_*). | Same orchestration with real auth; future Gmail worker reads queued rows separately. | `pnpm test:db:deliveries-route` |
 | `draft-service/index.server.ts` | `GET /api/drafts`, `POST /api/drafts`, `GET /api/drafts/versions` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Same route seam with real auth/LLM behind it | `pnpm test:drafts`, `pnpm test:db:drafts-route`, `pnpm test:boundaries` |
 | `draft-service/mock.server.ts` | `draft-service/index.server.ts` | Preserves original mock POST behavior: mock context + mock generator, no DB writes. Latest restore returns a miss (`draft:null`) so Workspace falls through to initial generation; version history returns `{ drafts: [] }`. | Deleted when DB is the only source | `pnpm test:drafts`, `pnpm test:boundaries` |
 | `draft-service/db.server.ts` | `draft-service/index.server.ts` | `currentUserIdOrThrow()` + one `transaction(ownerId)` for DB context, prompt hash lookup, mock generation on miss, and `DraftRepository.save` on POST; same transaction + context validation + `DraftRepository.getLatestFor` on GET latest restore; context validation + `DraftRepository.listForPerson` for version history | Same orchestration with real auth and a future LLM generator | `pnpm test:db:drafts-repository`, `pnpm test:db:drafts-route` |
@@ -247,11 +255,13 @@ transaction and returns decrypted `Delivery[]` rows from
 enqueue, send workers, provider webhooks, and status updates are not wired to
 the app yet.
 
-`DeliveryRepository` currently has only one runtime implementation method:
-`listByMonth`. The write/worker surface declared in the interface
-(`enqueue`, `markStatus`, `findByProviderMessageId`, `nextQueued`) still
-throws `not implemented` in the Postgres implementation. No send, enqueue,
-provider webhook, or delivery worker path is wired by the drafts cache work.
+`DeliveryRepository` now has two runtime methods: `listByMonth` (History
+read) and `enqueue` (send-boundary write). `enqueue` inserts a row with
+`status='queued'`, `sent_at=NULL`, and encrypted recipient columns; it does
+not call Gmail. The worker surface (`markStatus`, `findByProviderMessageId`,
+`nextQueued`) still throws `not implemented` in the Postgres
+implementation — no Gmail send, status update, provider webhook, or
+delivery worker drain is wired yet.
 
 ### Service contracts
 

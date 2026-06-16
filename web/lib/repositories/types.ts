@@ -119,8 +119,9 @@ export interface MessageDraftSaveInput {
 }
 
 export interface DeliveryEnqueueInput {
-  personId: ID | null;      // null after the person was soft-deleted
-  draftId: ID | null;
+  personId: ID;             // non-null at enqueue (the schema only sets it null on later person-delete cascade)
+  occasionId: ID | null;    // echoed back into `QueuedDelivery`; not stored on the `deliveries` row
+  draftId: ID;              // non-null at enqueue; the user just selected which draft to send
   recipientName: string;
   recipientEmail?: string;
   recipientAddress?: string;

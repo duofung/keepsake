@@ -1,0 +1,71 @@
+import "server-only";
+
+// Mock dispatcher for `POST /api/deliveries`. Validates the request shape and
+// returns a synthetic `QueuedDelivery` receipt without touching the DB. It
+// deliberately does NOT check sender / person / draft existence — those are
+// owner-scoped DB lookups that only the DB path can perform. Mock mode exists
+// so that local UI work stays runnable; production behavior lives in the DB
+// dispatcher.
+
+import { randomUUID } from "node:crypto";
+import type { Channel, DeliveryRequest } from "@/lib/domain";
+import type { SendBoundaryResult } from "./types";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const VALID_CHANNELS: ReadonlySet<Channel> = new Set(["email", "post"]);
+
+export async function enqueueMockDelivery(
+  input: DeliveryRequest,
+): Promise<SendBoundaryResult> {
+  const validation = validateRequest(input);
+  if (validation) return validation;
+
+  return {
+    ok: true,
+    queued: {
+      id: randomUUID(),
+      personId: input.personId,
+      occasionId: input.occasionId,
+      draftId: randomUUID(),
+      channel: input.channel,
+      status: "queued",
+      scheduledForISO: null,
+      createdAtISO: new Date().toISOString(),
+    },
+  };
+}
+
+export function validateRequest(input: DeliveryRequest): SendBoundaryResult | null {
+  if (!input || typeof input !== "object") {
+    return invalid("Request body must be a JSON object.");
+  }
+
+  const missing: string[] = [];
+  if (!input.personId) missing.push("personId");
+  if (!input.channel) missing.push("channel");
+  if (missing.length) {
+    return invalid(`Missing fields: ${missing.join(", ")}`);
+  }
+
+  if (typeof input.personId !== "string" || !UUID_RE.test(input.personId)) {
+    return invalid("personId must be a UUID.");
+  }
+
+  if (input.occasionId !== null && input.occasionId !== undefined) {
+    if (typeof input.occasionId !== "string" || !UUID_RE.test(input.occasionId)) {
+      return invalid("occasionId must be a UUID or null.");
+    }
+  }
+
+  if (!VALID_CHANNELS.has(input.channel)) {
+    return invalid('channel must be "email" or "post".');
+  }
+
+  return null;
+}
+
+function invalid(error: string): SendBoundaryResult {
+  return { ok: false, status: 400, code: "invalid_request", error };
+}

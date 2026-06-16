@@ -1,8 +1,8 @@
 import "server-only";
 
 import type { QueryResultRow } from "pg";
-import type { Delivery, ID } from "../domain";
-import { decrypt } from "@/lib/server/crypto/envelope.server";
+import type { Channel, Delivery, ID, OccasionKind, QueuedDelivery } from "../domain";
+import { decrypt, encrypt } from "@/lib/server/crypto/envelope.server";
 import { query, transaction } from "@/lib/server/db/transaction.server";
 import type { DeliveryRepository } from "./deliveries";
 import type {
@@ -13,6 +13,19 @@ import type {
   OwnerId,
   Tx,
 } from "./types";
+
+const TABLE = "deliveries";
+
+type QueuedRow = QueryResultRow & {
+  id: string;
+  person_id: string;
+  draft_id: string;
+  occasion_kind: OccasionKind;
+  channel: Channel;
+  status: "queued";
+  scheduled_for_iso: string | null;
+  created_at_iso: string;
+};
 
 type DeliveryRow = QueryResultRow & {
   id: string;
@@ -38,7 +51,16 @@ async function decryptText(
   column: string,
   value: Uint8Array,
 ): Promise<string> {
-  return Buffer.from(await decrypt(ownerId, "deliveries", column, value)).toString("utf8");
+  return Buffer.from(await decrypt(ownerId, TABLE, column, value)).toString("utf8");
+}
+
+async function encryptText(
+  ownerId: OwnerId,
+  column: string,
+  value: string,
+): Promise<Buffer> {
+  const bytes = await encrypt(ownerId, TABLE, column, Buffer.from(value, "utf8"));
+  return Buffer.from(bytes);
 }
 
 async function deliveryFromRow(ownerId: OwnerId, row: DeliveryRow): Promise<Delivery> {
@@ -104,11 +126,97 @@ export class PgDeliveryRepository implements DeliveryRepository {
   }
 
   async enqueue(
-    _ownerId: OwnerId,
-    _input: DeliveryEnqueueInput,
-    _tx?: Tx,
-  ): Promise<Delivery> {
-    return notImplemented("enqueue");
+    ownerId: OwnerId,
+    input: DeliveryEnqueueInput,
+    tx?: Tx,
+  ): Promise<QueuedDelivery> {
+    return withTx(ownerId, tx, async (activeTx) => {
+      const recipientName = await encryptText(
+        ownerId,
+        "recipient_name_enc",
+        input.recipientName,
+      );
+      const recipientEmail = input.recipientEmail
+        ? await encryptText(ownerId, "recipient_email_enc", input.recipientEmail)
+        : null;
+      const recipientAddress = input.recipientAddress
+        ? await encryptText(ownerId, "recipient_address_enc", input.recipientAddress)
+        : null;
+      const occasionLabel = await encryptText(
+        ownerId,
+        "occasion_label_enc",
+        input.occasionLabel,
+      );
+
+      const result = await query<QueuedRow>(
+        activeTx,
+        `
+          INSERT INTO deliveries (
+            owner_id,
+            person_id,
+            draft_id,
+            recipient_name_enc,
+            recipient_email_enc,
+            recipient_address_enc,
+            occasion_kind,
+            occasion_label_enc,
+            channel,
+            scheduled_for,
+            status
+          )
+          VALUES (
+            $1,
+            $2::uuid,
+            $3::uuid,
+            $4,
+            $5,
+            $6,
+            $7::occasion_kind,
+            $8,
+            $9::channel,
+            $10::timestamptz,
+            'queued'
+          )
+          RETURNING
+            id::text AS id,
+            person_id::text AS person_id,
+            draft_id::text AS draft_id,
+            occasion_kind,
+            channel,
+            status,
+            to_char(scheduled_for AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS scheduled_for_iso,
+            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at_iso
+        `,
+        [
+          ownerId,
+          input.personId,
+          input.draftId,
+          recipientName,
+          recipientEmail,
+          recipientAddress,
+          input.occasionKind,
+          occasionLabel,
+          input.channel,
+          input.scheduledFor ?? null,
+        ],
+      );
+
+      const row = result.rows[0];
+      if (!row) {
+        throw new Error("DeliveryRepository.enqueue returned no row.");
+      }
+
+      return {
+        id: row.id,
+        personId: row.person_id,
+        occasionId: input.occasionId,
+        draftId: row.draft_id,
+        channel: row.channel,
+        status: row.status,
+        scheduledForISO: row.scheduled_for_iso,
+        createdAtISO: row.created_at_iso,
+      };
+    });
   }
 
   async markStatus(

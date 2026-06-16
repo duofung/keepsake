@@ -11,7 +11,7 @@
 //   findByProviderMessageId  → webhook ingest — no ownerId; the row's own owner_id is the auth proof
 //   nextQueued               → send worker — privileged role, bypasses user RLS
 
-import type { Delivery, ID } from "../domain";
+import type { Delivery, ID, QueuedDelivery } from "../domain";
 import type {
   DeliveriesListOptions,
   DeliveryQueueItem,
@@ -30,11 +30,16 @@ export interface DeliveryRepository {
     tx?: Tx,
   ): Promise<Delivery[]>;
 
+  /**
+   * Persist a queued delivery row. Returns the queued receipt rather than a
+   * `Delivery` because `Delivery` requires a non-null `sentAtISO` (History
+   * shape); a row that has not been sent yet has `sent_at` NULL in the DB.
+   */
   enqueue(
     ownerId: OwnerId,
     input: DeliveryEnqueueInput,
     tx?: Tx,
-  ): Promise<Delivery>;
+  ): Promise<QueuedDelivery>;
 
   // ── Worker / webhook (no ownerId) ──────────────────────────────────────
 
