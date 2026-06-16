@@ -94,7 +94,13 @@ async function sendingAccountFor(ownerId: OwnerId): Promise<SendingAccount | nul
   };
 }
 
-function dataSource(): "mock" | "db" {
+/**
+ * Strict data-source resolver. Other server seams that branch on
+ * `KEEPSAKE_DATA_SOURCE` (currently `gmail-account/disconnect.server.ts`)
+ * import this so they fail closed on a typo instead of silently downgrading
+ * to mock and looking like a successful no-op.
+ */
+export function dataSource(): "mock" | "db" {
   const value = process.env.KEEPSAKE_DATA_SOURCE?.trim() || "mock";
 
   if (!DATA_SOURCE_VALUES.has(value)) {

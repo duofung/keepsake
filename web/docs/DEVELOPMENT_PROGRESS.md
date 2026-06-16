@@ -34,8 +34,8 @@ Rules:
 | Draft generation/persistence | Stable mock generator + DB persistence | DB-backed draft context/service, draft repository, latest/version reads. | Replace mock generator with real LLM behind same seam. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
 | Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
-| Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Profile connect/disconnect UI (P2), send pipeline (P3), token refresh + markExpired on send failure. |
-| Sending account UI | Placeholder | Profile/Workspace can display connected/not connected shape. | Connect/disconnect behavior, expired state repair flow. |
+| Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Send pipeline (P3), token refresh + markExpired on send failure. |
+| Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Not started | No accidental send behavior. | Send endpoint, queue, Gmail send worker, delivery status updates. |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
@@ -133,23 +133,29 @@ disconnect.
 
 Owner: Codex implementation agent.
 
-In scope:
+Status: done. Guarded by `pnpm test:profile` (mock-mode Connect CTA) and
+`pnpm test:db:current-user` (connected/expired/empty states + disconnect
+flow + cross-owner safety + idempotency).
 
-- Profile button/link to OAuth start route.
-- Disconnect route or service seam using `GmailAccountRepository.disconnect`.
-- UI states: not connected, connected, expired.
+In scope (delivered):
+
+- Profile "Sending email" row renders `Not connected` / `Connected` / `Expired`
+  from `currentUserOrThrow().sendingAccount`.
+- Connect / Reconnect CTAs link to existing `/api/oauth/gmail/start?returnTo=/profile`.
+- Disconnect is a thin `POST /api/gmail/disconnect` route → service seam
+  `lib/server/gmail-account/disconnect.server.ts` → `GmailAccountRepository.disconnect`.
+- Disconnect is idempotent (no-op on missing row, mock-mode short-circuit) and
+  always 303s to `/profile`.
+- Cross-owner safety enforced by the existing repo `WHERE owner_id = $1`
+  filter + RLS.
 
 Out of scope:
 
 - No message sending.
 - No token refresh worker.
-
-Required validation:
-
-- `pnpm test:profile`
-- Session/Profile smoke tests for all display states.
-- DB repository test for disconnect already exists; extend only if behavior
-  changes.
+- No Google revoke API call (the refresh token is left in Google's records
+  until a separate cleanup pass).
+- No client-side state management — disconnect uses a plain form POST.
 
 ### P3. Send Boundary Contract
 

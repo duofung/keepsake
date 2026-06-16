@@ -106,6 +106,7 @@ small on purpose.
 |---|---|---|---|---|
 | `auth/current-user.server.ts` | `/api/session`, Home, Workspace, Profile, DB-backed server helpers | Resolves `{ id, email, name, initials, sendingAccount }` from `DEV_OWNER_*`; mock mode returns `sendingAccount: null`, DB mode hydrates it from the owner primary Gmail account; `currentUserIdOrThrow()` remains the synchronous owner-id compatibility helper | Cookie/session/OAuth inside this file only; route, Home, Workspace, Profile, and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:db:current-user`, `pnpm test:boundaries` |
 | `oauth/gmail.server.ts` | `GET /api/oauth/gmail/start`, `GET /api/oauth/gmail/callback` | Full Gmail OAuth flow. Start signs a state cookie with HMAC-SHA256 (`OAUTH_STATE_SIGNING_SECRET`) and redirects to Google with `openid email gmail.send` scopes. Callback verifies the cookie (signature, TTL, owner, state match), POSTs the authorization code to `GOOGLE_TOKEN_ENDPOINT` via native `fetch`, extracts the account `email` from the returned `id_token`, opens one short `transaction(ownerId, ...)` and persists encrypted refresh-token metadata through `GmailAccountRepository.upsertPrimary`. All callback responses (success or failure) clear the state cookie. The seam never sends mail and never queues anything. | Real auth replaces `currentUserIdOrThrow()`; the rest of the seam is unchanged. | `pnpm test:oauth`, `pnpm test:db:gmail-callback`, `pnpm test:boundaries` |
+| `gmail-account/disconnect.server.ts` | `POST /api/gmail/disconnect` | Idempotent disconnect of the caller's primary Gmail account. Mock mode short-circuits before opening a transaction; DB mode looks up `GmailAccountRepository.getPrimary(ownerId)` and, when a row exists, delegates to `GmailAccountRepository.disconnect(ownerId, accountId)` inside a short `transaction(ownerId, ...)`. Returns a plain `{ redirectTo }` so the route can `303` the user back to `/profile`. Shares the strict `dataSource()` from the auth seam — a misconfigured `KEEPSAKE_DATA_SOURCE` raises `AuthError("misconfigured")` and the route maps it to 500, matching `/api/session`. No Google revoke call; no SQL outside the repo. | Real auth replaces `currentUserIdOrThrow()`. Future `markExpired`-on-send-failure and Google revoke can compose on top without changing this seam. | `pnpm test:profile`, `pnpm test:gmail-disconnect`, `pnpm test:db:current-user`, `pnpm test:boundaries` |
 | `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
@@ -126,14 +127,24 @@ server data, make the page a server component and call one of these helpers,
 passing serializable domain payloads down to client components. If a client
 component needs live data, fetch an API route.
 
-### Current OAuth routes
+### Current OAuth + Gmail account routes
 
-Gmail OAuth start + callback are fully implemented behind the seam:
+Gmail OAuth start + callback are fully implemented behind the seam, along
+with a Profile-facing disconnect route:
 
 ```text
-GET /api/oauth/gmail/start
-GET /api/oauth/gmail/callback
+GET  /api/oauth/gmail/start
+GET  /api/oauth/gmail/callback
+POST /api/gmail/disconnect
 ```
+
+`POST /api/gmail/disconnect` is a thin route: `currentUserIdOrThrow()` →
+`disconnectGmailAccount(ownerId, origin)` from
+`gmail-account/disconnect.server.ts` → `303` to `/profile`. The helper looks
+up the primary row through `GmailAccountRepository.getPrimary(ownerId)` and,
+if present, removes it through `GmailAccountRepository.disconnect`. Missing
+rows (mock mode or already-disconnected) return success rather than 404 so
+the form is safe to re-submit.
 
 Both routes are `force-dynamic`. They authenticate through
 `currentUserIdOrThrow()`, delegate to `oauth/gmail.server.ts`, and apply any

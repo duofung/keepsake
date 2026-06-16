@@ -102,6 +102,17 @@ client                    server
   │                         │
   │  ◄── 400 + clear cookie ┤  any validation/exchange failure
   │  ◄── 501 ───────────────┤  any of 4 OAuth env vars missing
+  │                         │
+  │  POST /api/gmail/disconnect          [Profile form submission]
+  ├────────────────────────►│
+  │                         │  app/api/gmail/disconnect/route.ts
+  │                         │      ├─ auth/current-user.server.ts
+  │                         │      │    currentUserIdOrThrow()
+  │                         │      ▼
+  │                         │  lib/server/gmail-account/disconnect.server.ts
+  │                         │      │  getPrimary → if exists,
+  │                         │      │  transaction(ownerId) → repo.disconnect
+  │  ◄── 303 ───────────────┤  Location: /profile (idempotent; mock no-op)
 ```
 
 The seam reads `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`,
@@ -465,6 +476,7 @@ The route handlers do not move.
 | `lib/server/auth/current-user.server.ts` | Real auth-backed current user resolver | `currentUserIdOrThrow(): OwnerId`; `currentUserOrThrow()` returning `{ id, email, name, initials, sendingAccount }`; typed unauthenticated vs misconfigured errors | `pnpm test:auth`, `pnpm test:home`, `pnpm test:workspace`, `pnpm test:profile`, `pnpm test:boundaries` |
 | `app/api/session/route.ts` | Unchanged route contract over real auth | Thin shape: call auth service → return `{ user }`; 401 for missing auth; 500 for invalid server auth config; no DB/cookies/OAuth/Gmail writes in the route | `pnpm test:auth` |
 | `app/api/oauth/gmail/start/route.ts` and `app/api/oauth/gmail/callback/route.ts` | Unchanged route contract over real Gmail OAuth | Thin shape: auth → delegate to `oauth/gmail.server.ts` → JSON failure or redirect; route files do not exchange tokens, write DB, or update `sendingAccount` directly | `pnpm test:oauth`, `pnpm test:boundaries` |
+| `app/api/gmail/disconnect/route.ts` | Unchanged thin POST route | auth → `disconnectGmailAccount(ownerId, origin)` from `lib/server/gmail-account/disconnect.server.ts` → `303` to `/profile`; idempotent; no SQL in the route. The helper reuses the auth seam's strict `dataSource()`, so a misconfigured `KEEPSAKE_DATA_SOURCE` maps to 500 with the existing auth-misconfigured error shape (no new contract). | `pnpm test:db:current-user`, `pnpm test:profile`, `pnpm test:gmail-disconnect`, `pnpm test:boundaries` |
 | `lib/server/oauth/gmail.server.ts` | Real Gmail OAuth service | `startGmailOAuth` and `completeGmailOAuth` result union; start can redirect to Google when configured; callback still 400 invalid/provider-denied or 501 until token exchange/state validation are wired; account persistence only through `GmailAccountRepository`; no send/enqueue behavior | `pnpm test:oauth` |
 | `lib/repositories/gmail-accounts.server.ts` | Auth/OAuth-facing Gmail account repository | Plaintext refresh token only appears in `GmailAccountUpsertInput`; repo encrypts `refresh_token_enc`; read methods never expose tokens; owner-scoped RLS remains active | `pnpm test:db:gmail-accounts` |
 | `lib/server/people-payload/index.server.ts` | Keep as dispatcher until mock can be deleted | `getPeoplePayload()` signature; `GET /api/people` returning `PeoplePayload` | `pnpm test:people`, `pnpm test:db:people-route` |

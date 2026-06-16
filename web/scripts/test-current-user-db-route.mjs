@@ -316,7 +316,8 @@ try {
     await client.query(`GRANT CONNECT ON DATABASE keepsake TO ${appRole}`);
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
     await client.query(`GRANT USAGE ON TYPE gmail_account_status TO ${appRole}`);
-    await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes, gmail_accounts TO ${appRole}`);
+    await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes TO ${appRole}`);
+    await client.query(`GRANT SELECT, DELETE ON gmail_accounts TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 
@@ -395,6 +396,13 @@ try {
     check("connected /profile -> 200", profile.status === 200, `status=${profile.status}`);
     check("profile renders sender email", profile.body.includes(`Emails send from ${connectedOwner.sender}`));
     check("profile renders Connected", profile.body.includes("Connected"));
+    check("connected profile renders Disconnect button", profile.body.includes(">Disconnect</button>"));
+    check(
+      "connected Disconnect form action targets disconnect route",
+      profile.body.includes('action="/api/gmail/disconnect"'),
+    );
+    check("connected profile does not render Connect Gmail CTA", !profile.body.includes(">Connect Gmail</a>"));
+    check("connected profile does not render Reconnect Gmail CTA", !profile.body.includes(">Reconnect Gmail</a>"));
 
     const people = await fetchJson(base, "/api/people");
     const lin = people.body?.people?.find((person) => person.name === "Lin");
@@ -427,6 +435,12 @@ try {
     check("expired /profile -> 200", profile.status === 200, `status=${profile.status}`);
     check("profile renders expired sender email", profile.body.includes(`Emails send from ${expiredOwner.sender}`));
     check("profile renders Expired", profile.body.includes("Expired"));
+    check("expired profile renders Reconnect Gmail CTA", profile.body.includes(">Reconnect Gmail</a>"));
+    check(
+      "expired Reconnect CTA targets /api/oauth/gmail/start?returnTo=/profile",
+      profile.body.includes('href="/api/oauth/gmail/start?returnTo=/profile"'),
+    );
+    check("expired profile keeps Disconnect button", profile.body.includes(">Disconnect</button>"));
   });
 
   process.stdout.write("verifying DB mode with no Gmail account:\n");
@@ -445,6 +459,109 @@ try {
     const profile = await fetchHtml(base, "/profile");
     check("empty /profile -> 200", profile.status === 200, `status=${profile.status}`);
     check("profile renders Not connected", profile.body.includes("Not connected"));
+    check("empty profile renders Connect Gmail CTA", profile.body.includes(">Connect Gmail</a>"));
+    check(
+      "empty Connect CTA targets /api/oauth/gmail/start?returnTo=/profile",
+      profile.body.includes('href="/api/oauth/gmail/start?returnTo=/profile"'),
+    );
+    check("empty profile does not render Disconnect button", !profile.body.includes(">Disconnect</button>"));
+  });
+
+  process.stdout.write("verifying disconnect flow:\n");
+  await withNextForOwner({
+    ownerId: connectedOwner.id,
+    ownerEmail: connectedOwner.email,
+    ownerName: connectedOwner.name,
+    port: basePort + 3,
+    appUrl,
+    encryptionKey,
+  }, async (base) => {
+    const disconnect = await fetch(`${base}/api/gmail/disconnect`, {
+      method: "POST",
+      redirect: "manual",
+    });
+    check("connected POST /api/gmail/disconnect -> 303", disconnect.status === 303, `status=${disconnect.status}`);
+    check(
+      "disconnect redirects to /profile",
+      disconnect.headers.get("location") === `${base}/profile`,
+      disconnect.headers.get("location") ?? "",
+    );
+
+    const session = await fetchJson(base, "/api/session");
+    check(
+      "session sendingAccount null after disconnect",
+      session.body?.user?.sendingAccount === null,
+      JSON.stringify(session.body),
+    );
+
+    const profile = await fetchHtml(base, "/profile");
+    check("profile shows Not connected after disconnect", profile.body.includes("Not connected"));
+    check("profile shows Connect Gmail after disconnect", profile.body.includes(">Connect Gmail</a>"));
+    check("profile no longer shows Disconnect button", !profile.body.includes(">Disconnect</button>"));
+
+    const second = await fetch(`${base}/api/gmail/disconnect`, {
+      method: "POST",
+      redirect: "manual",
+    });
+    check("second POST /api/gmail/disconnect -> 303 (idempotent)", second.status === 303, `status=${second.status}`);
+
+    const sessionAfter = await fetchJson(base, "/api/session");
+    check(
+      "session sendingAccount remains null after idempotent disconnect",
+      sessionAfter.body?.user?.sendingAccount === null,
+      JSON.stringify(sessionAfter.body),
+    );
+  });
+
+  process.stdout.write("verifying cross-owner safety + expired owner can self-disconnect:\n");
+  await withNextForOwner({
+    ownerId: expiredOwner.id,
+    ownerEmail: expiredOwner.email,
+    ownerName: expiredOwner.name,
+    port: basePort + 4,
+    appUrl,
+    encryptionKey,
+  }, async (base) => {
+    const session = await fetchJson(base, "/api/session");
+    check(
+      "expired owner's account survives connected owner's disconnect (cross-owner safety)",
+      session.body?.user?.sendingAccount?.status === "expired"
+        && session.body.user.sendingAccount.email === expiredOwner.sender,
+      JSON.stringify(session.body),
+    );
+
+    const disconnect = await fetch(`${base}/api/gmail/disconnect`, {
+      method: "POST",
+      redirect: "manual",
+    });
+    check("expired POST /api/gmail/disconnect -> 303", disconnect.status === 303, `status=${disconnect.status}`);
+
+    const sessionAfter = await fetchJson(base, "/api/session");
+    check(
+      "expired session sendingAccount null after own disconnect",
+      sessionAfter.body?.user?.sendingAccount === null,
+      JSON.stringify(sessionAfter.body),
+    );
+  });
+
+  process.stdout.write("verifying disconnect is idempotent for empty owner:\n");
+  await withNextForOwner({
+    ownerId: emptyOwner.id,
+    ownerEmail: emptyOwner.email,
+    ownerName: emptyOwner.name,
+    port: basePort + 5,
+    appUrl,
+    encryptionKey,
+  }, async (base) => {
+    const disconnect = await fetch(`${base}/api/gmail/disconnect`, {
+      method: "POST",
+      redirect: "manual",
+    });
+    check(
+      "empty owner POST /api/gmail/disconnect -> 303 (idempotent on no row)",
+      disconnect.status === 303,
+      `status=${disconnect.status}`,
+    );
   });
 } catch (error) {
   process.stdout.write(`harness error: ${error?.message ?? error}\n`);

@@ -98,6 +98,19 @@ try {
   check("does not render old hard-coded email", !body.includes("arthur@keepsake.app"));
   check("sending email is not connected", body.includes("Not connected"));
   check("does not render fake connected email status", !/>Connected</.test(body));
+  check("renders Connect Gmail CTA", body.includes(">Connect Gmail</a>"));
+  check(
+    "Connect CTA targets /api/oauth/gmail/start?returnTo=/profile",
+    body.includes('href="/api/oauth/gmail/start?returnTo=/profile"'),
+  );
+  check(
+    "mock-mode profile does not render Disconnect button",
+    !body.includes(">Disconnect</button>"),
+  );
+  check(
+    "mock-mode profile does not render Reconnect CTA",
+    !body.includes(">Reconnect Gmail</a>"),
+  );
   check("keeps subscription badge", body.includes("Keepsake+"));
   check("keeps Sending section", body.includes("SENDING"));
   check("keeps Preferences section", body.includes("PREFERENCES"));

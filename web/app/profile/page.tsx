@@ -3,6 +3,9 @@ import { currentUserOrThrow } from "@/lib/server/auth/current-user.server";
 
 export const dynamic = "force-dynamic";
 
+const CONNECT_HREF = "/api/oauth/gmail/start?returnTo=/profile";
+const DISCONNECT_ACTION = "/api/gmail/disconnect";
+
 export default async function ProfilePage() {
   const user = await currentUserOrThrow();
 
@@ -35,7 +38,7 @@ export default async function ProfilePage() {
           icon="i-mail"
           title="Sending email"
           desc={user.sendingAccount ? `Emails send from ${user.sendingAccount.email}` : "No sending account connected yet"}
-          right={<SendingEmailStatus sendingAccount={user.sendingAccount} />}
+          right={<SendingEmailControls sendingAccount={user.sendingAccount} />}
         />
         <Row icon="i-truck" title="Mailing address book" desc="Where printed cards get sent from" right={<Chev />} last />
       </Section>
@@ -102,26 +105,82 @@ function Val({ children }: { children: React.ReactNode }) {
 function Chev() {
   return <span style={{ color: "var(--gray-3)", fontSize: 17 }}><Icon name="i-chev" /></span>;
 }
-function SendingEmailStatus({ sendingAccount }: {
+
+function SendingEmailControls({ sendingAccount }: {
   sendingAccount: { email: string; status: "connected" | "expired" } | null;
 }) {
   if (!sendingAccount) {
     return (
-      <span style={{ fontSize: 11, color: "var(--gray-2)", fontWeight: 500 }}>
-        Not connected
-      </span>
+      <>
+        <span style={{ fontSize: 11, color: "var(--gray-2)", fontWeight: 500 }}>
+          Not connected
+        </span>
+        <ConnectLink label="Connect Gmail" />
+      </>
     );
   }
 
   const connected = sendingAccount.status === "connected";
 
   return (
-    <span style={{
-      fontSize: 11, color: connected ? "#3F9E78" : "var(--gray-2)",
-      display: "flex", alignItems: "center", gap: 5, fontWeight: 500,
-    }}>
-      {connected && <span style={{ fontSize: 13 }}><Icon name="i-check-plain" /></span>}
-      {connected ? "Connected" : "Expired"}
-    </span>
+    <>
+      <span style={{
+        fontSize: 11,
+        color: connected ? "#3F9E78" : "var(--amber)",
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        fontWeight: 500,
+      }}>
+        {connected && <span style={{ fontSize: 13 }}><Icon name="i-check-plain" /></span>}
+        {connected ? "Connected" : "Expired"}
+      </span>
+      {!connected && <ConnectLink label="Reconnect Gmail" />}
+      <DisconnectButton />
+    </>
+  );
+}
+
+function ConnectLink({ label }: { label: string }) {
+  return (
+    <a
+      href={CONNECT_HREF}
+      style={{
+        fontSize: 11,
+        fontWeight: 500,
+        color: "var(--blue-deep)",
+        background: "var(--blue-wash)",
+        padding: "5px 11px",
+        borderRadius: 10,
+        textDecoration: "none",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </a>
+  );
+}
+
+function DisconnectButton() {
+  return (
+    <form method="post" action={DISCONNECT_ACTION} style={{ margin: 0 }}>
+      <button
+        type="submit"
+        style={{
+          fontSize: 11,
+          fontWeight: 500,
+          color: "var(--gray-1)",
+          background: "transparent",
+          padding: "5px 11px",
+          borderRadius: 10,
+          border: "0.5px solid var(--line)",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          whiteSpace: "nowrap",
+        }}
+      >
+        Disconnect
+      </button>
+    </form>
   );
 }
