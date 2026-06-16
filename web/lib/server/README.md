@@ -91,7 +91,7 @@ small on purpose.
 
 | Seam | Called by | Today | Future replacement | Guard |
 |---|---|---|---|---|
-| `auth/current-user.server.ts` | `/api/session`, DB-backed server helpers | Resolves `{ id, email, name, initials }` from `DEV_OWNER_*`; `currentUserIdOrThrow()` remains the owner-id compatibility helper | Cookie/session/OAuth verification inside this file only; route and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:boundaries` |
+| `auth/current-user.server.ts` | `/api/session`, Profile, DB-backed server helpers | Resolves `{ id, email, name, initials }` from `DEV_OWNER_*`; `currentUserIdOrThrow()` remains the owner-id compatibility helper | Cookie/session/OAuth verification inside this file only; route, Profile, and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:profile`, `pnpm test:boundaries` |
 | `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
@@ -222,8 +222,10 @@ guard, and `DEV_OWNER_NAME` must be non-empty. Missing `DEV_OWNER_ID` throws
 **Where called.** DB-backed server helpers continue to call
 `currentUserIdOrThrow()` so their signatures stay compatible. The public
 session route, `GET /api/session`, calls `currentUserOrThrow()` and returns
-`{ user }`, mapping unauthenticated to 401 and misconfigured env to 500. It
-does not touch DB, cookies, OAuth, Gmail, or write paths.
+`{ user }`, mapping unauthenticated to 401 and misconfigured env to 500.
+Profile also calls `currentUserOrThrow()` server-side to render the same
+identity shape without a client fetch. None of these paths touch DB, cookies,
+OAuth, Gmail, or write paths.
 
 **Provider choices to make later.** NextAuth / Auth.js vs. roll-our-own
 session table vs. Clerk / Supabase Auth. Decision deferred; the

@@ -25,7 +25,8 @@
     "test:drafts": "node scripts/test-drafts.mjs",
     "test:people": "node scripts/test-people.mjs",
     "test:history": "node scripts/test-history.mjs",
-    "test": "pnpm test:boundaries && pnpm test:auth && pnpm test:people && pnpm test:drafts && pnpm test:history"
+    "test:profile": "node scripts/test-profile.mjs",
+    "test": "pnpm test:boundaries && pnpm test:auth && pnpm test:people && pnpm test:drafts && pnpm test:history && pnpm test:profile"
   },
   "dependencies": {
     "next": "^15.0.3",

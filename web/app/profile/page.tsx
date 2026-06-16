@@ -1,6 +1,11 @@
 import Icon from "@/components/Icon";
+import { currentUserOrThrow } from "@/lib/server/auth/current-user.server";
+
+export const dynamic = "force-dynamic";
 
 export default function ProfilePage() {
+  const user = currentUserOrThrow();
+
   return (
     <div className="ks-page">
       <div className="ks-page-inner ks-page-inner--profile">
@@ -9,11 +14,11 @@ export default function ProfilePage() {
           width: 62, height: 62, fontSize: 24, background: "var(--blue)", color: "#fff",
           borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600,
         }}>
-          A
+          {user.initials}
         </div>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 600, color: "var(--ink-2)" }}>Arthur</div>
-          <div style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 3 }}>arthur@keepsake.app</div>
+          <div style={{ fontSize: 18, fontWeight: 600, color: "var(--ink-2)" }}>{user.name}</div>
+          <div style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 3 }}>{user.email}</div>
         </div>
         <div style={{
           marginLeft: "auto", fontSize: 11.5, fontWeight: 500, color: "var(--blue-deep)",
