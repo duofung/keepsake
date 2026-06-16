@@ -34,7 +34,7 @@ Rules:
 | Draft generation/persistence | Stable mock generator + DB persistence | DB-backed draft context/service, draft repository, latest/version reads. | Replace mock generator with real LLM behind same seam. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
 | Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
-| Gmail OAuth | Contract only | OAuth route stubs, tests, repository contract + runtime token storage. | Real OAuth start/callback, state cookies, token exchange, account upsert. |
+| Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Profile connect/disconnect UI (P2), send pipeline (P3), token refresh + markExpired on send failure. |
 | Sending account UI | Placeholder | Profile/Workspace can display connected/not connected shape. | Connect/disconnect behavior, expired state repair flow. |
 | Email send | Not started | No accidental send behavior. | Send endpoint, queue, Gmail send worker, delivery status updates. |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
@@ -97,34 +97,34 @@ Current slicing:
 Status:
 
 - `P1-A` done. Guarded by `pnpm test:oauth`.
+- `P1-B` done. Guarded by `pnpm test:oauth` (validation paths) and
+  `pnpm test:db:gmail-callback` (full token-exchange + DB write + replay).
 
-In scope:
+In scope (delivered):
 
-- Generate Google authorization URL in `lib/server/oauth/gmail.server.ts`.
-- Store OAuth state behind the seam.
-- Later: validate state on callback.
-- Later: exchange code for tokens.
-- Later: persist account through `GmailAccountRepository.upsertPrimary`.
-- Return redirect/result through existing route contract.
+- HMAC-signed state cookie (`OAUTH_STATE_SIGNING_SECRET`, ≥32 chars).
+- Callback verifies cookie signature, 10-minute TTL, owner match, and
+  state-vs-cookie match before any network call.
+- Token exchange via native `fetch` to `GOOGLE_TOKEN_ENDPOINT` (defaults to
+  `https://oauth2.googleapis.com/token`; tests override).
+- Account email extracted from the id_token claim (`openid email` scope) —
+  the smallest officially-supported way to learn the authorizing user's
+  verified email. No extra Gmail capability.
+- Persists encrypted refresh-token metadata through
+  `GmailAccountRepository.upsertPrimary`; transaction opens only after token
+  exchange returns so network calls stay outside the DB transaction.
+- Plaintext refresh token only crosses the repository input boundary; never
+  logged.
+- State cookie cleared on every callback response (success or failure).
 
 Out of scope:
 
 - No email sending.
 - No queue.
 - No draft-generation changes.
-
-Required validation:
-
-- OAuth unit/smoke tests with provider calls mocked.
-- Existing `pnpm test` and `pnpm build`.
-- A DB-backed test proving callback writes encrypted account metadata.
-
-CC review focus:
-
-- Routes stay parse/query -> auth -> delegate.
-- State validation is server-side.
-- Refresh token plaintext only crosses into repository input.
-- No send scope beyond the intended Gmail scope.
+- No CSRF protection beyond HMAC state cookie. Server-side single-use nonces
+  are not introduced (Google rejects authorization-code reuse, providing the
+  defense the protocol relies on).
 
 ### P2. Profile Connect/Disconnect Flow
 

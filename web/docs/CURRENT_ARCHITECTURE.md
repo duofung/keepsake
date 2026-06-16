@@ -75,32 +75,50 @@ client                    server
   │  GET /api/oauth/gmail/start
   ├────────────────────────►│
   │                         │  app/api/oauth/gmail/start/route.ts
-  │                         │      │
   │                         │      ├─ auth/current-user.server.ts
   │                         │      │    currentUserIdOrThrow()
   │                         │      ▼
   │                         │  lib/server/oauth/gmail.server.ts
-  │                         │      │
-  │  ◄──── { error, code } ─┤  501 not_configured today
+  │                         │      │  build authorization URL
+  │                         │      │  + HMAC-sign state cookie
+  │  ◄── 307 + Set-Cookie ──┤  Location: accounts.google.com/o/oauth2/v2/auth
   │                         │
-  │  GET /api/oauth/gmail/callback?code=...&state=...
+  │  GET /api/oauth/gmail/callback?code=...&state=...     [carries cookie]
   ├────────────────────────►│
   │                         │  app/api/oauth/gmail/callback/route.ts
-  │                         │      │
   │                         │      ├─ auth/current-user.server.ts
   │                         │      │    currentUserIdOrThrow()
+  │                         │      ├─ read keepsake_gmail_oauth_state cookie
   │                         │      ▼
   │                         │  lib/server/oauth/gmail.server.ts
-  │                         │      │
-  │  ◄──── { error, code } ─┤  400 invalid_callback/provider_error or 501 not_configured
+  │                         │      │  verify HMAC + TTL + owner + state
+  │                         │      │  fetch GOOGLE_TOKEN_ENDPOINT (native fetch)
+  │                         │      │  extract email from id_token
+  │                         │      ▼
+  │                         │  db/transaction.server.ts (short)
+  │                         │      ▼
+  │                         │  GmailAccountRepository.upsertPrimary(...)
+  │  ◄── 307 + clear cookie ┤  Location: <payload.returnTo on origin>
   │                         │
+  │  ◄── 400 + clear cookie ┤  any validation/exchange failure
+  │  ◄── 501 ───────────────┤  any of 4 OAuth env vars missing
 ```
 
-These are route stubs only. They define the provider boundary before Google
-API calls, OAuth state, token exchange, Gmail account persistence, or
-send/enqueue/worker paths exist. Missing auth maps to 401, invalid dev auth
-maps to 500, and a future successful implementation will redirect rather than
-return JSON from the provider seam.
+The seam reads `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`,
+and `OAUTH_STATE_SIGNING_SECRET` (>=32 chars). All four required to leave
+`not_configured`. Scopes requested: `openid email gmail.send` — the identity
+pair is the smallest officially-supported way to learn the authorizing user's
+verified email; no extra Gmail capability is acquired beyond send.
+
+The state cookie carries `{ ownerId, returnTo, state, issuedAt }`, HMAC-SHA256
+signed with `OAUTH_STATE_SIGNING_SECRET`, HttpOnly, SameSite=Lax, Path=/, with
+a 10-minute TTL. The cookie is cleared on every callback response, success or
+failure. Token exchange uses native `fetch` against `GOOGLE_TOKEN_ENDPOINT`
+(default `https://oauth2.googleapis.com/token`; tests point this at a local
+fake server). The DB transaction is opened only after token exchange returns
+to keep network calls outside the transaction; the plaintext refresh token
+only crosses the repository write boundary and is encrypted before insert.
+The seam never sends mail or enqueues anything.
 
 ### `POST /api/drafts`
 
@@ -367,17 +385,24 @@ PR/agent prompt before touching.
    requires `DATABASE_URL` and a 32-byte `DEV_ENCRYPTION_KEY_BASE64`.
    `.env.example` is documentation only for the preflight. Covered by
    `pnpm test:env-init` and `pnpm test:dev-env`.
-5. **Gmail OAuth route stubs** =
-   `GET /api/oauth/gmail/start` and `GET /api/oauth/gmail/callback`.
-   They require current-user auth, then delegate to
-   `lib/server/oauth/gmail.server.ts`. Today they return explicit JSON
-   failures: 401 missing auth, 500 invalid dev auth, 400 invalid/provider-denied
-   callback, and 501 `not_configured` for the unimplemented provider path.
-   When `GOOGLE_CLIENT_ID` and `GOOGLE_REDIRECT_URI` are configured, the start
-   route now redirects to Google and stores an HttpOnly OAuth state cookie.
-   Callback still does not validate state or exchange tokens. The routes do
-   not write Gmail accounts or update `sendingAccount`. Covered by
-   `pnpm test:oauth`.
+5. **Gmail OAuth routes** =
+   `GET /api/oauth/gmail/start` and `GET /api/oauth/gmail/callback`. They
+   require current-user auth, then delegate to
+   `lib/server/oauth/gmail.server.ts`. Returns 401 missing auth, 500 invalid
+   dev auth, 400 invalid/provider-denied callback or any state/exchange
+   failure, and 501 `not_configured` when any of `GOOGLE_CLIENT_ID`,
+   `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, or
+   `OAUTH_STATE_SIGNING_SECRET` (>=32 chars) is missing. Fully configured:
+   start returns 307 to Google + HMAC-signed state cookie; callback verifies
+   the cookie, exchanges the code via native `fetch` to `GOOGLE_TOKEN_ENDPOINT`,
+   extracts the account email from the `id_token`, opens a short
+   `transaction(ownerId, ...)` and calls
+   `GmailAccountRepository.upsertPrimary` with the plaintext refresh token
+   (encrypted at the repository boundary), then 307s to the cookie's safe
+   `returnTo` and clears the cookie. The routes never write Gmail accounts
+   directly, never see plaintext tokens after the seam returns, and never
+   send or enqueue. Covered by `pnpm test:oauth` (validation paths) and
+   `pnpm test:db:gmail-callback` (full DB write path + replay).
 6. **`POST /api/drafts` request shape** = `{ personId, occasionId, userInstruction }`,
    nothing else. Anything that smells like "let the client name a
    relationship / culture / tone override" violates the server-authoritative
@@ -414,7 +439,7 @@ These seams are the only places that move when the back end goes real.
 | Seam | What it does today | What replaces it |
 |---|---|---|
 | `lib/server/auth/current-user.server.ts` | Resolves `{ id, email, name, initials, sendingAccount }` and `OwnerId` from validated `DEV_OWNER_*` env. Mock mode returns `sendingAccount: null`; DB mode reads the owner's primary Gmail account. This is the only owner resolver; DB helpers keep calling synchronous `currentUserIdOrThrow()`, while `/api/session`, Home, Workspace, and Profile await `currentUserOrThrow()`. | Real session cookie / OAuth verification inside this module only. `/api/session` keeps returning `{ user }`; Home, Workspace, and Profile keep rendering the same identity shape; DB helper call sites keep their owner-id contract. |
-| `lib/server/oauth/gmail.server.ts` | Defines the Gmail OAuth start/callback seam. Start returns a Google redirect + state cookie when configured, otherwise 501 `not_configured`; callback still validates provider denial and missing `code/state` as 400s and otherwise returns 501. | State validation semantics, code exchange, persistence through `GmailAccountRepository` over `gmail_accounts`, and `sendingAccount` refresh. Route files stay thin and do not learn token storage or provider SDK details. |
+| `lib/server/oauth/gmail.server.ts` | Full Gmail OAuth start + callback. Start signs an HMAC state cookie and 307s to Google with `openid email gmail.send` scopes. Callback verifies cookie + state, fetches `GOOGLE_TOKEN_ENDPOINT`, decodes id_token for the account email, and persists encrypted refresh-token metadata through `GmailAccountRepository.upsertPrimary`. Cookie cleared on every response. No SDK; native `fetch` only. | Same seam swap to real auth replacing `currentUserIdOrThrow()`; no other change needed. |
 | `lib/server/people-payload/index.server.ts` | Dispatches to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. | Later auth replaces `DEV_OWNER_ID`; route/page imports stay the same. |
 | `lib/server/people-payload/mock.server.ts` | `getMockPeoplePayload()` reads `peoplePayload()` from `lib/mock.ts`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/people-payload/db.server.ts` | `getDbPeoplePayload()` resolves dev owner, opens transaction, calls `PeopleRepository.listWithRelations(ownerId)`. | Real auth replaces `auth/current-user.server.ts`; repository call remains. |

@@ -85,20 +85,23 @@ Current implementation:
 - Dynamic route.
 - Requires current-user auth.
 - Delegates to `lib/server/oauth/gmail.server.ts`.
-- Returns `501 { error, code: "not_configured" }` when `GOOGLE_CLIENT_ID` or
-  `GOOGLE_REDIRECT_URI` is missing.
-- When those env vars are present, generates a Google authorization redirect
-  with `gmail.send` scope and stores an HttpOnly OAuth state cookie for later
-  callback verification.
+- Returns `501 { error, code: "not_configured" }` when any of `GOOGLE_CLIENT_ID`,
+  `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, or `OAUTH_STATE_SIGNING_SECRET`
+  (min 32 chars) is missing. All four are required because callback now does
+  token exchange + state verification.
+- When fully configured, generates a Google authorization redirect with
+  `openid email https://www.googleapis.com/auth/gmail.send` scopes and stores
+  an HttpOnly OAuth state cookie signed with HMAC-SHA256.
+- The cookie carries `{ ownerId, returnTo, state, issuedAt }` (10 min TTL) and
+  is checked on callback. `returnTo` is constrained to relative paths;
+  open-redirect inputs fall back to `/profile`.
 - Returns 401 for missing auth and 500 for misconfigured auth.
 - Does not exchange tokens, write DB rows, or enqueue/send anything.
 
 Future implementation:
 
-- Keep the start-route redirect and state cookie contract stable.
-- Validate the stored OAuth state on callback.
-- Redirect to the provider on success.
-- Keep the route shape thin: auth -> service -> JSON error or redirect.
+- Replace `DEV_OWNER_*` with real session-backed `currentUserIdOrThrow()` —
+  start route does not change.
 
 ## GET /api/oauth/gmail/callback
 
@@ -114,6 +117,10 @@ Query:
 }
 ```
 
+Cookies read:
+
+- `keepsake_gmail_oauth_state` — HMAC-signed payload set by `start`.
+
 Current implementation:
 
 - Dynamic route.
@@ -121,22 +128,30 @@ Current implementation:
 - Delegates to `lib/server/oauth/gmail.server.ts`.
 - Returns `400 { error, code: "provider_error" }` when the provider sends
   `error`.
-- Returns `400 { error, code: "invalid_callback" }` when `code` or `state` is
-  missing.
-- Returns `501 { error, code: "not_configured" }` for a syntactically valid
-  callback because token exchange and state verification are not wired yet.
-- Does not exchange tokens, persist Gmail accounts, validate the stored OAuth
-  state yet, or update
-  `CurrentUser.sendingAccount`.
+- Returns `400 { error, code: "invalid_callback" }` for any of: missing
+  `code`/`state`, missing cookie, bad signature, expired cookie (>10 min),
+  cookie `ownerId` does not match current user, query `state` does not match
+  cookie payload `state`, token exchange fails, or the provider's response
+  does not include an `id_token` carrying the account email.
+- Returns `501 { error, code: "not_configured" }` when the four OAuth env vars
+  are not all set.
+- On success: POSTs `code` + `client_id` + `client_secret` + `redirect_uri`
+  + `grant_type=authorization_code` to `GOOGLE_TOKEN_ENDPOINT` (default
+  `https://oauth2.googleapis.com/token`); reads `refresh_token`, `id_token`,
+  `expires_in`, `scope`; extracts the account `email` from the id_token
+  payload; opens one short transaction and writes the row through
+  `GmailAccountRepository.upsertPrimary(ownerId, { email, scopes,
+  refreshToken, refreshTokenExpiresAtISO })`. The plaintext `refreshToken`
+  only crosses the repository write boundary and is encrypted before insert.
+- All callback responses (success or failure) carry a `Set-Cookie` instruction
+  that clears `keepsake_gmail_oauth_state` (`Max-Age=0`). The route does not
+  read or write the database directly; the seam owns those concerns.
 
 Future implementation:
 
-- Validate state.
-- Exchange code for tokens.
-- Persist encrypted refresh-token metadata through `GmailAccountRepository`
-  over `gmail_accounts`.
-- Update account state so `CurrentUser.sendingAccount` can be filled from the
-  primary Gmail account.
+- Real session/cookies behind `currentUserOrThrow()`; the rest of the seam
+  is unchanged.
+- Status repair flow when token refresh later fails (drives `markExpired`).
 
 ## Future Command Channel Webhooks
 

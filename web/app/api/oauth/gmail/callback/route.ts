@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import {
   AuthError,
@@ -7,25 +8,40 @@ import { completeGmailOAuth } from "@/lib/server/oauth/gmail.server";
 
 export const dynamic = "force-dynamic";
 
+const STATE_COOKIE_NAME = "keepsake_gmail_oauth_state";
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const ownerId = currentUserIdOrThrow();
+    const cookieStore = await cookies();
+    const stateCookie = cookieStore.get(STATE_COOKIE_NAME)?.value ?? null;
+
     const result = await completeGmailOAuth({
       ownerId,
       code: url.searchParams.get("code")?.trim() || null,
       state: url.searchParams.get("state")?.trim() || null,
       providerError: url.searchParams.get("error")?.trim() || null,
+      stateCookie,
+      origin: url.origin,
     });
 
-    if (!result.ok) {
-      return NextResponse.json(
-        { error: result.error, code: result.code },
-        { status: result.status },
+    const res = result.ok
+      ? NextResponse.redirect(result.redirectTo)
+      : NextResponse.json(
+          { error: result.error, code: result.code },
+          { status: result.status },
+        );
+
+    if (result.setCookie) {
+      res.cookies.set(
+        result.setCookie.name,
+        result.setCookie.value,
+        result.setCookie.options,
       );
     }
 
-    return NextResponse.redirect(result.redirectTo);
+    return res;
   } catch (error) {
     return authFailureResponse(error);
   }
