@@ -7,7 +7,10 @@ import { createDraftRepository } from "@/lib/repositories/drafts.server";
 import { currentUserIdOrThrow } from "@/lib/server/auth/current-user.server";
 import { resolveDbDraftContextInTx } from "@/lib/server/draft-context/db.server";
 import type { DraftContext } from "@/lib/server/draft-generator/types";
-import { createMockDraftGenerator } from "@/lib/server/draft-generator/mock.server";
+import {
+  DraftGeneratorError,
+  getDraftGenerator,
+} from "@/lib/server/draft-generator/index.server";
 import { transaction } from "@/lib/server/db/transaction.server";
 import type {
   DraftLatestInput,
@@ -16,12 +19,10 @@ import type {
   DraftVersionsInput,
   DraftVersionsResult,
 } from "./types";
+import { generatorErrorToServiceResult } from "./generator-errors.server";
 
-const MODEL_PROVIDER = "mock";
-const MODEL_VERSION = "mock-draft-generator:v1";
 const PROMPT_HASH_VERSION = "message-drafts-prompt-hmac:v1";
 
-const draftGenerator = createMockDraftGenerator();
 const draftRepository = createDraftRepository();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -36,13 +37,14 @@ function stableValue(value: unknown): unknown {
   );
 }
 
-export function promptInputHash(ctx: DraftContext): string {
+export function promptInputHash(
+  ctx: DraftContext,
+  provider: string,
+  modelVersion: string,
+): string {
   const input = stableValue({
     version: PROMPT_HASH_VERSION,
-    generator: {
-      provider: MODEL_PROVIDER,
-      modelVersion: MODEL_VERSION,
-    },
+    generator: { provider, modelVersion },
     person: ctx.person,
     relationship: ctx.relationship,
     cultureRule: ctx.cultureRule,
@@ -70,9 +72,11 @@ function promptHashKey(): Buffer {
 }
 
 function saveInputFromDraft(
-  draft: Awaited<ReturnType<typeof draftGenerator.generate>>,
+  draft: import("@/lib/domain").MessageDraft,
   ctx: DraftContext,
   hash: string,
+  provider: string,
+  modelVersion: string,
 ): MessageDraftSaveInput {
   return {
     personId: draft.personId,
@@ -87,8 +91,8 @@ function saveInputFromDraft(
     assistantNote: draft.assistantNote,
     userInstruction: ctx.userInstruction,
     promptHash: hash,
-    modelProvider: MODEL_PROVIDER,
-    modelVersion: MODEL_VERSION,
+    modelProvider: provider,
+    modelVersion,
   };
 }
 
@@ -139,12 +143,19 @@ export async function generateDbDraft(
 
   try {
     const ownerId = currentUserIdOrThrow();
+    // Resolve generator outside the transaction so a misconfigured provider
+    // fails fast without holding a DB connection.
+    const draftGenerator = getDraftGenerator();
 
     return await transaction(ownerId, async (tx) => {
       const result = await resolveDbDraftContextInTx(ownerId, input, tx);
       if (!result.ok) return result;
 
-      const hash = promptInputHash(result.ctx);
+      const hash = promptInputHash(
+        result.ctx,
+        draftGenerator.modelProvider,
+        draftGenerator.modelVersion,
+      );
       const cached = await draftRepository.findByPromptHash(ownerId, hash, tx);
       if (cached) {
         return { ok: true, draft: cached };
@@ -153,13 +164,22 @@ export async function generateDbDraft(
       const generated = await draftGenerator.generate(result.ctx);
       const saved = await draftRepository.save(
         ownerId,
-        saveInputFromDraft(generated, result.ctx, hash),
+        saveInputFromDraft(
+          generated,
+          result.ctx,
+          hash,
+          draftGenerator.modelProvider,
+          draftGenerator.modelVersion,
+        ),
         tx,
       );
 
       return { ok: true, draft: saved };
     });
   } catch (error) {
+    if (error instanceof DraftGeneratorError) {
+      return generatorErrorToServiceResult(error);
+    }
     console.error(error);
     return {
       ok: false,

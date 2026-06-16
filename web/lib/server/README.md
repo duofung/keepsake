@@ -40,13 +40,16 @@ lib/server/
 │   ├── mock.server.ts        ← current: mock fallback
 │   └── db.server.ts          ← current: DB-backed DraftContext
 ├── draft-service/
-│   ├── index.server.ts       ← current: mock/db dispatcher for /api/drafts
-│   ├── mock.server.ts        ← current: mock POST + latest miss + empty versions
-│   ├── db.server.ts          ← current: DB context + draft cache/save/latest/versions
-│   └── types.ts              ← draft service contracts
+│   ├── index.server.ts             ← current: data-source dispatcher for /api/drafts
+│   ├── mock.server.ts              ← current: mock POST + latest miss + empty versions
+│   ├── db.server.ts                ← current: DB context + draft cache/save/latest/versions
+│   ├── generator-errors.server.ts  ← current: DraftGeneratorError → DraftServiceResult mapping
+│   └── types.ts                    ← draft service contracts
 ├── draft-generator/
-│   ├── types.ts              ← DraftContext / DraftGenerator contracts
-│   └── mock.server.ts        ← current: mock MessageDraft generator
+│   ├── types.ts              ← DraftContext / DraftGenerator / error-kind contracts
+│   ├── index.server.ts       ← current: mock/openai dispatcher (KEEPSAKE_DRAFT_SOURCE)
+│   ├── mock.server.ts        ← current: mock MessageDraft generator + deterministicRecipe
+│   └── openai.server.ts      ← current: OpenAI-compatible chat-completions adapter
 ├── auth/                     ← current: dev owner seam; future real auth
 │   └── current-user.server.ts
 ├── oauth/                    ← current: provider route contracts only
@@ -127,7 +130,9 @@ small on purpose.
 | `draft-context/index.server.ts` | `POST /api/drafts` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:drafts`, `pnpm test:db:drafts-route`, `pnpm test:boundaries` |
 | `draft-context/mock.server.ts` | `draft-context/index.server.ts` | validates ids and builds `DraftContext` from mock finders | Deleted when DB is the only source | `pnpm test:drafts`, `pnpm test:boundaries` |
 | `draft-context/db.server.ts` | `draft-context/index.server.ts`, `draft-service/db.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + People/Catalog repo hydration; also exposes an in-transaction resolver for draft persistence | Same repository composition with real auth | `pnpm test:db:drafts-route` |
-| `draft-generator/mock.server.ts` | `POST /api/drafts` | mock recipe + instruction rewrite to `MessageDraft` | LLM-backed `DraftGenerator` implementation | `pnpm test:drafts` |
+| `draft-generator/index.server.ts` | `draft-service/{mock,db}.server.ts` | `getDraftGenerator()` reads `KEEPSAKE_DRAFT_SOURCE` (default `mock`, opt-in `openai`), caches the constructed generator, and throws `DraftGeneratorError("misconfigured", …)` on unknown values. Independent of `KEEPSAKE_DATA_SOURCE` — all four data×generator combinations are valid. | Add more provider adapters as new files; route signature stays the same. | `pnpm test:draft-generator` |
+| `draft-generator/mock.server.ts` | `draft-generator/index.server.ts` | mock recipe + instruction rewrite to `MessageDraft`; also exports `deterministicRecipe(ctx)` for the LLM adapter to reuse for `attachedCard` + `quickActions`. | Kept as the default + the deterministic recipe source. | `pnpm test:drafts`, `pnpm test:draft-generator` |
+| `draft-generator/openai.server.ts` | `draft-generator/index.server.ts` | OpenAI-compatible chat-completions adapter. Validates `KEEPSAKE_DRAFT_API_KEY` / `KEEPSAKE_DRAFT_API_BASE` / `KEEPSAKE_DRAFT_MODEL` at construction; POSTs `system + user` JSON to `/v1/chat/completions` with `response_format: json_object`; parses + validates tone, subject, paragraphs, assistantNote against the existing union; reuses `deterministicRecipe` for `attachedCard` + `quickActions`. Every failure (misconfigured / unavailable / malformed_response) is normalised to `DraftGeneratorError` so the service catches and the route returns a clean 500. | Swap for a streaming or provider-specific client without touching the route. | `pnpm test:draft-generator` |
 | `channels/*` | Future WhatsApp/Telegram/Slack webhooks | Not implemented. Planned shared command router over provider adapters. | Provider-specific webhook verification + normalized `CommandEvent` + shared command router that calls owner-explicit server seams. Web remains the final execution workspace. | future `pnpm test:channels` |
 
 The `app/` tree should not import `lib/mock.ts` directly. If a page needs
@@ -214,17 +219,24 @@ helper sets `app.user_id` to the empty string, `current_user_id()` returns
 `/api/people`, Home, People, `/api/drafts`, `/api/drafts/versions`, and
 History delivery reads can now reach this DB layer when
 `KEEPSAKE_DATA_SOURCE=db`. The default remains mock so local UI work does not
-require Postgres, and draft generation itself is still handled by
-`draft-generator/mock.server.ts`.
+require Postgres. Draft generation is now mock/provider-swappable behind
+`KEEPSAKE_DRAFT_SOURCE` (default `mock`, opt-in `openai`); the route
+contract is unchanged.
 
 For `/api/drafts`, the route remains deliberately thin: parse the JSON body,
 call `generateDraft(input)`, then return its `MessageDraft`. The default mock
 branch preserves the old resolver + mock generator path and does not write
 DB rows. The DB branch resolves context, computes a stable prompt HMAC from
-server-side inputs plus `userInstruction` and the mock generator identity,
-checks `message_drafts`, and saves cache misses. The client contract is still
-only `{ personId, occasionId, userInstruction }`; relationship, cultureRule,
-and tone are server-authoritative and are never read from client overrides.
+server-side inputs plus `userInstruction` and the active generator's
+`modelProvider` / `modelVersion`, checks `message_drafts`, and saves cache
+misses. Folding the generator identity into the hash means switching from
+`mock` to `openai` cleanly invalidates cached drafts. The client contract is
+still only `{ personId, occasionId, userInstruction }`; relationship,
+cultureRule, and tone are server-authoritative and are never read from
+client overrides. When `KEEPSAKE_DRAFT_SOURCE=openai` is set without
+`KEEPSAKE_DRAFT_API_KEY`, the seam raises `DraftGeneratorError("misconfigured", …)`
+which the service layer maps to a 500 with a clean `{ error }` message —
+mock is never silently substituted.
 
 The same route now supports latest-draft restore with
 `GET /api/drafts?personId=...&occasionId=...`. The route reads query params,
@@ -396,14 +408,15 @@ history repositories.
   per-request cache; callers should keep using the same encrypt/decrypt
   boundary.
 
-### `draft-generator/generator.server.ts`
+### `draft-generator/`
 
 **Purpose.** Turn `{ person, relationship, culture, occasion, userInstruction }`
-into the fields a `MessageDraft` needs. Today's mock generator lives at
-`draft-generator/mock.server.ts`; a real implementation can sit next to it
-when the LLM lands.
+into the fields a `MessageDraft` needs. Two implementations of the same
+`DraftGenerator` interface ship today: the mock heuristic generator
+(`mock.server.ts`) and an OpenAI-compatible LLM adapter
+(`openai.server.ts`). `index.server.ts` picks between them at runtime.
 
-**Likely surface.**
+**Current surface.**
 
 ```ts
 export interface DraftContext {
@@ -415,9 +428,25 @@ export interface DraftContext {
 }
 
 export interface DraftGenerator {
+  readonly modelProvider: string;   // "mock" | "openai"
+  readonly modelVersion: string;    // e.g. "mock-draft-generator:v1" | "openai:gpt-4o-mini"
   generate(input: DraftContext): Promise<MessageDraft>;
 }
+
+export class DraftGeneratorError extends Error {
+  readonly kind: "misconfigured" | "unavailable" | "malformed_response";
+}
+
+export function getDraftGenerator(): DraftGenerator;
 ```
+
+`KEEPSAKE_DRAFT_SOURCE` chooses the backend (`mock` default, `openai`
+opt-in). It is deliberately independent of `KEEPSAKE_DATA_SOURCE`. The
+OpenAI adapter additionally requires `KEEPSAKE_DRAFT_API_KEY` and reads
+`KEEPSAKE_DRAFT_API_BASE` (default `https://api.openai.com/v1`) and
+`KEEPSAKE_DRAFT_MODEL` (default `gpt-4o-mini`). Missing env throws
+`DraftGeneratorError("misconfigured", …)`; the seam never silently falls
+back to mock.
 
 **Where called.** Only `/api/drafts` POST, through `draft-service`.
 Composed alongside
@@ -425,15 +454,25 @@ Composed alongside
 `DraftRepository.findByPromptHash`, `DraftRepository.save`.
 
 **Why this lives in `lib/server/`, not `lib/repositories/`.** The repo
-layer persists; this layer thinks. The mock generator that ships today,
-and the LLM client that ships next, both implement the same
+layer persists; this layer thinks. Each generator implements the same
 `DraftGenerator` interface — the route handler doesn't care which one is
 wired.
 
+**LLM contract scope.** The model owns `tone`, `toneLabel`, `subject`,
+`paragraphs`, and `assistantNote`. `attachedCard` and `quickActions` come
+from the deterministic recipe in `mock.server.ts` (`deterministicRecipe`),
+because the model isn't trusted to round-trip our presentation hints yet.
+The system prompt locks `tone` to the existing union; any unsupported
+value, missing field, or non-JSON output is normalised to
+`DraftGeneratorError("malformed_response", …)` and surfaces as a generic
+500 to the client.
+
 **Provenance + caching.** The repository save input carries `modelProvider`,
-`modelVersion`, and `promptHash`. `draft-service/db.server.ts` supplies those
-when it persists cache misses; the public draft returned to the UI remains
-the `MessageDraft` shape.
+`modelVersion`, and `promptHash`. `draft-service/db.server.ts` reads
+`modelProvider` / `modelVersion` from the active generator and folds them
+into the prompt-input HMAC, so switching `KEEPSAKE_DRAFT_SOURCE` invalidates
+previously cached drafts automatically. The public draft returned to the UI
+is still the `MessageDraft` shape.
 
 ## How these compose at the `/api/drafts` route
 

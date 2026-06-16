@@ -31,7 +31,7 @@ Rules:
 | DB schema/RLS | Stable | Postgres schema, catalog seed, local dev fixtures, RLS, transaction helper. | Future migrations for real auth/session, reminders, send queue details. |
 | Crypto | Stable | AES-256-GCM envelope helper, AAD conventions, tests. | KMS/DEK wrapping hardening for production. |
 | People data | Stable read path | DB-backed people payload and repository reads. | People CRUD UI/API, imports, merge/archive semantics. |
-| Draft generation/persistence | Stable mock generator + DB persistence | DB-backed draft context/service, draft repository, latest/version reads. | Replace mock generator with real LLM behind same seam. |
+| Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. | Prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
 | Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
@@ -232,24 +232,58 @@ Out of scope (still future slices):
   toggle). The queued draft is the latest server-saved draft for the
   person/occasion pair.
 
-### P4. Real Draft Generator
+### P4-A. Real Draft Generator Runtime
 
-Goal: replace mock generator with an LLM implementation behind
-`draft-generator`.
+Status: done. Guarded by `pnpm test:draft-generator` (mock default, missing
+API key, stubbed-OK, malformed-response) and the existing `pnpm test:drafts`
+mock smoke.
 
-Owner: Codex implementation agent.
+Goal: turn the `draft-generator` seam from "mock-only" into a real
+mock/provider-swappable runtime, without touching the `/api/drafts` route
+contract or the `MessageDraft` shape the UI renders.
 
-In scope:
+Shipped:
 
-- Prompt schema using person, relationship, culture, occasion, history, and user
-  instruction.
-- JSON validation and fallback.
-- Preserve `MessageDraft` shape.
+- `lib/server/draft-generator/index.server.ts` — `getDraftGenerator()`
+  dispatcher driven by `KEEPSAKE_DRAFT_SOURCE` (`mock` default, `openai`
+  opt-in). Independent of `KEEPSAKE_DATA_SOURCE`; all four combinations are
+  valid. Caches the constructed generator per process.
+- `lib/server/draft-generator/openai.server.ts` — OpenAI-compatible chat
+  completions adapter. Reads `KEEPSAKE_DRAFT_API_KEY` (required),
+  `KEEPSAKE_DRAFT_API_BASE` (defaults to `https://api.openai.com/v1`), and
+  `KEEPSAKE_DRAFT_MODEL` (defaults to `gpt-4o-mini`). System prompt locks
+  output to a constrained JSON shape with a tone from the existing union;
+  any provider that speaks `POST /v1/chat/completions` (OpenAI, Anthropic
+  gateways, vLLM, Ollama, local stubs) drops in.
+- `DraftGenerator` interface gained `modelProvider` / `modelVersion`. The
+  prompt-cache hash (`promptInputHash`) now folds these in, so swapping
+  providers invalidates previously cached drafts automatically.
+- `tone`, `subject`, `paragraphs`, `assistantNote` come from the LLM.
+  `attachedCard` and `quickActions` stay on the deterministic mapping from
+  `mock.server.ts` (exported as `deterministicRecipe`) — we don't trust the
+  model to round-trip presentation hints yet.
+- `DraftGeneratorError("misconfigured" | "unavailable" | "malformed_response", …)`
+  is caught by `draft-service/{mock,db}.server.ts` and mapped through
+  `generator-errors.server.ts` to the existing route shape
+  `{ error: "Draft generator is misconfigured" | "… unavailable" | "… returned an unusable response" }` at status 500.
+  Provider URLs, status codes, and stack traces never reach the client.
+- `.env.example` documents the new env switches and explicitly says missing
+  `KEEPSAKE_DRAFT_API_KEY` does NOT silently fall back to mock.
 
-Out of scope:
+Out of scope (next slices):
 
-- No UI redesign.
-- No send behavior.
+- No prompt persistence, evaluation harness, A/B, or model tuning.
+- No UI redesign — the route response is still `MessageDraft`, and Workspace
+  renders it the same way.
+- No history of prompt/response provenance beyond what `message_drafts`
+  already stores (`model_provider`, `model_version`, `prompt_input_hash`).
+- No retries on `unavailable` — first failure surfaces as a 500. Retries
+  belong in a worker tier we haven't built.
+- No streaming. The route still returns a single `MessageDraft`.
+- No tool-use, function-calling, multi-turn assistant memory, or culture-aware
+  taboo enforcement beyond what the system prompt asks for.
+
+### P5. People Editing MVP
 
 ### P5. People Editing MVP
 

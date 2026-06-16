@@ -147,11 +147,13 @@ client                    server
   │                         │      ├─ KEEPSAKE_DATA_SOURCE unset/mock
   │                         │      │    ▼
   │                         │      │  draft-context/mock.server.ts
-  │                         │      │  draft-generator/mock.server.ts
+  │                         │      │  draft-generator/index.server.ts → mock | openai
   │                         │      │
   │                         │      └─ KEEPSAKE_DATA_SOURCE=db
   │                         │           ▼
   │                         │         auth/current-user.server.ts
+  │                         │           ▼
+  │                         │         draft-generator/index.server.ts → mock | openai
   │                         │           ▼
   │                         │         db/transaction.server.ts
   │                         │           ▼
@@ -159,17 +161,29 @@ client                    server
   │                         │           ▼
   │                         │         DraftRepository.findByPromptHash(ownerId, hash)
   │                         │           ├─ hit  → return cached MessageDraft
-  │                         │           └─ miss → draft-generator/mock.server.ts
+  │                         │           └─ miss → draft-generator.generate(ctx)
   │                         │                    DraftRepository.save(ownerId, draft)
   │                         │      ▼
   │  ◄──── MessageDraft ────┤  NextResponse.json(draft)
   │                         │
 ```
 
-Route is `force-dynamic`. The generator remains mock-backed in both modes.
-Default mock mode is unchanged and does not write DB rows. DB mode resolves
-context under RLS, computes a server-side prompt HMAC, caches in
-`message_drafts`, and returns the persisted row id.
+Route is `force-dynamic`. The generator picks mock or LLM through a separate
+env switch, `KEEPSAKE_DRAFT_SOURCE` (defaults to `mock`, accepts `openai`);
+it is independent of `KEEPSAKE_DATA_SOURCE`. The draft context is still
+resolved server-side from `personId` / `occasionId` / `userInstruction` —
+the client cannot override `relationship`, `cultureRule`, or `tone`. Default
+mock mode is unchanged and does not write DB rows. DB mode resolves context
+under RLS, computes a server-side prompt HMAC that folds in
+`modelProvider` / `modelVersion` (so swapping providers invalidates the
+cache), caches in `message_drafts`, and returns the persisted row id. When
+`KEEPSAKE_DRAFT_SOURCE=openai` is set without `KEEPSAKE_DRAFT_API_KEY`, the
+seam throws `DraftGeneratorError("misconfigured", …)` and the route returns
+a 500 with `{ error: "Draft generator is misconfigured" }` — there is no
+silent fallback to mock. Provider call failures and malformed provider
+responses follow the same shape (`"… unavailable"` / `"… returned an
+unusable response"`); provider URLs and stack traces are never sent to the
+client.
 
 ### `GET /api/drafts`
 
@@ -411,8 +425,8 @@ interactive buttons.
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
 | Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts` and now POSTs the send buttons to `/api/deliveries` for queue-boundary enqueue; History calls the delivery-history dispatcher. | yes (Workspace draft fetches + delivery enqueue) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/session/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` still uses the mock generator for POST and has DB latest/version read paths for GET; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail. | yes | people + draft persistence/cache/latest/version reads, gmail-account read for sender precondition, delivery enqueue in DB mode only | no |
-| Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts`, mock seam for generation | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; draft generation remains mock-backed; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | no (mock generator only) |
+| API routes | `app/api/session/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock); `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail. | yes | people + draft persistence/cache/latest/version reads, gmail-account read for sender precondition, delivery enqueue in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
+| Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock,generator-errors}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/draft-generator/{index,mock,openai}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts` | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; `draft-generator/index.server.ts` dispatches `mock` vs `openai` behind `KEEPSAKE_DRAFT_SOURCE` so the route contract stays unchanged; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
 | Presentation | `lib/presentation.ts` | Maps `OccasionKind`/`Tone`/`Channel` → icon names, gradients, chip text. UI only. | no | no | no |
@@ -479,6 +493,13 @@ PR/agent prompt before touching.
    contract. Extra body fields are ignored by the service and never included
    in DB prompt hashing. Covered by `pnpm test:drafts`.
 7. **`POST /api/drafts` response shape** = `MessageDraft`. Same coverage.
+   The route shape does not move when `KEEPSAKE_DRAFT_SOURCE=openai`: the
+   LLM seam still returns a `MessageDraft`, and any provider failure (missing
+   API key, network error, malformed JSON, unsupported tone) maps to a 500
+   with `{ error: "Draft generator is misconfigured" | "… unavailable" | "… returned an unusable response" }`.
+   Provider URLs, status codes, and stack traces never leave the server.
+   Covered by `pnpm test:draft-generator` (mock default + missing key +
+   stubbed-OK + malformed response).
 8. **`GET /api/drafts` request shape** = query params `{ personId, occasionId? }`.
    It never accepts relationship, culture, tone, or instruction overrides.
    It returns `MessageDraft` on 200 and no body on 204 miss.
@@ -533,7 +554,9 @@ These seams are the only places that move when the back end goes real.
 | `lib/server/draft-context/index.server.ts` | Dispatches to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. | Later auth replaces `DEV_OWNER_ID`; route import stays the same. |
 | `lib/server/draft-context/mock.server.ts` | `resolveMockDraftContext(input)` validates + finds person/relationship/culture/occasion in the mock store. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/draft-context/db.server.ts` | `resolveDbDraftContext(input)` resolves the owner, opens a transaction, hydrates person/catalog/occasion via repos under RLS. Also exposes `resolveDbDraftContextInTx` so draft persistence can reuse the outer transaction. | Same repo composition with real auth. |
-| `lib/server/draft-generator/mock.server.ts` | `createMockDraftGenerator().generate(ctx)` builds a `MessageDraft` from `baseRecipe` + `applyInstruction` — pure data-driven heuristics. | A real `DraftGenerator` implementation backed by an LLM client. Same `DraftGenerator` interface from `lib/server/draft-generator/types.ts`. |
+| `lib/server/draft-generator/mock.server.ts` | `createMockDraftGenerator().generate(ctx)` builds a `MessageDraft` from `baseRecipe` + `applyInstruction` — pure data-driven heuristics. Also exports `deterministicRecipe(ctx)` for the LLM adapter to reuse for `attachedCard` + `quickActions`. | Kept as the always-available fallback (and as the deterministic recipe source) when `KEEPSAKE_DRAFT_SOURCE=mock`. |
+| `lib/server/draft-generator/index.server.ts` | `getDraftGenerator()` returns the configured generator; reads `KEEPSAKE_DRAFT_SOURCE` (`mock` default, `openai` opt-in), caches the constructed instance, and throws `DraftGeneratorError("misconfigured", …)` for unknown sources. Independent of `KEEPSAKE_DATA_SOURCE`. | Add more provider adapters here; route imports stay the same. |
+| `lib/server/draft-generator/openai.server.ts` | `createOpenAIDraftGenerator()` validates `KEEPSAKE_DRAFT_API_KEY` / `KEEPSAKE_DRAFT_API_BASE` / `KEEPSAKE_DRAFT_MODEL` at construction. `generate(ctx)` POSTs an OpenAI-compatible chat-completions request, expects a JSON object with the constrained MessageDraft fields, validates the tone against the union, and reuses `deterministicRecipe(ctx)` for the card + quick actions. Normalises every failure into `DraftGeneratorError("misconfigured" \| "unavailable" \| "malformed_response", …)`. | Swap for a streaming or provider-specific client without touching the route. |
 | `lib/server/delivery-send/index.server.ts` | Dispatches `enqueueDelivery(input)` to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. Returns a `SendBoundaryResult` discriminated union the route maps to HTTP status. | Real auth replaces `currentUserIdOrThrow()`; future Gmail send worker reads queued rows out-of-band. The route signature does not move. |
 | `lib/server/delivery-send/mock.server.ts` | Shared `validateRequest` (UUIDs + channel) and `enqueueMockDelivery` that returns a synthetic `QueuedDelivery`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/delivery-send/db.server.ts` | `enqueueDbDelivery` resolves the owner, opens one transaction, reuses `resolveDbDraftContextInTx` for person/occasion ownership, enforces the email sender precondition via `GmailAccountRepository.getPrimary`, looks up the latest draft, and calls `DeliveryRepository.enqueue`. No Gmail call; row inserted with `status='queued'` and `sent_at=NULL`. | Same orchestration with real auth; a future Gmail worker drains queued rows and updates status. |

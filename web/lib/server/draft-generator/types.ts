@@ -50,9 +50,23 @@ export interface Recipe {
 }
 
 /**
- * The single seam the route depends on. Today's implementation is the mock
- * generator; tomorrow's is an LLM client. Same signature; same return shape.
+ * The single seam the route depends on. Either the mock generator or an LLM
+ * client implements it; same signature, same return shape. `modelProvider`
+ * and `modelVersion` are folded into the prompt-cache hash so swapping
+ * providers invalidates cached drafts automatically.
  */
 export interface DraftGenerator {
+  readonly modelProvider: string;
+  readonly modelVersion: string;
   generate(ctx: DraftContext): Promise<MessageDraft>;
 }
+
+/**
+ * Kinds of failures the dispatcher / LLM adapter raise. The draft-service
+ * catches these and maps them to the route's HTTP error contract without
+ * leaking provider details to the client.
+ */
+export type DraftGeneratorErrorKind =
+  | "misconfigured"
+  | "unavailable"
+  | "malformed_response";

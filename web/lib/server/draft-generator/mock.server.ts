@@ -259,8 +259,13 @@ function applyInstruction(recipe: Recipe, ctx: DraftContext): { recipe: Recipe; 
  *
  * Stateless → safe to instantiate at module scope and reuse across requests.
  */
+export const MOCK_MODEL_PROVIDER = "mock";
+export const MOCK_MODEL_VERSION = "mock-draft-generator:v1";
+
 export function createMockDraftGenerator(): DraftGenerator {
   return {
+    modelProvider: MOCK_MODEL_PROVIDER,
+    modelVersion: MOCK_MODEL_VERSION,
     async generate(ctx: DraftContext): Promise<MessageDraft> {
       const base = baseRecipe(ctx);
       const { recipe, note } = applyInstruction(base, ctx);
@@ -279,4 +284,13 @@ export function createMockDraftGenerator(): DraftGenerator {
       };
     },
   };
+}
+
+/**
+ * Reusable deterministic recipe builder. The LLM adapter calls this to keep
+ * `attachedCard` and `quickActions` stable while the prose pieces (tone,
+ * subject, paragraphs, assistantNote) come from the provider.
+ */
+export function deterministicRecipe(ctx: DraftContext) {
+  return baseRecipe(ctx);
 }

@@ -2,7 +2,10 @@ import "server-only";
 
 import type { DraftRequest } from "@/lib/domain";
 import { resolveMockDraftContext } from "@/lib/server/draft-context/mock.server";
-import { createMockDraftGenerator } from "@/lib/server/draft-generator/mock.server";
+import {
+  DraftGeneratorError,
+  getDraftGenerator,
+} from "@/lib/server/draft-generator/index.server";
 import type {
   DraftLatestInput,
   DraftLatestResult,
@@ -10,8 +13,7 @@ import type {
   DraftVersionsInput,
   DraftVersionsResult,
 } from "./types";
-
-const draftGenerator = createMockDraftGenerator();
+import { generatorErrorToServiceResult } from "./generator-errors.server";
 
 export async function generateMockDraft(
   input: DraftRequest,
@@ -19,10 +21,16 @@ export async function generateMockDraft(
   const result = await resolveMockDraftContext(input);
   if (!result.ok) return result;
 
-  return {
-    ok: true,
-    draft: await draftGenerator.generate(result.ctx),
-  };
+  try {
+    const generator = getDraftGenerator();
+    return { ok: true, draft: await generator.generate(result.ctx) };
+  } catch (error) {
+    if (error instanceof DraftGeneratorError) {
+      return generatorErrorToServiceResult(error);
+    }
+    console.error(error);
+    return { ok: false, status: 500, error: "Draft generator is unavailable" };
+  }
 }
 
 export async function getLatestMockDraft(
