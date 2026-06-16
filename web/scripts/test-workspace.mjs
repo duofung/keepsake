@@ -110,6 +110,12 @@ try {
   check("no fake 'Email sent to' copy", !body.includes("Email sent to"));
   check("no fake 'On its way' copy", !body.includes("On its way to"));
   check("does not mention Gmail", !/gmail/i.test(body));
+  // P4-B save-status pill — initial SSR is idle, so the affordance copy
+  // must be present in the rendered HTML. This guards both the
+  // status="idle" path and the fact that the autosave indicator hasn't
+  // been quietly removed.
+  check("renders save-status affordance", body.includes("Edits save automatically"));
+  check("save-status idle marker present", body.includes('data-save-status="idle"'));
 } catch (error) {
   process.stdout.write(`harness error: ${error?.message ?? error}\n`);
   if (serverError) {

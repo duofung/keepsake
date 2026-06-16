@@ -3,6 +3,8 @@ import type { DraftRequest } from "@/lib/domain";
 import {
   generateDraft,
   getLatestDraft,
+  saveDraftEdit,
+  type DraftEditInput,
 } from "@/lib/server/draft-service/index.server";
 
 export const dynamic = "force-dynamic";
@@ -38,5 +40,24 @@ export async function POST(req: Request) {
   }
 
   // 3. Respond.
+  return NextResponse.json(result.draft);
+}
+
+export async function PATCH(req: Request) {
+  // Save user-edited subject / attachedCard onto a base draft as a new
+  // canonical version. The route stays thin: parse → delegate → JSON. All
+  // ownership and validation live in `draft-service`.
+  let body: DraftEditInput;
+  try {
+    body = (await req.json()) as DraftEditInput;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const result = await saveDraftEdit(body);
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
+  }
+
   return NextResponse.json(result.draft);
 }

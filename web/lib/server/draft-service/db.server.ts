@@ -13,12 +13,15 @@ import {
 } from "@/lib/server/draft-generator/index.server";
 import { transaction } from "@/lib/server/db/transaction.server";
 import type {
+  DraftEditInput,
+  DraftEditResult,
   DraftLatestInput,
   DraftLatestResult,
   DraftServiceResult,
   DraftVersionsInput,
   DraftVersionsResult,
 } from "./types";
+import { editMatchesBase, validateDraftEditInput } from "./edit-input";
 import { generatorErrorToServiceResult } from "./generator-errors.server";
 
 const PROMPT_HASH_VERSION = "message-drafts-prompt-hmac:v1";
@@ -74,7 +77,7 @@ function promptHashKey(): Buffer {
 function saveInputFromDraft(
   draft: import("@/lib/domain").MessageDraft,
   ctx: DraftContext,
-  hash: string,
+  hash: string | null,
   provider: string,
   modelVersion: string,
 ): MessageDraftSaveInput {
@@ -225,6 +228,78 @@ export async function getLatestDbDraft(
       ok: false,
       status: 500,
       error: "Draft context resolver is unavailable",
+    };
+  }
+}
+
+export async function saveDbDraftEdit(
+  input: DraftEditInput,
+): Promise<DraftEditResult> {
+  const invalid = validateDraftEditInput(input);
+  if (invalid) return invalid;
+
+  // Defend the parametrised SQL: the `id` column is `uuid` and Postgres will
+  // raise a syntax error on bad input. Treat anything that isn't a UUID as
+  // "not found" — the same response the route gives for unknown ids.
+  if (!UUID_RE.test(input.draftId)) {
+    return { ok: false, status: 404, error: "Draft not found" };
+  }
+
+  try {
+    const ownerId = currentUserIdOrThrow();
+
+    return await transaction(ownerId, async (tx) => {
+      const baseEntry = await draftRepository.getEditBaseById(
+        ownerId,
+        input.draftId,
+        tx,
+      );
+      if (!baseEntry) {
+        return { ok: false, status: 404, error: "Draft not found" };
+      }
+
+      const { draft: base, userInstruction, modelProvider, modelVersion } = baseEntry;
+
+      if (editMatchesBase(input, base)) {
+        return { ok: true, draft: base };
+      }
+
+      const saved = await draftRepository.save(
+        ownerId,
+        {
+          personId: base.personId,
+          occasionId: base.occasionId,
+          tone: base.tone,
+          toneLabel: base.toneLabel,
+          alternativeTones: base.alternativeTones,
+          subject: input.subject,
+          paragraphs: base.paragraphs,
+          attachedCard: input.attachedCard,
+          quickActions: base.quickActions,
+          assistantNote: base.assistantNote,
+          // Inherit provenance from the base so the lineage of which
+          // generator produced the underlying prose is preserved across
+          // user edits. Only the prompt-hash cache key is cleared — see
+          // below.
+          userInstruction,
+          modelProvider: modelProvider ?? undefined,
+          modelVersion: modelVersion ?? undefined,
+          // User-edited rows are no longer a pure prompt-hash cache product.
+          // Clearing the hash keeps prompt-hash lookups from ever returning
+          // an edited draft.
+          promptHash: null,
+        },
+        tx,
+      );
+
+      return { ok: true, draft: saved };
+    });
+  } catch (error) {
+    console.error(error);
+    return {
+      ok: false,
+      status: 500,
+      error: "Draft edit service is unavailable",
     };
   }
 }

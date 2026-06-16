@@ -26,6 +26,18 @@ async function postDraft(body) {
   return { status: res.status, body: json };
 }
 
+async function patchDraft(body) {
+  const res = await fetch(`${BASE}/api/drafts`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
 async function getLatestDraft({ personId, occasionId }) {
   const query = new URLSearchParams({ personId });
   if (occasionId) query.set("occasionId", occasionId);
@@ -189,6 +201,136 @@ try {
       "Aisha draft uses a Hari Raya greeting",
       /selamat hari raya/i.test(haystack),
     );
+  }
+
+  // 6. PATCH /api/drafts — user-edit persistence.
+  {
+    // 6a. Shape failures → 400.
+    {
+      const { status } = await patchDraft({});
+      check("PATCH missing fields -> 400", status === 400, `status=${status}`);
+    }
+    {
+      const { status } = await patchDraft({
+        draftId: "draft-anything",
+        subject: 42,
+        attachedCard: null,
+      });
+      check("PATCH non-string subject -> 400", status === 400, `status=${status}`);
+    }
+    {
+      const { status } = await patchDraft({
+        draftId: "draft-anything",
+        subject: "ok",
+        attachedCard: { styleLabel: "x" /* missing the rest */ },
+      });
+      check("PATCH malformed attachedCard -> 400", status === 400, `status=${status}`);
+    }
+
+    // 6b. Unknown draftId (mock store doesn't know this id) -> 404.
+    {
+      const { status, body } = await patchDraft({
+        draftId: "draft-does-not-exist-zzz",
+        subject: "Updated subject",
+        attachedCard: null,
+      });
+      check("PATCH unknown draftId -> 404", status === 404, `status=${status}`);
+      check("PATCH unknown error is generic", body?.error === "Draft not found");
+    }
+
+    // 6c. Seed a fresh draft to edit.
+    const { body: base } = await postDraft({
+      personId: "p-kira",
+      occasionId: null,
+      userInstruction: "",
+    });
+    check("seed Kira base draft -> 200", typeof base?.id === "string" && base.id.length > 0);
+    const baseId = base.id;
+    const baseSubject = base.subject;
+    const baseCard = base.attachedCard;
+
+    // 6d. No-op PATCH (same subject + same card) returns base — no new version.
+    {
+      const { status, body } = await patchDraft({
+        draftId: baseId,
+        subject: baseSubject,
+        attachedCard: baseCard,
+      });
+      check("PATCH no-op -> 200", status === 200);
+      check("PATCH no-op returns base id", body?.id === baseId);
+    }
+
+    // 6e. PATCH new subject creates a new canonical version and exposes it
+    //     to latest / versions reads.
+    const editedSubject = `${baseSubject} (edited)`;
+    let editedId;
+    {
+      const { status, body } = await patchDraft({
+        draftId: baseId,
+        subject: editedSubject,
+        attachedCard: baseCard,
+      });
+      check("PATCH new subject -> 200", status === 200);
+      check("PATCH new subject changes id", body?.id && body.id !== baseId);
+      check("PATCH new subject sets subject", body?.subject === editedSubject);
+      check("PATCH new subject preserves paragraphs",
+        Array.isArray(body?.paragraphs) && body.paragraphs.length === base.paragraphs.length);
+      check("PATCH new subject preserves tone", body?.tone === base.tone);
+      check("PATCH new subject preserves quickActions",
+        Array.isArray(body?.quickActions) && body.quickActions.length === base.quickActions.length);
+      editedId = body?.id;
+    }
+
+    // 6f. Mock latest read reflects the edited version.
+    {
+      const { status, body } = await getLatestDraft({ personId: "p-kira" });
+      check("mock latest after edit -> 200", status === 200, `status=${status}`);
+      check("mock latest reflects edited id", body?.id === editedId);
+      check("mock latest reflects edited subject", body?.subject === editedSubject);
+    }
+
+    // 6g. Mock versions read includes both base and edited (newest first).
+    {
+      const { status, body } = await getDraftVersions({
+        personId: "p-kira",
+        limit: 5,
+      });
+      check("mock versions after edit -> 200", status === 200);
+      const ids = (body?.drafts ?? []).map((d) => d.id);
+      check("mock versions includes edited", ids.includes(editedId));
+      check("mock versions includes base", ids.includes(baseId));
+      check("mock versions newest first (edited before base)",
+        ids.indexOf(editedId) < ids.indexOf(baseId));
+    }
+
+    // 6h. PATCH null attachedCard → card is null on the saved draft.
+    if (baseCard) {
+      const { status, body } = await patchDraft({
+        draftId: editedId,
+        subject: editedSubject,
+        attachedCard: null,
+      });
+      check("PATCH null attachedCard -> 200", status === 200);
+      check("PATCH null attachedCard removes card", body?.attachedCard === null);
+    }
+
+    // 6i. PATCH preserves the same MessageDraft shape — Workspace's
+    //     version chip rendering depends on tone/toneLabel/quickActions
+    //     being present even on edited rows. Provenance fields like
+    //     userInstruction / modelProvider are not exposed on the public
+    //     domain shape; the DB route smoke covers their persistence.
+    {
+      const { body } = await patchDraft({
+        draftId: baseId,
+        subject: `${baseSubject} (shape check)`,
+        attachedCard: baseCard,
+      });
+      check("PATCH preserves toneLabel", typeof body?.toneLabel === "string" && body.toneLabel.length > 0);
+      check("PATCH preserves quickActions shape",
+        Array.isArray(body?.quickActions) && body.quickActions.every((q) => (
+          typeof q?.label === "string" && typeof q?.prompt === "string" && typeof q?.iconHint === "string"
+        )));
+    }
   }
 } catch (err) {
   process.stdout.write(`harness error: ${err?.message ?? err}\n`);

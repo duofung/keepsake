@@ -31,12 +31,12 @@ Rules:
 | DB schema/RLS | Stable | Postgres schema, catalog seed, local dev fixtures, RLS, transaction helper. | Future migrations for real auth/session, reminders, send queue details. |
 | Crypto | Stable | AES-256-GCM envelope helper, AAD conventions, tests. | KMS/DEK wrapping hardening for production. |
 | People data | Stable read path | DB-backed people payload and repository reads. | People CRUD UI/API, imports, merge/archive semantics. |
-| Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. | Prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
+| Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence + user-edit versioning | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. `PATCH /api/drafts` persists Workspace subject + card edits as new canonical versions with `prompt_input_hash = NULL`. | Paragraph / tone editing, prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
 | Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
-| Email send | Stable enqueue boundary + Workspace wiring | `POST /api/deliveries` + `lib/server/delivery-send/*` enqueue queued rows with sender precondition (email) and ownership checks; Workspace `Send email` / `Mail as card` now call this boundary and surface queued/error state honestly. Returns 202 "queued/accepted"; no Gmail call yet. | Gmail send worker, status updates, webhooks, persisting Workspace client-local edits into the queued draft. |
+| Email send | Stable enqueue boundary + Workspace wiring + edit flush | `POST /api/deliveries` + `lib/server/delivery-send/*` enqueue queued rows with sender precondition (email) and ownership checks; Workspace `Send email` / `Mail as card` flush pending subject/card edits through `PATCH /api/drafts` before calling the queue, so the queued draft is always the version the user just saw. Returns 202 "queued/accepted"; no Gmail call yet. | Gmail send worker, status updates, webhooks. |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -228,9 +228,63 @@ Out of scope (still future slices):
 - No Gmail API send call. Queued rows wait for a worker that does not exist
   yet.
 - No worker / webhook / `markStatus` wiring.
-- No persistence of client-local Workspace edits (subject input, card
-  toggle). The queued draft is the latest server-saved draft for the
-  person/occasion pair.
+- No persistence of client-local Workspace edits — superseded by P4-B,
+  which now PATCHes subject + card edits into a new canonical draft version
+  before send.
+
+### P4-B. Workspace Draft Edit Persistence
+
+Status: done. Guarded by `pnpm test:drafts` (PATCH coverage in mock,
+including no-op suppression, null-card path, and latest/versions
+reflection) and `pnpm test:db:drafts-route` (same surface against DB
+under RLS). Workspace SSR check in `pnpm test:workspace` guards the
+save-status affordance.
+
+Goal: close the "I changed the subject / toggled the card but the queued
+delivery used the old draft" gap from P3.1, without expanding draft
+authorship beyond subject + card.
+
+Shipped:
+
+- `PATCH /api/drafts` with body `{ draftId, subject, attachedCard }`.
+  Route stays thin: parse → delegate → JSON. Mock and DB dispatchers live
+  behind the same seam.
+- Server is authoritative: the route accepts only `draftId` + the two
+  editable fields. `personId`, `occasionId`, tone, paragraphs,
+  `quickActions`, `assistantNote` are inherited from the base draft and
+  cannot be overridden from the client.
+- A successful edit inserts a NEW `message_drafts` row (DB) / records a
+  new version in the mock store. No in-place updates of the base row,
+  ever. Versions list and latest reads reflect the edit.
+- Version inflation is suppressed: if `(subject, attachedCard)` deep-equal
+  the base, the route returns the base draft without inserting.
+- Edited rows persist with `prompt_input_hash = NULL` so
+  `findByPromptHash` never returns user-edited content as a generator
+  cache hit. `MessageDraftSaveInput.promptHash` typed as `string | null`
+  to enforce this.
+- New `DraftRepository.getById(ownerId, draftId, tx?)` for owner-scoped
+  point lookups. Cross-owner and unknown ids both return `null`; the
+  service maps both to 404 without distinguishing.
+- Mock path keeps a process-local in-memory store
+  (`mock-store.server.ts`) so POST → PATCH → GET latest → GET versions
+  all round-trip within the same Node process.
+- Workspace autosaves subject (700ms debounce) and card toggle
+  (immediate). `queueDelivery` awaits a `flushDraftEdits()` call before
+  POSTing to `/api/deliveries`; a save failure aborts the send and
+  surfaces an error toast.
+- Workspace renders a small save-status affordance ("Edits save
+  automatically" / "Saving…" / "Saved" / "Could not save") that is
+  separate from the send-queue toast. `role="status"` + `aria-live`.
+
+Out of scope (still future slices):
+
+- No paragraph / tone editing. The body of the draft remains generator
+  output.
+- No Gmail send worker, webhook, or `markStatus`.
+- No cross-process mock persistence. The mock store is intentionally
+  per-process; production-shaped flows use DB mode.
+- No optimistic UI for the edited draft beyond the local subject/card
+  state already shown.
 
 ### P4-A. Real Draft Generator Runtime
 

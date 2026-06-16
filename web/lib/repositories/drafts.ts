@@ -30,6 +30,27 @@ export interface DraftRepository {
   ): Promise<MessageDraft | null>;
 
   /**
+   * Owner-scoped point lookup for `PATCH /api/drafts`. Returns the base
+   * draft plus the provenance columns (`userInstruction`, `modelProvider`,
+   * `modelVersion`) so the edited version can inherit them — keeping the
+   * lineage of `mock-draft-generator:v1` / `openai:gpt-4o-mini` etc.
+   * intact across user edits while `promptHash` becomes `NULL`.
+   *
+   * Returns `null` for both unknown ids AND cross-owner ids — the route
+   * maps both to 404 without distinguishing them.
+   */
+  getEditBaseById(
+    ownerId: OwnerId,
+    draftId: ID,
+    tx?: Tx,
+  ): Promise<{
+    readonly draft: MessageDraft;
+    readonly userInstruction: string;
+    readonly modelProvider: string | null;
+    readonly modelVersion: string | null;
+  } | null>;
+
+  /**
    * Most recent draft for a person + occasion pair. Used to restore the
    * Workspace state when the user navigates back to a person they were
    * already writing to.

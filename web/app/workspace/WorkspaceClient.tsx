@@ -17,6 +17,10 @@ import type {
   Relationship,
 } from "@/lib/domain";
 import { cardGradientByHint, nodeChipText, occasionIcon, toneIcon } from "@/lib/presentation";
+import {
+  DraftAutosaveController,
+  type SaveStatus,
+} from "@/lib/workspace/draft-autosave";
 
 type Msg = { who: "ai" | "me"; text: string };
 
@@ -56,10 +60,45 @@ export default function WorkspaceClient({
   const [toast, setToast] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const initialDraftKeyRef = useRef<string | null>(null);
+  // Single source of truth for autosave / flush / stale-response handling.
+  // Constructed lazily inside an effect so `setSaveStatus` etc. are
+  // captured exactly once and shared by the same controller across
+  // re-renders.
+  const autosaveRef = useRef<DraftAutosaveController | null>(null);
+  if (autosaveRef.current === null) {
+    autosaveRef.current = new DraftAutosaveController({
+      debounceMs: 700,
+      fetchPatch: async (body) => {
+        try {
+          const res = await fetch("/api/drafts", {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) return { status: res.status, draft: null };
+          const draft = (await res.json()) as MessageDraft;
+          return { status: 200, draft };
+        } catch {
+          return { status: 0, draft: null };
+        }
+      },
+      getActiveKey: () => initialDraftKeyRef.current,
+      setStatus: (status) => setSaveStatus(status),
+      applyServerVersion: (next) => {
+        setDraft((current) => (current ? { ...current, ...next } : next));
+        setSelectedVersionId(next.id);
+        setVersions((prev) => {
+          const filtered = prev.filter((v) => v.id !== next.id);
+          return [next, ...filtered].slice(0, 5);
+        });
+      },
+    });
+  }
 
   const person: Person | null = useMemo(
     () => payload.people.find((p) => p.id === personId) ?? null,
@@ -88,6 +127,7 @@ export default function WorkspaceClient({
     setSelectedVersionId(next.id);
     setSubject(next.subject);
     setHasCard(!!next.attachedCard);
+    autosaveRef.current?.setBaseline(next, initialDraftKeyRef.current);
     setLog((prev) => {
       const note = { who: "ai" as const, text: next.assistantNote };
       return logMode === "replace" ? [note] : [...prev, note];
@@ -224,7 +264,25 @@ export default function WorkspaceClient({
     }
   }, []);
 
-  useEffect(() => () => clearTimers(), [clearTimers]);
+  useEffect(() => () => {
+    clearTimers();
+    autosaveRef.current?.dispose();
+  }, [clearTimers]);
+
+  // Debounced subject autosave. Card toggles bypass this effect and call
+  // `schedule(..., immediate=true)` directly from their click handlers so
+  // their behaviour is deterministic; re-running this effect when
+  // `hasCard` changes would double-fire the save.
+  useEffect(() => {
+    const controller = autosaveRef.current;
+    if (!controller) return;
+    const baseline = controller.getBaseline();
+    if (!baseline) return;
+    if (subject === baseline.subject) return;
+    const card = hasCard ? controller.getCardSnapshot() : null;
+    controller.schedule({ subject, attachedCard: card }, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subject]);
 
   const showToast = useCallback(
     (text: string, tone: "success" | "error", dismissMs: number) => {
@@ -240,6 +298,20 @@ export default function WorkspaceClient({
       if (!person || sending) return;
       const recipient = person.name;
       setSending(true);
+      // Persist whatever the user has typed/toggled before handing the
+      // delivery off. The send boundary references the latest server-side
+      // draft, so a missed save would queue an out-of-date version. If the
+      // save fails, do not queue — the save-status pill explains why.
+      const saved = (await autosaveRef.current?.flush()) ?? false;
+      if (!saved) {
+        setSending(false);
+        showToast(
+          "Could not save your latest edits. Try again before sending.",
+          "error",
+          5000,
+        );
+        return;
+      }
       const body: DeliveryRequest = {
         personId: person.id,
         occasionId: occasion?.id ?? null,
@@ -283,6 +355,7 @@ export default function WorkspaceClient({
     setSelectedVersionId(version.id);
     setSubject(version.subject);
     setHasCard(!!version.attachedCard);
+    autosaveRef.current?.setBaseline(version, initialDraftKeyRef.current);
     setLog((prev) => [...prev, { who: "ai", text: "Restored that version." }]);
   }
 
@@ -570,7 +643,11 @@ export default function WorkspaceClient({
                     </div>
                   </div>
                   <button
-                    onClick={() => setHasCard(false)}
+                    onClick={() => {
+                      if (draft?.attachedCard) autosaveRef.current?.rememberCard(draft.attachedCard);
+                      setHasCard(false);
+                      autosaveRef.current?.schedule({ subject, attachedCard: null }, true);
+                    }}
                     style={{
                       width: 24, height: 24, borderRadius: "50%", background: "#fff",
                       display: "flex", alignItems: "center", justifyContent: "center",
@@ -582,7 +659,11 @@ export default function WorkspaceClient({
                 </div>
               ) : (
                 <button
-                  onClick={() => setHasCard(true)}
+                  onClick={() => {
+                    setHasCard(true);
+                    const restored = autosaveRef.current?.getCardSnapshot() ?? null;
+                    if (restored) autosaveRef.current?.schedule({ subject, attachedCard: restored }, true);
+                  }}
                   style={{
                     display: "flex", alignItems: "center", gap: 9, padding: 11,
                     border: "0.5px dashed #D4DBE2", borderRadius: 12, cursor: "pointer",
@@ -609,9 +690,24 @@ export default function WorkspaceClient({
             padding: "12px 22px", borderTop: "0.5px solid var(--line)",
             display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between",
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--gray-3)" }}>
-              <span style={{ fontSize: 14 }}><Icon name="i-clock" /></span>
-              Send now, or schedule for the day
+            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11.5, color: "var(--gray-3)" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 14 }}><Icon name="i-clock" /></span>
+                Send now, or schedule for the day
+              </span>
+              <span
+                role="status"
+                aria-live="polite"
+                data-save-status={saveStatus}
+                style={{
+                  fontSize: 11,
+                  color: saveStatus === "error" ? "#C5544C" : "var(--gray-3)",
+                  fontStyle: saveStatus === "idle" ? "italic" : "normal",
+                  opacity: saveStatus === "idle" ? 0.7 : 1,
+                }}
+              >
+                {saveStatusLabel(saveStatus)}
+              </span>
             </div>
             <div style={{ display: "flex", gap: 9 }}>
               <button
@@ -679,6 +775,19 @@ function renderParagraph({ text, highlights = [] }: DraftParagraph): React.React
     parts = next;
   }
   return <>{parts.map((node, i) => <span key={i}>{node}</span>)}</>;
+}
+
+function saveStatusLabel(status: "idle" | "saving" | "saved" | "error"): string {
+  switch (status) {
+    case "saving":
+      return "Saving…";
+    case "saved":
+      return "Saved";
+    case "error":
+      return "Could not save";
+    default:
+      return "Edits save automatically";
+  }
 }
 
 const GENERIC_SEND_ERROR =

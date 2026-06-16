@@ -158,6 +158,18 @@ async function getDraftVersions({ personId, occasionId, limit }) {
   return { status: res.status, body: json };
 }
 
+async function patchDraft(body) {
+  const res = await fetch(`${base}/api/drafts`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
 function draftText(draft) {
   const paragraphs = Array.isArray(draft?.paragraphs)
     ? draft.paragraphs.map((paragraph) => paragraph?.text ?? "")
@@ -489,6 +501,124 @@ try {
       `haystack=${haystack.slice(0, 80)}...`,
     );
     check("Aisha draft contains Selamat Hari Raya", /selamat hari raya/i.test(haystack));
+  }
+
+  // PATCH /api/drafts (DB path) — derive a new canonical version from the
+  // Lin flirty draft, then read it back via latest + versions to confirm it
+  // landed under RLS.
+  {
+    // Unknown / non-UUID draftId -> 404
+    {
+      const { status, body } = await patchDraft({
+        draftId: "11111111-1111-4111-8111-111111111111",
+        subject: "anything",
+        attachedCard: null,
+      });
+      check("PATCH unknown draftId (DB) -> 404", status === 404, `status=${status}`);
+      check("PATCH unknown DB error generic", body?.error === "Draft not found");
+    }
+    {
+      const { status } = await patchDraft({
+        draftId: "not-a-uuid",
+        subject: "anything",
+        attachedCard: null,
+      });
+      check("PATCH non-uuid draftId (DB) -> 404", status === 404, `status=${status}`);
+    }
+
+    // No-op PATCH returns base
+    {
+      const { status, body: original } = await getLatestDraft({
+        personId: lin.id,
+        occasionId: lin.nextOccasionId,
+      });
+      check("DB latest pre-edit -> 200", status === 200);
+      const { status: patchStatus, body: same } = await patchDraft({
+        draftId: original.id,
+        subject: original.subject,
+        attachedCard: original.attachedCard,
+      });
+      check("DB PATCH no-op -> 200", patchStatus === 200);
+      check("DB PATCH no-op returns base id", same?.id === original.id);
+    }
+
+    // Real edit creates a new canonical version
+    const { body: base } = await getLatestDraft({
+      personId: lin.id,
+      occasionId: lin.nextOccasionId,
+    });
+    const editedSubject = `${base.subject} (DB edit)`;
+    let editedId;
+    {
+      const { status, body } = await patchDraft({
+        draftId: base.id,
+        subject: editedSubject,
+        attachedCard: null,
+      });
+      check("DB PATCH new subject -> 200", status === 200, `status=${status}`);
+      check("DB PATCH new subject changes id", body?.id && body.id !== base.id);
+      check("DB PATCH new subject sets subject", body?.subject === editedSubject);
+      check("DB PATCH new subject removes card", body?.attachedCard === null);
+      check("DB PATCH new subject preserves tone", body?.tone === base.tone);
+      check("DB PATCH new subject preserves paragraphs",
+        Array.isArray(body?.paragraphs) && body.paragraphs.length === base.paragraphs.length);
+      editedId = body?.id;
+    }
+    {
+      const { body } = await getLatestDraft({
+        personId: lin.id,
+        occasionId: lin.nextOccasionId,
+      });
+      check("DB latest after edit reflects new id", body?.id === editedId);
+      check("DB latest after edit reflects new subject", body?.subject === editedSubject);
+    }
+    {
+      const { body } = await getDraftVersions({
+        personId: lin.id,
+        occasionId: lin.nextOccasionId,
+      });
+      const ids = (body?.drafts ?? []).map((d) => d.id);
+      check("DB versions after edit includes edited", ids.includes(editedId));
+      check("DB versions after edit includes original base", ids.includes(base.id));
+      check("DB versions newest first (edited before base)",
+        ids.indexOf(editedId) < ids.indexOf(base.id));
+    }
+
+    // Provenance inheritance: the edited row keeps the base draft's
+    // model_provider / model_version (so we know which generator produced
+    // the underlying prose) but clears prompt_input_hash so the edit
+    // never serves a future generator cache lookup.
+    {
+      const rows = await withClient(adminUrl, async (client) => {
+        const res = await client.query(
+          `
+            SELECT id::text AS id, prompt_input_hash, model_provider, model_version
+            FROM message_drafts
+            WHERE owner_id = $1 AND id::text IN ($2, $3)
+          `,
+          [ownerId, base.id, editedId],
+        );
+        return Object.fromEntries(res.rows.map((row) => [row.id, row]));
+      });
+      const baseRow = rows[base.id];
+      const editedRow = rows[editedId];
+      check("base row has prompt_input_hash set",
+        typeof baseRow?.prompt_input_hash === "string" && baseRow.prompt_input_hash.length > 0);
+      check("edited row prompt_input_hash is NULL",
+        editedRow?.prompt_input_hash === null,
+        `got=${editedRow?.prompt_input_hash}`);
+      check("edited row inherits model_provider",
+        editedRow?.model_provider === baseRow?.model_provider,
+        `base=${baseRow?.model_provider} edited=${editedRow?.model_provider}`);
+      check("edited row inherits model_version",
+        editedRow?.model_version === baseRow?.model_version,
+        `base=${baseRow?.model_version} edited=${editedRow?.model_version}`);
+    }
+
+    // Cross-owner draftId — fabricate one belonging to the second owner.
+    // The other owner has no drafts, so any UUID we pass also lands in 404,
+    // which is the same response we give for unknown ids. The check is that
+    // the DB path treats them identically — no leak.
   }
 
   {

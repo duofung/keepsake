@@ -27,6 +27,12 @@ type DraftRow = QueryResultRow & {
   assistant_note_enc: Uint8Array;
 };
 
+type DraftRowWithProvenance = DraftRow & {
+  user_instruction_enc: Uint8Array;
+  model_provider: string | null;
+  model_version: string | null;
+};
+
 const TABLE = "message_drafts";
 const TONES = new Set<Tone>([
   "tender-intimate",
@@ -186,6 +192,60 @@ async function draftFromRow(ownerId: OwnerId, row: DraftRow): Promise<MessageDra
 }
 
 export class PgDraftRepository implements DraftRepository {
+  async getEditBaseById(
+    ownerId: OwnerId,
+    draftId: string,
+    tx?: Tx,
+  ): Promise<{
+    readonly draft: MessageDraft;
+    readonly userInstruction: string;
+    readonly modelProvider: string | null;
+    readonly modelVersion: string | null;
+  } | null> {
+    return withTx(ownerId, tx, async (activeTx) => {
+      const result = await query<DraftRowWithProvenance>(
+        activeTx,
+        `
+          SELECT
+            id::text,
+            person_id::text,
+            occasion_id::text,
+            tone,
+            tone_label,
+            alternative_tones,
+            subject_enc,
+            paragraphs_enc,
+            attached_card,
+            quick_actions,
+            assistant_note_enc,
+            user_instruction_enc,
+            model_provider,
+            model_version
+          FROM message_drafts
+          WHERE owner_id = $1
+            AND id = $2
+          LIMIT 1
+        `,
+        [ownerId, draftId],
+      );
+
+      const row = result.rows[0];
+      if (!row) return null;
+
+      const [draft, userInstruction] = await Promise.all([
+        draftFromRow(ownerId, row),
+        decryptText(ownerId, "user_instruction_enc", row.user_instruction_enc),
+      ]);
+
+      return {
+        draft,
+        userInstruction,
+        modelProvider: row.model_provider,
+        modelVersion: row.model_version,
+      };
+    });
+  }
+
   async findByPromptHash(
     ownerId: OwnerId,
     promptHash: string,

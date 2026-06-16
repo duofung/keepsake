@@ -1,9 +1,21 @@
 import "server-only";
 
 import type { DraftRequest } from "@/lib/domain";
-import { generateDbDraft, getLatestDbDraft, listDbDraftVersions } from "./db.server";
-import { generateMockDraft, getLatestMockDraft, listMockDraftVersions } from "./mock.server";
+import {
+  generateDbDraft,
+  getLatestDbDraft,
+  listDbDraftVersions,
+  saveDbDraftEdit,
+} from "./db.server";
+import {
+  generateMockDraft,
+  getLatestMockDraft,
+  listMockDraftVersions,
+  saveMockDraftEdit,
+} from "./mock.server";
 import type {
+  DraftEditInput,
+  DraftEditResult,
   DraftLatestInput,
   DraftLatestResult,
   DraftServiceResult,
@@ -44,7 +56,17 @@ export async function listDraftVersions(
     : listMockDraftVersions(input);
 }
 
+export async function saveDraftEdit(
+  input: DraftEditInput,
+): Promise<DraftEditResult> {
+  return draftDataSource() === "db"
+    ? saveDbDraftEdit(input)
+    : saveMockDraftEdit(input);
+}
+
 export type {
+  DraftEditInput,
+  DraftEditResult,
   DraftLatestInput,
   DraftLatestResult,
   DraftServiceResult,

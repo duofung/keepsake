@@ -113,7 +113,13 @@ export interface MessageDraftSaveInput {
   quickActions: DraftQuickAction[];
   assistantNote: string;
   userInstruction: string;
-  promptHash: string;
+  /**
+   * HMAC over the resolved prompt inputs. `null` when the row is a user-edited
+   * derivative of a generated draft (PATCH /api/drafts): the row is no longer
+   * a pure cache product of those inputs and must not participate in
+   * prompt-hash cache lookups.
+   */
+  promptHash: string | null;
   modelProvider?: string;   // 'mock' today; 'anthropic' later
   modelVersion?: string;
 }

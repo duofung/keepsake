@@ -15,6 +15,7 @@
     "test:gmail-disconnect": "node scripts/test-gmail-disconnect-route.mjs",
     "test:deliveries": "node scripts/test-deliveries-route.mjs",
     "test:draft-generator": "node scripts/test-draft-generator.mjs",
+    "test:draft-autosave": "node scripts/test-draft-autosave.mjs",
     "test:crypto": "node scripts/test-crypto-envelope.mjs",
     "test:dev-env": "node scripts/test-dev-env.mjs",
     "test:env-init": "node scripts/test-env-init.mjs",
@@ -39,7 +40,7 @@
     "test:history": "node scripts/test-history.mjs",
     "test:profile": "node scripts/test-profile.mjs",
     "test:workspace": "node scripts/test-workspace.mjs",
-    "test": "pnpm test:boundaries && pnpm test:dev-env && pnpm test:env-init && pnpm test:auth && pnpm test:oauth && pnpm test:gmail-disconnect && pnpm test:home && pnpm test:people && pnpm test:drafts && pnpm test:draft-generator && pnpm test:deliveries && pnpm test:history && pnpm test:profile && pnpm test:workspace"
+    "test": "pnpm test:boundaries && pnpm test:dev-env && pnpm test:env-init && pnpm test:auth && pnpm test:oauth && pnpm test:gmail-disconnect && pnpm test:home && pnpm test:people && pnpm test:drafts && pnpm test:draft-autosave && pnpm test:draft-generator && pnpm test:deliveries && pnpm test:history && pnpm test:profile && pnpm test:workspace"
   },
   "dependencies": {
     "next": "^15.0.3",
