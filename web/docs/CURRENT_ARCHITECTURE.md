@@ -263,6 +263,61 @@ to mock by default and to the DB implementation only when
 
 ---
 
+### Future: command channel platform
+
+WhatsApp, Telegram, Slack, and similar tools should be treated as command
+channels rather than mobile clients. They let users ask for relationship
+follow-ups, request drafts, revise tone, and receive reminders from the phone,
+while the web app remains the execution workspace for editing, account setup,
+and final send confirmation.
+
+```text
+WhatsApp webhook ┐
+Telegram webhook ├─ provider adapter ──> CommandEvent ──> command router
+Slack events     ┘                                             │
+                                                               ├─ people/follow-up query
+                                                               ├─ draft-service intent
+                                                               ├─ reminder intent
+                                                               └─ Workspace deep link
+```
+
+The planned normalized event boundary:
+
+```ts
+type CommandEvent = {
+  provider: "whatsapp" | "telegram" | "slack";
+  externalUserId: string;
+  externalConversationId: string;
+  messageId: string;
+  text: string;
+  receivedAt: string;
+};
+```
+
+Provider adapters should verify webhook signatures/secrets, normalize payloads,
+dedupe provider message ids, and delegate to a shared command router. The
+router should call owner-explicit server seams such as future
+`getPeoplePayloadForOwner(ownerId)` or `generateDraftForOwner(ownerId, input)`.
+It should not call `app/api/*` over HTTP, `lib/mock.ts`, `draft-generator`
+directly, Gmail OAuth/account repositories, crypto helpers, or worker-only
+delivery methods.
+
+Channel identity is not auth. A Telegram chat/user id, WhatsApp `wa_id`/phone,
+or Slack user/team/channel id should link to a Keepsake `owner_id` through
+separate channel account tables, not columns on `users`. Webhook routes do not
+have web sessions and must not call `currentUserIdOrThrow()`.
+
+WhatsApp is the important long-term command inbox for user tasks and
+notifications, but it has provider policy constraints: inbound user messages
+can be answered as service messages during the customer-service window, while
+proactive reminders outside that window require template-aware notification
+logic. Telegram is easier for early bot UX because deep links, private chat
+ids, inline keyboards, and callback queries are straightforward. Slack can use
+the same command router later through slash commands, app mentions, and
+interactive buttons.
+
+---
+
 ## 2. Layer responsibilities
 
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |

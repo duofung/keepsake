@@ -37,6 +37,7 @@ Rules:
 | Gmail OAuth | Contract only | OAuth route stubs, tests, repository contract + runtime token storage. | Real OAuth start/callback, state cookies, token exchange, account upsert. |
 | Sending account UI | Placeholder | Profile/Workspace can display connected/not connected shape. | Connect/disconnect behavior, expired state repair flow. |
 | Email send | Not started | No accidental send behavior. | Send endpoint, queue, Gmail send worker, delivery status updates. |
+| Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
 
@@ -192,6 +193,96 @@ In scope:
 Out of scope:
 
 - Bulk imports, contact sync, calendar sync.
+
+### P6. Command Channel Platform
+
+Goal: make WhatsApp, Telegram, Slack, and similar chat tools act as
+natural-language command inputs and notification surfaces without building a
+native mobile app.
+
+Owner: Codex implementation agent after the architecture brief is reviewed.
+
+Product stance:
+
+- Channels are command surfaces, not full clients.
+- Web remains the execution workspace for final send, detailed editing,
+  account setup, and high-risk confirmation.
+- WhatsApp is especially important for user tasks and notifications:
+  "recently, what relationships need follow-up?" or "help me write Helen a
+  congratulatory email for her promotion."
+- Telegram and Slack should reuse the same core command router through channel
+  adapters, not duplicate business logic.
+
+Core abstraction:
+
+```ts
+type CommandEvent = {
+  provider: "whatsapp" | "telegram" | "slack";
+  externalUserId: string;
+  externalConversationId: string;
+  messageId: string;
+  text: string;
+  receivedAt: string;
+};
+
+type CommandResponse =
+  | { kind: "text"; text: string }
+  | { kind: "choices"; text: string; actions: CommandAction[] }
+  | { kind: "workspace_link"; text: string; href: string };
+```
+
+In scope:
+
+- Channel identity/linking model: provider account maps to Keepsake owner; it
+  is not auth itself.
+- Normalized inbound command event and outbound response contracts.
+- Provider adapters for WhatsApp, Telegram, and Slack over a shared command
+  router.
+- First intents:
+  - relationship follow-up query
+  - create draft from instruction
+  - revise draft tone/length
+  - open Workspace link
+- Notification path for reminders, with provider-specific rules.
+
+Out of scope:
+
+- No native mobile app.
+- No automatic final send from chat by default.
+- No provider-specific business logic in the command router.
+- No channel adapter should call `app/api/*` over HTTP, `lib/mock.ts`,
+  `draft-generator` directly, Gmail OAuth/account repositories, crypto helpers,
+  or worker-only delivery methods.
+
+Initial implementation sequence:
+
+1. Write `docs/COMMAND_CHANNELS.md` architecture brief.
+2. Add type-only `lib/server/channels/types.ts`.
+3. Add `lib/server/channels/command-router.server.ts` skeleton with no LLM.
+4. Add WhatsApp webhook contract stub and smoke tests.
+5. Add Telegram webhook/link contract stub and smoke tests.
+6. Add Slack event/slash-command contract stub and smoke tests.
+7. Implement first read-only intent: "what relationships need follow-up?"
+8. Implement "create draft from command" by calling owner-explicit draft
+   service internals and returning a Workspace link.
+
+Required validation:
+
+- Boundary tests proving channel adapters call server seams, not app routes or
+  mocks.
+- Route smoke tests for provider verification failure, malformed payloads,
+  duplicate events, unknown channel account, and valid text command.
+- DB tests later for channel account RLS, hashed provider lookup, encrypted raw
+  identifiers, one-time link tokens, and event idempotency.
+
+CC review focus:
+
+- Channels are provider adapters; command logic is shared.
+- Webhooks do not use web session auth or `currentUserIdOrThrow()`.
+- Provider identities are not written onto `users`.
+- WhatsApp policy constraints are respected: inbound user tasks can be answered
+  inside the customer-service window; proactive reminders require templates or
+  a template-aware notification layer.
 
 ## Cross-Cutting Backlog
 

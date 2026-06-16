@@ -135,6 +135,68 @@ Future implementation:
 - Update account state so `CurrentUser.sendingAccount` can be filled from the
   primary Gmail account.
 
+## Future Command Channel Webhooks
+
+WhatsApp, Telegram, Slack, and similar tools are planned as command inputs and
+notification surfaces, not full mobile clients. The web app remains the
+execution surface for final send, detailed editing, account setup, and high-risk
+confirmation.
+
+Provider webhook routes will be provider-specific:
+
+```text
+POST /api/webhooks/whatsapp
+POST /api/webhooks/telegram
+POST /api/webhooks/slack
+```
+
+Current implementation:
+
+- Not implemented.
+
+Future implementation:
+
+- Verify provider signatures or secrets in the route.
+- Normalize provider payloads into a shared server-side command event:
+
+```ts
+type CommandEvent = {
+  provider: "whatsapp" | "telegram" | "slack";
+  externalUserId: string;
+  externalConversationId: string;
+  messageId: string;
+  text: string;
+  receivedAt: string;
+};
+```
+
+- Delegate to a shared command router.
+- Return provider-appropriate acknowledgements quickly so webhook retries do
+  not create duplicate work.
+- Dedupe by provider message/update id.
+
+Command channel responses should normalize to:
+
+```ts
+type CommandResponse =
+  | { kind: "text"; text: string }
+  | { kind: "choices"; text: string; actions: CommandAction[] }
+  | { kind: "workspace_link"; text: string; href: string };
+```
+
+Important boundaries:
+
+- Webhook routes do not use web session auth and must not call
+  `currentUserIdOrThrow()`.
+- Provider identities map to a Keepsake owner through channel account/link
+  tables, not columns on `users`.
+- Channel adapters should not call `app/api/*` over HTTP, `lib/mock.ts`,
+  `draft-generator` directly, Gmail OAuth/account repositories, crypto helpers,
+  or worker-only delivery methods.
+- WhatsApp inbound user tasks can be answered inside the provider customer
+  service window; proactive reminders must use template-aware notification
+  logic.
+
 ## POST /api/drafts
 
 Generates or revises an email draft.

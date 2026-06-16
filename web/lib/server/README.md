@@ -46,6 +46,12 @@ lib/server/
 │   └── current-user.server.ts
 ├── oauth/                    ← current: provider route contracts only
 │   └── gmail.server.ts
+├── channels/                 ← future: WhatsApp/Telegram/Slack command router
+│   ├── types.ts
+│   ├── command-router.server.ts
+│   ├── whatsapp.server.ts
+│   ├── telegram.server.ts
+│   └── slack.server.ts
 ├── db/                       ← current: request-path transaction helper
 │   └── transaction.server.ts
 └── crypto/                   ← current: dev AES-GCM envelope helper
@@ -77,10 +83,15 @@ sit next to the implementation. Runtime implementations keep the suffix.
 5. **No HTTP types past `auth/`.** Only `current-user` knows about
    `Request`, cookies, or session tokens; everyone else takes resolved
    values.
-6. **No domain logic in generic services.** Tone selection, prompt wording,
+6. **Provider webhooks are not web auth.** Future WhatsApp/Telegram/Slack
+   webhook routes must verify provider signatures/secrets and resolve channel
+   account ownership through channel services. They must not call
+   `currentUserIdOrThrow()`, because there is no web session on an inbound
+   provider webhook.
+7. **No domain logic in generic services.** Tone selection, prompt wording,
    relationship-aware fallbacks — those live in the route handler or in
    `draft-generator`. `db/`, `crypto/`, `auth/` stay generic.
-7. **Stateless calls.** Services may hold a connection pool or a KMS
+8. **Stateless calls.** Services may hold a connection pool or a KMS
    client at module scope, but a single request must not mutate
    module-level state observable to the next request.
 
@@ -108,6 +119,7 @@ small on purpose.
 | `draft-context/mock.server.ts` | `draft-context/index.server.ts` | validates ids and builds `DraftContext` from mock finders | Deleted when DB is the only source | `pnpm test:drafts`, `pnpm test:boundaries` |
 | `draft-context/db.server.ts` | `draft-context/index.server.ts`, `draft-service/db.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + People/Catalog repo hydration; also exposes an in-transaction resolver for draft persistence | Same repository composition with real auth | `pnpm test:db:drafts-route` |
 | `draft-generator/mock.server.ts` | `POST /api/drafts` | mock recipe + instruction rewrite to `MessageDraft` | LLM-backed `DraftGenerator` implementation | `pnpm test:drafts` |
+| `channels/*` | Future WhatsApp/Telegram/Slack webhooks | Not implemented. Planned shared command router over provider adapters. | Provider-specific webhook verification + normalized `CommandEvent` + shared command router that calls owner-explicit server seams. Web remains the final execution workspace. | future `pnpm test:channels` |
 
 The `app/` tree should not import `lib/mock.ts` directly. If a page needs
 server data, make the page a server component and call one of these helpers,
