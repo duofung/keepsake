@@ -15,9 +15,9 @@ dispatches to mocks or repositories/services without leaking that choice into
 
 ## What lives here
 
-Each service is a single concern. The seams, dev auth owner resolver, crypto
-envelope helper, and DB transaction helper that exist now are real code;
-production auth/KMS remain later passes.
+Each service is a single concern. The seams, dev auth current-user resolver,
+crypto envelope helper, and DB transaction helper that exist now are real
+code; production auth/KMS remain later passes.
 
 ```
 lib/server/
@@ -91,6 +91,7 @@ small on purpose.
 
 | Seam | Called by | Today | Future replacement | Guard |
 |---|---|---|---|---|
+| `auth/current-user.server.ts` | `/api/session`, DB-backed server helpers | Resolves `{ id, email, name, initials }` from `DEV_OWNER_*`; `currentUserIdOrThrow()` remains the owner-id compatibility helper | Cookie/session/OAuth verification inside this file only; route and DB helper contracts stay the same | `pnpm test:auth`, `pnpm test:boundaries` |
 | `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
@@ -190,27 +191,43 @@ provider webhook, or delivery worker path is wired by the drafts cache work.
 
 ### `auth/current-user.server.ts`
 
-**Purpose.** Resolve the authenticated `OwnerId`. Today this is a dev-only
-seam that reads `DEV_OWNER_ID`; later it becomes the only place in the
-codebase that reads cookies / `Authorization` headers and verifies session
-tokens.
+**Purpose.** Resolve the authenticated current user and owner id. Today this
+is a dev-only seam that reads `DEV_OWNER_ID`, `DEV_OWNER_EMAIL`, and
+`DEV_OWNER_NAME`; later it becomes the only place in the codebase that reads
+cookies / `Authorization` headers and verifies session or OAuth tokens.
 
-**Likely surface.**
+**Current surface.**
 
 ```ts
-export function currentUserId(req: Request): Promise<OwnerId | null>;
-export function currentUserIdOrThrow(req: Request): Promise<OwnerId>;
-                                       // throws RepoError { kind: "permission-denied" }
-                                       // — route handler maps to 401
+export interface CurrentUser {
+  readonly id: OwnerId;
+  readonly email: string;
+  readonly name: string;
+  readonly initials: string;
+}
+
+export class AuthError extends Error {
+  readonly kind: "unauthenticated" | "misconfigured";
+}
+
+export function currentUserOrThrow(): CurrentUser;
+export function currentUserIdOrThrow(): OwnerId;
 ```
 
-**Where called.** Every `app/api/*/route.ts`, exactly once per request,
-as the first line of the handler. Server components that need the user
-call it via a thin Server Action wrapper.
+`DEV_OWNER_ID` must be a UUID, `DEV_OWNER_EMAIL` must pass the basic email
+guard, and `DEV_OWNER_NAME` must be non-empty. Missing `DEV_OWNER_ID` throws
+`AuthError { kind: "unauthenticated" }`; invalid owner env throws
+`AuthError { kind: "misconfigured" }`.
+
+**Where called.** DB-backed server helpers continue to call
+`currentUserIdOrThrow()` so their signatures stay compatible. The public
+session route, `GET /api/session`, calls `currentUserOrThrow()` and returns
+`{ user }`, mapping unauthenticated to 401 and misconfigured env to 500. It
+does not touch DB, cookies, OAuth, Gmail, or write paths.
 
 **Provider choices to make later.** NextAuth / Auth.js vs. roll-our-own
 session table vs. Clerk / Supabase Auth. Decision deferred; the
-`Promise<OwnerId | null>` surface is provider-agnostic.
+route contract stays provider-agnostic because only this auth service changes.
 
 ### `db/transaction.server.ts`
 

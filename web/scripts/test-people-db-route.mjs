@@ -198,6 +198,8 @@ try {
       DATABASE_URL: appUrl,
       DEV_ENCRYPTION_KEY_BASE64: encryptionKey,
       DEV_OWNER_ID: ownerId,
+      DEV_OWNER_EMAIL: "route-fixture@example.test",
+      DEV_OWNER_NAME: "Route Fixture",
       KEEPSAKE_DATA_SOURCE: "db",
       NEXT_TELEMETRY_DISABLED: "1",
     },
