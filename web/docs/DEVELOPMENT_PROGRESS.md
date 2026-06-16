@@ -36,7 +36,7 @@ Rules:
 | Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
-| Email send | Stable enqueue boundary | `POST /api/deliveries` + `lib/server/delivery-send/*` enqueue queued rows with sender precondition (email) and ownership checks. Returns 202 "queued/accepted"; no Gmail call yet. | Gmail send worker, status updates, webhooks, Workspace send button wiring. |
+| Email send | Stable enqueue boundary + Workspace wiring | `POST /api/deliveries` + `lib/server/delivery-send/*` enqueue queued rows with sender precondition (email) and ownership checks; Workspace `Send email` / `Mail as card` now call this boundary and surface queued/error state honestly. Returns 202 "queued/accepted"; no Gmail call yet. | Gmail send worker, status updates, webhooks, persisting Workspace client-local edits into the queued draft. |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -193,9 +193,44 @@ Out of scope (next slices):
 - No Gmail API send call until the queue and delivery model are reviewed.
 - No worker that drains queued rows.
 - No webhook or status update.
-- No Workspace send button wiring (current compose has client-local editing
-  state with no clear "which draft is the canonical one" contract — needs its
-  own slice).
+
+### P3.1 Workspace Queue Wiring
+
+Status: done. Guarded by `pnpm test:workspace` (regression copy guards) and
+the existing `pnpm test:deliveries` route smokes.
+
+Goal: connect the Workspace `Send email` / `Mail as card` buttons to the
+real `POST /api/deliveries` queue boundary instead of the local fake-toast
+shortcut.
+
+Shipped:
+
+- `app/workspace/WorkspaceClient.tsx` now POSTs to `/api/deliveries` with
+  `{ personId, occasionId, channel }`, disables both send buttons during the
+  request (avoiding double-submit), and toasts a queue-honest success ("Queued
+  email for Lin." / "Queued printed card for Lin.") before navigating Home.
+- Server-side errors map to user-facing copy without inventing new fields:
+  401 → re-sign-in prompt; 404 `person_not_found` / `occasion_not_found` →
+  go-back hint; 409 `sender_not_connected` → Profile Connect prompt; 409
+  `sender_expired` → Profile Reconnect prompt; 409 `no_draft` → regenerate
+  prompt; other 4xx/5xx → generic "Could not queue this delivery." Error
+  toasts use `role="alert"` and the `i-alert` icon, success uses
+  `role="status"` and `i-check`.
+- Success copy is deliberately neutral ("Queued …") and never says "sent",
+  because:
+  1. the Gmail worker is not wired (the row is queued, not sent), and
+  2. Workspace's compose view holds client-local subject/card edits that are
+     not persisted into the queued draft — claiming "sent" would lie about
+     either condition.
+
+Out of scope (still future slices):
+
+- No Gmail API send call. Queued rows wait for a worker that does not exist
+  yet.
+- No worker / webhook / `markStatus` wiring.
+- No persistence of client-local Workspace edits (subject input, card
+  toggle). The queued draft is the latest server-saved draft for the
+  person/occasion pair.
 
 ### P4. Real Draft Generator
 

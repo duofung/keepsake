@@ -5,7 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
 import type {
+  Channel,
   CultureRule,
+  DeliveryRequest,
   DraftParagraph,
   DraftRequest,
   MessageDraft,
@@ -51,8 +53,11 @@ export default function WorkspaceClient({
   const [hasCard, setHasCard] = useState(true);
   const [log, setLog] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const initialDraftKeyRef = useRef<string | null>(null);
 
@@ -208,14 +213,69 @@ export default function WorkspaceClient({
     void requestDraft(text);
   }
 
-  function send(mode: "email" | "post") {
-    if (!person) return;
-    const txt = mode === "email"
-      ? `Email sent to ${person.name}. I'll keep watching over the rest.`
-      : `On its way to ${person.name}'s door as a printed card.`;
-    setToast(txt);
-    setTimeout(() => { setToast(null); router.push("/"); }, 2000);
-  }
+  const clearTimers = useCallback(() => {
+    if (navTimerRef.current) {
+      clearTimeout(navTimerRef.current);
+      navTimerRef.current = null;
+    }
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearTimers(), [clearTimers]);
+
+  const showToast = useCallback(
+    (text: string, tone: "success" | "error", dismissMs: number) => {
+      clearTimers();
+      setToast({ text, tone });
+      toastTimerRef.current = setTimeout(() => setToast(null), dismissMs);
+    },
+    [clearTimers],
+  );
+
+  const queueDelivery = useCallback(
+    async (channel: Channel) => {
+      if (!person || sending) return;
+      const recipient = person.name;
+      setSending(true);
+      const body: DeliveryRequest = {
+        personId: person.id,
+        occasionId: occasion?.id ?? null,
+        channel,
+      };
+      try {
+        const res = await fetch("/api/deliveries", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        if (res.status === 202) {
+          // Success copy says "queued" — not "sent" or "delivered" — because
+          // the worker is not wired yet and any local subject/card edits in
+          // this view are not persisted into the queued draft.
+          const text = channel === "email"
+            ? `Queued email for ${recipient}.`
+            : `Queued printed card for ${recipient}.`;
+          showToast(text, "success", 2000);
+          navTimerRef.current = setTimeout(() => router.push("/"), 1600);
+          return;
+        }
+
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: string; code?: string }
+          | null;
+        showToast(mapSendError(res.status, payload?.code), "error", 5000);
+      } catch {
+        showToast(GENERIC_SEND_ERROR, "error", 5000);
+      } finally {
+        setSending(false);
+      }
+    },
+    [person, occasion, sending, router, showToast],
+  );
 
   function showVersion(version: MessageDraft) {
     if ((selectedVersionId ?? draft?.id) === version.id) return;
@@ -554,11 +614,21 @@ export default function WorkspaceClient({
               Send now, or schedule for the day
             </div>
             <div style={{ display: "flex", gap: 9 }}>
-              <button onClick={() => send("post")} style={btnSmGhost}>
-                <Icon name="i-truck" /> Mail as card
+              <button
+                onClick={() => void queueDelivery("post")}
+                disabled={sending}
+                aria-busy={sending}
+                style={{ ...btnSmGhost, opacity: sending ? 0.55 : 1, cursor: sending ? "default" : "pointer" }}
+              >
+                <Icon name="i-truck" /> {sending ? "Queuing…" : "Mail as card"}
               </button>
-              <button onClick={() => send("email")} style={btnSmPri}>
-                <Icon name="i-send" /> Send email
+              <button
+                onClick={() => void queueDelivery("email")}
+                disabled={sending}
+                aria-busy={sending}
+                style={{ ...btnSmPri, opacity: sending ? 0.55 : 1, cursor: sending ? "default" : "pointer" }}
+              >
+                <Icon name="i-send" /> {sending ? "Queuing…" : "Send email"}
               </button>
             </div>
           </div>
@@ -566,14 +636,25 @@ export default function WorkspaceClient({
       </div>
 
       {toast && (
-        <div style={{
-          position: "absolute", left: "50%", bottom: 24,
-          transform: "translateX(-50%)", background: "var(--ink)", color: "#fff",
-          padding: "13px 22px", borderRadius: 13, fontSize: 13,
-          display: "flex", alignItems: "center", gap: 9, zIndex: 50,
-        }}>
-          <span style={{ fontSize: 17, color: "#7FD99F" }}><Icon name="i-check" /></span>
-          <span>{toast}</span>
+        <div
+          role={toast.tone === "error" ? "alert" : "status"}
+          style={{
+            position: "absolute", left: "50%", bottom: 24,
+            transform: "translateX(-50%)", background: "var(--ink)", color: "#fff",
+            padding: "13px 22px", borderRadius: 13, fontSize: 13,
+            display: "flex", alignItems: "center", gap: 9, zIndex: 50,
+            maxWidth: 460,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 17,
+              color: toast.tone === "error" ? "#F08D8D" : "#7FD99F",
+            }}
+          >
+            <Icon name={toast.tone === "error" ? "i-alert" : "i-check"} />
+          </span>
+          <span>{toast.text}</span>
         </div>
       )}
     </div>
@@ -598,6 +679,35 @@ function renderParagraph({ text, highlights = [] }: DraftParagraph): React.React
     parts = next;
   }
   return <>{parts.map((node, i) => <span key={i}>{node}</span>)}</>;
+}
+
+const GENERIC_SEND_ERROR =
+  "Could not queue this delivery. Please try again.";
+
+function mapSendError(status: number, code: string | undefined): string {
+  if (status === 401) {
+    return "Your session has expired. Please sign in again.";
+  }
+  if (status === 404) {
+    if (code === "person_not_found") {
+      return "This recipient is no longer available. Go back and pick someone else.";
+    }
+    if (code === "occasion_not_found") {
+      return "This occasion is no longer available. Go back and reload.";
+    }
+  }
+  if (status === 409) {
+    if (code === "sender_not_connected") {
+      return "Connect Gmail from Profile before sending an email.";
+    }
+    if (code === "sender_expired") {
+      return "Your Gmail connection has expired. Reconnect from Profile.";
+    }
+    if (code === "no_draft") {
+      return "Generate or refresh the draft before sending.";
+    }
+  }
+  return GENERIC_SEND_ERROR;
 }
 
 const btnSmPri: React.CSSProperties = {

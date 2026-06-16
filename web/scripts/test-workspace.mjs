@@ -103,6 +103,12 @@ try {
   check("renders missing sender configuration", body.includes("no sender configured"));
   check("keeps tone controls", body.includes("Tone:"));
   check("keeps send footer", body.includes("Send now, or schedule for the day"));
+  check("renders Send email button", body.includes("Send email"));
+  check("renders Mail as card button", body.includes("Mail as card"));
+  // Guard against re-introducing the old fake-success copy: the queue
+  // boundary now returns 202 "queued", and the UI must reflect that.
+  check("no fake 'Email sent to' copy", !body.includes("Email sent to"));
+  check("no fake 'On its way' copy", !body.includes("On its way to"));
   check("does not mention Gmail", !/gmail/i.test(body));
 } catch (error) {
   process.stdout.write(`harness error: ${error?.message ?? error}\n`);

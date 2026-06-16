@@ -337,6 +337,18 @@ The `QueuedDelivery` shape is deliberately distinct from the sent-history
 `Delivery` shape so we never force-fit a queued row (no `sent_at`) into a
 history row.
 
+Workspace consumes this boundary: `app/workspace/WorkspaceClient.tsx` POSTs
+to `/api/deliveries` when the user clicks `Send email` / `Mail as card`,
+disables both buttons during the request, and surfaces queue-honest copy
+("Queued email for Lin." — never "sent"/"delivered"). 401 / 404
+`person_not_found` / 404 `occasion_not_found` / 409 `sender_not_connected` /
+409 `sender_expired` / 409 `no_draft` each map to user-facing prompts without
+inventing new server fields. There is still no send worker, so the queued
+row sits in `deliveries` with `sent_at IS NULL` until a future slice drains
+it. Workspace's client-local subject/card edits are NOT persisted into the
+queued draft — the queued row references the latest server-saved
+`message_drafts` row for the person/occasion pair.
+
 ---
 
 ### Future: command channel platform
@@ -398,7 +410,7 @@ interactive buttons.
 
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
-| Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts`; History calls the delivery-history dispatcher. | yes (Workspace draft fetches) | via server helper when DB mode is enabled | no |
+| Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts` and now POSTs the send buttons to `/api/deliveries` for queue-boundary enqueue; History calls the delivery-history dispatcher. | yes (Workspace draft fetches + delivery enqueue) | via server helper when DB mode is enabled | no |
 | API routes | `app/api/session/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` still uses the mock generator for POST and has DB latest/version read paths for GET; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail. | yes | people + draft persistence/cache/latest/version reads, gmail-account read for sender precondition, delivery enqueue in DB mode only | no |
 | Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts`, mock seam for generation | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; draft generation remains mock-backed; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | no (mock generator only) |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
