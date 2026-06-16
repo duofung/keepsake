@@ -22,11 +22,12 @@
     "test:db:drafts-route": "node scripts/test-drafts-db-route.mjs",
     "test:db:deliveries": "node scripts/test-deliveries-repository.mjs",
     "test:db:history-route": "node scripts/test-history-db-route.mjs",
+    "test:home": "node scripts/test-home.mjs",
     "test:drafts": "node scripts/test-drafts.mjs",
     "test:people": "node scripts/test-people.mjs",
     "test:history": "node scripts/test-history.mjs",
     "test:profile": "node scripts/test-profile.mjs",
-    "test": "pnpm test:boundaries && pnpm test:auth && pnpm test:people && pnpm test:drafts && pnpm test:history && pnpm test:profile"
+    "test": "pnpm test:boundaries && pnpm test:auth && pnpm test:home && pnpm test:people && pnpm test:drafts && pnpm test:history && pnpm test:profile"
   },
   "dependencies": {
     "next": "^15.0.3",

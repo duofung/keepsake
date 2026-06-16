@@ -1,10 +1,13 @@
 import Link from "next/link";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
+import { currentUserOrThrow } from "@/lib/server/auth/current-user.server";
 import { getPeoplePayload } from "@/lib/server/people-payload/index.server";
 import { nodeChipText, urgencyLevel } from "@/lib/presentation";
 
 const SOON_WINDOW_DAYS = 30;
+
+export const dynamic = "force-dynamic";
 
 const metaColor: Record<string, string> = {
   soon: "var(--blue-deep)",
@@ -13,7 +16,10 @@ const metaColor: Record<string, string> = {
 };
 
 export default async function HomePage() {
-  const { people, occasions } = await getPeoplePayload();
+  const [user, { people, occasions }] = await Promise.all([
+    currentUserOrThrow(),
+    getPeoplePayload(),
+  ]);
   const occasionById = (id: string | null | undefined) =>
     id ? occasions.find((o) => o.id === id) : undefined;
 
@@ -29,7 +35,7 @@ export default async function HomePage() {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 22 }}>
         <div>
           <h1 style={{ fontSize: 19, fontWeight: 600, color: "var(--ink-2)", letterSpacing: "-0.01em" }}>
-            Good evening, Arthur
+            Good evening, {user.name}
           </h1>
           <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
             Watching over {peopleCount} {peopleCount === 1 ? "person" : "people"} · {datesComingUp} {datesComingUp === 1 ? "date" : "dates"} coming up

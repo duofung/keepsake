@@ -232,7 +232,7 @@ to mock by default and to the DB implementation only when
 
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
-| Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; History calls the delivery-history dispatcher; Workspace fetches `/api/people`, `/api/drafts`, and `/api/drafts/versions` at runtime; on first open it restores the latest saved draft before generating a new initial draft, then shows a compact DB-backed version strip when multiple saved drafts exist. Profile keeps static settings sections but reads current user identity from the auth seam. | yes (client fetch in Workspace) | via server helper when DB mode is enabled | no |
+| Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home and Profile read current user identity from the auth seam; History calls the delivery-history dispatcher; Workspace fetches `/api/people`, `/api/drafts`, and `/api/drafts/versions` at runtime; on first open it restores the latest saved draft before generating a new initial draft, then shows a compact DB-backed version strip when multiple saved drafts exist. | yes (client fetch in Workspace) | via server helper when DB mode is enabled | no |
 | API routes | `app/api/session/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` still uses the mock generator for POST and has DB latest/version read paths for GET. | yes | people + draft persistence/cache/latest/version reads in DB mode only; `/api/session` never touches DB | no |
 | Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts`, mock seam for generation | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; people payload, drafts, draft context, and delivery history are DB-capable runtime verticals; draft generation remains mock-backed. | no | yes in DB mode | no (mock generator only) |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
@@ -240,7 +240,7 @@ to mock by default and to the DB implementation only when
 | Presentation | `lib/presentation.ts` | Maps `OccasionKind`/`Tone`/`Channel` → icon names, gradients, chip text. UI only. | no | no | no |
 | Repository implementations | `lib/repositories/catalog.server.ts`, `lib/repositories/people.server.ts`, `lib/repositories/drafts.server.ts`, `lib/repositories/deliveries.server.ts` | Postgres implementations for catalog, people/occasion reads, message draft persistence/cache, and delivery history reads; people writes and send/webhook/worker methods are intentionally not implemented yet. | no | yes | no |
 | DB scripts | `db/schema.sql`, `db/seed_catalog.sql`, `scripts/seed-dev-fixtures.mjs` | Postgres 17 schema + catalog seed + encrypted local-dev fixture seed. | no | yes (manual/dev) | no |
-| Smoke tests | `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, DB Docker tests | Default `pnpm test` covers auth/session plus mock HTTP/page contracts, including Profile identity rendering from the auth seam. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed `/api/people`, `/api/drafts`, and `/history`. | yes (HTTP/page smoke) | DB suite only | no |
+| Smoke tests | `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-home.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, DB Docker tests | Default `pnpm test` covers auth/session plus mock HTTP/page contracts, including Home and Profile identity rendering from the auth seam. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed `/api/people`, `/api/drafts`, and `/history`. | yes (HTTP/page smoke) | DB suite only | no |
 
 ---
 
@@ -256,11 +256,13 @@ PR/agent prompt before touching.
 2. **`GET /api/people` response shape** = `PeoplePayload`. Covered by
    `pnpm test:people` (15 assertions).
 3. **Current-user shape** = `{ id, email, name, initials }`. `GET /api/session`
-   returns it as `{ user }`, and `app/profile/page.tsx` renders the same shape
-   through the server auth helper.
+   returns it as `{ user }`; `app/page.tsx` renders `name` in the greeting,
+   and `app/profile/page.tsx` renders the same shape through the server auth
+   helper.
    The route calls only `auth/current-user`, maps missing auth to 401, and
    maps invalid dev env to 500. It is the public contract that real auth will
-   preserve. Covered by `pnpm test:auth` and `pnpm test:profile`.
+   preserve. Covered by `pnpm test:auth`, `pnpm test:home`, and
+   `pnpm test:profile`.
 4. **`POST /api/drafts` request shape** = `{ personId, occasionId, userInstruction }`,
    nothing else. Anything that smells like "let the client name a
    relationship / culture / tone override" violates the server-authoritative
@@ -296,7 +298,7 @@ These seams are the only places that move when the back end goes real.
 
 | Seam | What it does today | What replaces it |
 |---|---|---|
-| `lib/server/auth/current-user.server.ts` | Resolves `{ id, email, name, initials }` and `OwnerId` from validated `DEV_OWNER_*` env. This is the only owner resolver; DB helpers keep calling `currentUserIdOrThrow()`, while `/api/session` and Profile call `currentUserOrThrow()`. | Real session cookie / OAuth verification inside this module only. `/api/session` keeps returning `{ user }`; Profile keeps rendering the same identity shape; DB helper call sites keep their owner-id contract. |
+| `lib/server/auth/current-user.server.ts` | Resolves `{ id, email, name, initials }` and `OwnerId` from validated `DEV_OWNER_*` env. This is the only owner resolver; DB helpers keep calling `currentUserIdOrThrow()`, while `/api/session`, Home, and Profile call `currentUserOrThrow()`. | Real session cookie / OAuth verification inside this module only. `/api/session` keeps returning `{ user }`; Home and Profile keep rendering the same identity shape; DB helper call sites keep their owner-id contract. |
 | `lib/server/people-payload/index.server.ts` | Dispatches to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. | Later auth replaces `DEV_OWNER_ID`; route/page imports stay the same. |
 | `lib/server/people-payload/mock.server.ts` | `getMockPeoplePayload()` reads `peoplePayload()` from `lib/mock.ts`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/people-payload/db.server.ts` | `getDbPeoplePayload()` resolves dev owner, opens transaction, calls `PeopleRepository.listWithRelations(ownerId)`. | Real auth replaces `auth/current-user.server.ts`; repository call remains. |
@@ -319,7 +321,7 @@ The route handlers do not move.
 
 | Current module | Future replacement | What should NOT change | Tests guarding it |
 |---|---|---|---|
-| `lib/server/auth/current-user.server.ts` | Real auth-backed current user resolver | `currentUserIdOrThrow(): OwnerId`; `currentUserOrThrow()` returning `{ id, email, name, initials }`; typed unauthenticated vs misconfigured errors | `pnpm test:auth`, `pnpm test:profile`, `pnpm test:boundaries` |
+| `lib/server/auth/current-user.server.ts` | Real auth-backed current user resolver | `currentUserIdOrThrow(): OwnerId`; `currentUserOrThrow()` returning `{ id, email, name, initials }`; typed unauthenticated vs misconfigured errors | `pnpm test:auth`, `pnpm test:home`, `pnpm test:profile`, `pnpm test:boundaries` |
 | `app/api/session/route.ts` | Unchanged route contract over real auth | Thin shape: call auth service → return `{ user }`; 401 for missing auth; 500 for invalid server auth config; no DB/cookies/OAuth/Gmail writes in the route | `pnpm test:auth` |
 | `lib/server/people-payload/index.server.ts` | Keep as dispatcher until mock can be deleted | `getPeoplePayload()` signature; `GET /api/people` returning `PeoplePayload` | `pnpm test:people`, `pnpm test:db:people-route` |
 | `lib/server/people-payload/db.server.ts` | Real auth-backed owner resolution instead of `DEV_OWNER_ID` | Repository call and `PeoplePayload` shape | `pnpm test:db:people-route` |
