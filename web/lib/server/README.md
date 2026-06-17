@@ -35,6 +35,12 @@ lib/server/
 │   ├── mock.server.ts        ← current: validates + synthetic QueuedDelivery
 │   ├── db.server.ts          ← current: validate → ownership → sender → latest draft → enqueue
 │   └── types.ts              ← SendBoundaryResult contract
+├── delivery-worker/
+│   ├── index.server.ts                ← current: processNextQueuedEmail() dispatcher
+│   ├── db.server.ts                   ← current: claim/hydrate/finalise across 3 worker tx
+│   ├── mock.server.ts                 ← current: always returns nothing_to_do
+│   ├── gmail-transport.server.ts      ← current: native-fetch Gmail send + token refresh
+│   └── types.ts                       ← WorkerResult / WorkerFailureReason
 ├── draft-context/
 │   ├── index.server.ts       ← current: mock/db dispatcher
 │   ├── mock.server.ts        ← current: mock fallback
@@ -125,7 +131,10 @@ small on purpose.
 | `delivery-history/db.server.ts` | `delivery-history/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `DeliveryRepository.listByMonth(ownerId, { limit: 50 })`; read-only History DB mode | Same repository read with real auth; send/enqueue/webhook/worker remain separate future paths | `pnpm test:db:deliveries`, `pnpm test:db:history-route` |
 | `delivery-send/index.server.ts` | `POST /api/deliveries` | Dispatches `enqueueDelivery(input)` by `KEEPSAKE_DATA_SOURCE` and returns a `SendBoundaryResult` discriminated union the route maps to HTTP status. The route is a queue boundary — no Gmail call, no status mutation. | Real auth replaces `currentUserIdOrThrow()`; a future Gmail send worker drains queued rows out-of-band. | `pnpm test:deliveries`, `pnpm test:db:deliveries-route`, `pnpm test:boundaries` |
 | `delivery-send/mock.server.ts` | `delivery-send/index.server.ts` | Shared `validateRequest` (UUID + channel guards) plus `enqueueMockDelivery` returning a synthetic `QueuedDelivery`. | Deleted when DB is the only source. | `pnpm test:deliveries`, `pnpm test:boundaries` |
-| `delivery-send/db.server.ts` | `delivery-send/index.server.ts` | `currentUserIdOrThrow()` + one `transaction(ownerId)` for `resolveDbDraftContextInTx` (ownership), `GmailAccountRepository.getPrimary` (email-only sender precondition), `DraftRepository.getLatestFor` (no-draft check), and `DeliveryRepository.enqueue` (status=queued, sent_at=NULL, encrypted recipient_*). | Same orchestration with real auth; future Gmail worker reads queued rows separately. | `pnpm test:db:deliveries-route` |
+| `delivery-send/db.server.ts` | `delivery-send/index.server.ts` | `currentUserIdOrThrow()` + one `transaction(ownerId)` for `resolveDbDraftContextInTx` (ownership), `GmailAccountRepository.getPrimary` (email-only sender precondition), `DraftRepository.getLatestFor` (no-draft check), and `DeliveryRepository.enqueue` (status=queued, sent_at=NULL, encrypted recipient_*). | Same orchestration with real auth; the worker now drains queued rows (see below). | `pnpm test:db:deliveries-route` |
+| `delivery-worker/index.server.ts` | `pnpm worker:run`; future cron | `processNextQueuedEmail()` dispatches to mock (returns `nothing_to_do`) or DB based on `KEEPSAKE_DATA_SOURCE`. One queued email per tick. | Future cron / daemon wraps repeated calls; route handlers still don't import this seam. | `pnpm test:delivery-worker`, `pnpm test:db:delivery-worker` |
+| `delivery-worker/db.server.ts` | `delivery-worker/index.server.ts` | Three `workerTransaction` blocks: (1) `DeliveryRepository.nextQueued(1)` + `markStatus(id, 'sending')` to claim; (2) `DraftRepository.getEditBaseById` + `GmailAccountRepository.getSendingCredentials` to hydrate; (3) `markStatus(id, 'sent', providerMessageId)` or `markStatus(id, 'failed')`. On `token_invalid`, also `markExpired(gmail_account)`. No DB lock held across Gmail HTTP. | A future reaper / cron handles "stuck sending" rows; retry queue is its own slice. | `pnpm test:db:delivery-worker` |
+| `delivery-worker/gmail-transport.server.ts` | `delivery-worker/db.server.ts` | Native `fetch` Gmail transport: `POST GOOGLE_TOKEN_ENDPOINT` for refresh→access, then `POST KEEPSAKE_GMAIL_API_BASE /gmail/v1/users/me/messages/send` with `raw=base64url(plain-text MIME)`. Per-delivery failures normalise into `GmailTransportError` (`token_invalid` / `gmail_send_error` / `transport_error`); a global env miss (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) is a deployment problem, not a delivery problem — it throws `WorkerMisconfiguredError` from `assertGmailTransportConfig()` and surfaces to operators as `WorkerResult.status === "misconfigured"` WITHOUT touching the queue. Endpoints env-overridable for tests. | Swap for a streaming or service-account adapter without touching the worker. | `pnpm test:delivery-worker`, `pnpm test:db:delivery-worker` |
 | `draft-service/index.server.ts` | `GET /api/drafts`, `POST /api/drafts`, `PATCH /api/drafts`, `GET /api/drafts/versions` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db`. PATCH delegates to `saveDraftEdit` on the same dispatcher. | Same route seam with real auth/LLM behind it | `pnpm test:drafts`, `pnpm test:db:drafts-route`, `pnpm test:boundaries` |
 | `draft-service/mock.server.ts` | `draft-service/index.server.ts` | Mock POST + PATCH + latest + versions, all backed by the process-local `mock-store.server.ts`. POSTed drafts and PATCH-edited versions round-trip across the same Node process. | Deleted when DB is the only source | `pnpm test:drafts`, `pnpm test:boundaries` |
 | `draft-service/db.server.ts` | `draft-service/index.server.ts` | `currentUserIdOrThrow()` + one `transaction(ownerId)` for DB context, prompt hash lookup, generation on miss, and `DraftRepository.save` on POST; same transaction + context validation + `DraftRepository.getLatestFor` on GET latest restore; context validation + `DraftRepository.listForPerson` for version history; `DraftRepository.getById` + `DraftRepository.save` (with `promptHash = NULL`) for PATCH. Cross-owner / unknown / non-UUID draftIds all return 404 without distinguishing. | Same orchestration with real auth and a future LLM generator | `pnpm test:db:drafts-repository`, `pnpm test:db:drafts-route` |
@@ -271,13 +280,16 @@ transaction and returns decrypted `Delivery[]` rows from
 enqueue, send workers, provider webhooks, and status updates are not wired to
 the app yet.
 
-`DeliveryRepository` now has two runtime methods: `listByMonth` (History
-read) and `enqueue` (send-boundary write). `enqueue` inserts a row with
-`status='queued'`, `sent_at=NULL`, and encrypted recipient columns; it does
-not call Gmail. The worker surface (`markStatus`, `findByProviderMessageId`,
-`nextQueued`) still throws `not implemented` in the Postgres
-implementation — no Gmail send, status update, provider webhook, or
-delivery worker drain is wired yet.
+`DeliveryRepository` now has runtime implementations for every method in
+the interface: `listByMonth` (History read), `enqueue` (queue boundary),
+plus the worker-only `nextQueued` (FOR UPDATE SKIP LOCKED queued email
+rows, with decrypted recipient fields), `markStatus` (idempotent +
+monotonic UPDATE — sets `sent_at` on first `sent`, COALESCEs
+`provider_message_id`), and `findByProviderMessageId` (webhook ingest
+ready, no consumer wired yet). The worker plumbing requires a connection
+with `BYPASSRLS` — `KEEPSAKE_WORKER_DATABASE_URL` defaults to
+`DATABASE_URL`. There is no retry queue, webhook route, cron, or
+stuck-`sending` reaper in this slice; those remain future work.
 
 ### Service contracts
 

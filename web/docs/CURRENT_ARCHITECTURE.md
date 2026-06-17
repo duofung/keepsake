@@ -415,13 +415,105 @@ body. The queued receipt that comes back to the client does NOT echo the
 recipient email; the route only confirms "queued, with this draft id".
 
 The route is the queue boundary: it accepts a request to send and persists a
-`queued` row, but does not call Gmail and does not drain the queue. Email
-channel requires a `connected` primary Gmail account; post channel skips the
-sender check entirely. The thin route only does parse → auth → delegate →
-JSON; all ownership, sender, and draft preconditions live behind the seam.
-The `QueuedDelivery` shape is deliberately distinct from the sent-history
+`queued` row, but does not call Gmail itself. Email channel requires a
+`connected` primary Gmail account; post channel skips the sender check
+entirely. The thin route only does parse → auth → delegate → JSON; all
+ownership, sender, and draft preconditions live behind the seam. The
+`QueuedDelivery` shape is deliberately distinct from the sent-history
 `Delivery` shape so we never force-fit a queued row (no `sent_at`) into a
-history row.
+history row. Draining the queue is the worker's job (see below).
+
+### Delivery worker: queued → sent / failed
+
+```
+operator                  server
+  │                         │
+  │  pnpm worker:run        │   one-shot manual entry
+  ├────────────────────────►│
+  │                         │  scripts/run-delivery-worker.mjs
+  │                         │      │
+  │                         │      ▼
+  │                         │  lib/server/delivery-worker/index.server.ts
+  │                         │      │  processNextQueuedEmail()
+  │                         │      ├─ KEEPSAKE_DATA_SOURCE unset/mock
+  │                         │      │    ▼  → { status: "nothing_to_do" }
+  │                         │      │
+  │                         │      └─ KEEPSAKE_DATA_SOURCE=db
+  │                         │           ▼
+  │                         │         delivery-worker/db.server.ts
+  │                         │           │
+  │                         │           │  assertGmailTransportConfig()  ← pre-claim
+  │                         │           │    missing GOOGLE_CLIENT_ID/_SECRET
+  │                         │           │      → { status: "misconfigured", missing }
+  │                         │           │        NO DB write, queue intact
+  │                         │           │
+  │                         │           │  Tx 1 (workerTransaction):
+  │                         │           │   DeliveryRepository.nextQueued(1, tx)
+  │                         │           │     SELECT FOR UPDATE SKIP LOCKED
+  │                         │           │     WHERE status='queued' AND channel='email'
+  │                         │           │     ORDER BY scheduled_for NULLS FIRST, created_at, id
+  │                         │           │   markStatus(id, 'sending', tx)   ← claim
+  │                         │           │   COMMIT
+  │                         │           │
+  │                         │           │  Tx 2 (workerTransaction, read-only):
+  │                         │           │   DraftRepository.getEditBaseById  (draft.subject + paragraphs)
+  │                         │           │   GmailAccountRepository.getSendingCredentials
+  │                         │           │     → null / status != connected → mark failed
+  │                         │           │
+  │                         │           │  Gmail HTTP (no DB lock held):
+  │                         │           │   delivery-worker/gmail-transport.server.ts
+  │                         │           │     POST GOOGLE_TOKEN_ENDPOINT (refresh → access)
+  │                         │           │     POST KEEPSAKE_GMAIL_API_BASE /gmail/v1/.../messages/send
+  │                         │           │       raw = base64url(plain-text MIME)
+  │                         │           │
+  │                         │           │  Tx 3 (workerTransaction):
+  │                         │           │   markStatus(id, 'sent', providerMessageId, tx)
+  │                         │           │       OR markStatus(id, 'failed', null, tx)
+  │                         │           │   on token_invalid: also markExpired(gmail_account)
+  │                         │           ▼
+  │  ◄── JSON result ───────┤    WorkerResult:
+  │                         │      { status: "nothing_to_do" }
+  │                         │      | { status: "sent",   deliveryId, providerMessageId: string }
+  │                         │      | { status: "failed", deliveryId, reason, detail? }
+  │                         │      | { status: "misconfigured", missing: string[] }
+```
+
+Concurrent workers can't double-send the same row: `nextQueued` uses
+`SELECT FOR UPDATE SKIP LOCKED`, and the claim transaction flips the row
+to `status='sending'` before committing — subsequent `nextQueued` calls
+filter to `status='queued'` and never see it again. Crash between Tx 2
+and Tx 3 leaves the row stuck in `sending`; there is no reaper or retry
+queue today, so operators handle that manually. `markStatus` is
+idempotent (no-op on re-call with the same status; `sent_at` and
+`provider_message_id` are monotonic). The Gmail send path is strict
+about the canonical message id: a 2xx response without an `id` field is
+normalised to `transport_error` and the delivery is marked `failed` —
+we refuse to mark a delivery `sent` without an id we can later reconcile
+against webhooks. `WorkerResult.sent.providerMessageId` is therefore
+always a non-empty string. This slice only supports the `email` channel;
+post-channel rows stay queued indefinitely.
+
+**Worker-level misconfiguration never burns the queue.**
+`assertGmailTransportConfig()` runs BEFORE the claim transaction; if
+`GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` is missing, the worker
+returns `{ status: "misconfigured", missing }` without claiming or
+mutating any row. This separates deployment problems (the operator
+fixes env) from per-delivery failures (the operator investigates that
+one row).
+
+Status lifecycle (post P5-A):
+
+```
+queued ──claim──► sending ──Gmail OK──► sent ──webhook──► delivered ──open──► opened
+                     │
+                     └─Gmail / token error──► failed
+```
+
+Out of scope this slice (deferred to later P-checkpoints): webhook
+ingest (`provider_message_id` is captured but `findByProviderMessageId`
+is implemented for future use), retry / backoff, cron / daemon, batch
+draining, post-channel worker, HTML email, attachments, threaded
+replies.
 
 Workspace consumes this boundary: `app/workspace/WorkspaceClient.tsx` POSTs
 to `/api/deliveries` when the user clicks `Send email` / `Mail as card`,

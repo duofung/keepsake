@@ -151,7 +151,13 @@ export interface MessageDraft {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type Channel = "email" | "post";
-export type DeliveryStatus = "queued" | "sent" | "delivered" | "opened";
+export type DeliveryStatus =
+  | "queued"
+  | "sending"   // worker claimed the row and is calling Gmail
+  | "sent"
+  | "delivered"
+  | "opened"
+  | "failed";   // terminal worker failure (no retry queue today)
 
 export interface Delivery {
   id: ID;

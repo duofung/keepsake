@@ -16,11 +16,13 @@
     "test:deliveries": "node scripts/test-deliveries-route.mjs",
     "test:draft-generator": "node scripts/test-draft-generator.mjs",
     "test:draft-autosave": "node scripts/test-draft-autosave.mjs",
+    "test:delivery-worker": "node scripts/test-delivery-worker.mjs",
+    "worker:run": "node scripts/run-delivery-worker.mjs",
     "test:crypto": "node scripts/test-crypto-envelope.mjs",
     "test:dev-env": "node scripts/test-dev-env.mjs",
     "test:env-init": "node scripts/test-env-init.mjs",
     "clean:next": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\"",
-    "test:db": "pnpm clean:next && pnpm test:db:transaction && pnpm test:db:catalog && pnpm test:db:gmail-accounts && pnpm test:db:gmail-callback && pnpm test:db:current-user && pnpm test:db:people && pnpm test:db:fixtures && pnpm test:db:people-route && pnpm test:db:deliveries && pnpm test:db:deliveries-route && pnpm test:db:history-route && pnpm test:db:drafts-repository && pnpm test:db:drafts-route && pnpm clean:next",
+    "test:db": "pnpm clean:next && pnpm test:db:transaction && pnpm test:db:catalog && pnpm test:db:gmail-accounts && pnpm test:db:gmail-callback && pnpm test:db:current-user && pnpm test:db:people && pnpm test:db:fixtures && pnpm test:db:people-route && pnpm test:db:deliveries && pnpm test:db:deliveries-route && pnpm test:db:delivery-worker && pnpm test:db:history-route && pnpm test:db:drafts-repository && pnpm test:db:drafts-route && pnpm clean:next",
     "test:db:transaction": "node scripts/test-db-transaction.mjs",
     "test:db:catalog": "node scripts/test-catalog-repository.mjs",
     "test:db:gmail-accounts": "node scripts/test-gmail-accounts-repository.mjs",
@@ -33,6 +35,7 @@
     "test:db:drafts-route": "node scripts/test-drafts-db-route.mjs",
     "test:db:deliveries": "node scripts/test-deliveries-repository.mjs",
     "test:db:deliveries-route": "node scripts/test-deliveries-db-route.mjs",
+    "test:db:delivery-worker": "node scripts/test-delivery-worker-db.mjs",
     "test:db:history-route": "node scripts/test-history-db-route.mjs",
     "test:home": "node scripts/test-home.mjs",
     "test:drafts": "node scripts/test-drafts.mjs",
@@ -40,7 +43,7 @@
     "test:history": "node scripts/test-history.mjs",
     "test:profile": "node scripts/test-profile.mjs",
     "test:workspace": "node scripts/test-workspace.mjs",
-    "test": "pnpm test:boundaries && pnpm test:dev-env && pnpm test:env-init && pnpm test:auth && pnpm test:oauth && pnpm test:gmail-disconnect && pnpm test:home && pnpm test:people && pnpm test:drafts && pnpm test:draft-autosave && pnpm test:draft-generator && pnpm test:deliveries && pnpm test:history && pnpm test:profile && pnpm test:workspace"
+    "test": "pnpm test:boundaries && pnpm test:dev-env && pnpm test:env-init && pnpm test:auth && pnpm test:oauth && pnpm test:gmail-disconnect && pnpm test:home && pnpm test:people && pnpm test:drafts && pnpm test:draft-autosave && pnpm test:draft-generator && pnpm test:deliveries && pnpm test:delivery-worker && pnpm test:history && pnpm test:profile && pnpm test:workspace"
   },
   "dependencies": {
     "next": "^15.0.3",

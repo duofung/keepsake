@@ -15,10 +15,19 @@ import type { ID } from "../domain";
 import type {
   GmailAccount,
   GmailAccountMarkExpiredInput,
+  GmailAccountStatus,
   GmailAccountUpsertInput,
   OwnerId,
   Tx,
 } from "./types";
+
+export interface SendingCredentials {
+  readonly accountId: ID;
+  readonly email: string;
+  readonly status: GmailAccountStatus;
+  /** Plaintext refresh token. NEVER return this to a route handler. */
+  readonly refreshToken: string;
+}
 
 export interface GmailAccountRepository {
   /**
@@ -26,6 +35,15 @@ export interface GmailAccountRepository {
    * render "not connected" and CurrentUser.sendingAccount remains null.
    */
   getPrimary(ownerId: OwnerId, tx?: Tx): Promise<GmailAccount | null>;
+
+  /**
+   * Primary sender account WITH the decrypted refresh token. Worker-only
+   * call site — never expose the return value past the send seam.
+   */
+  getSendingCredentials(
+    ownerId: OwnerId,
+    tx?: Tx,
+  ): Promise<SendingCredentials | null>;
 
   /**
    * Upsert the owner's primary Gmail account after OAuth succeeds. The refresh

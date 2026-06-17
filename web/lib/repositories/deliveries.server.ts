@@ -76,8 +76,47 @@ async function deliveryFromRow(ownerId: OwnerId, row: DeliveryRow): Promise<Deli
   };
 }
 
-function notImplemented(method: string): never {
-  throw new Error(`DeliveryRepository.${method} is not implemented yet.`);
+type QueueItemRow = QueryResultRow & {
+  id: string;
+  owner_id: string;
+  person_id: string | null;
+  draft_id: string | null;
+  recipient_name_enc: Uint8Array;
+  recipient_email_enc: Uint8Array | null;
+  recipient_address_enc: Uint8Array | null;
+  occasion_kind: OccasionKind;
+  occasion_label_enc: Uint8Array;
+  channel: Channel;
+  scheduled_for_iso: string | null;
+};
+
+async function queueItemFromRow(row: QueueItemRow): Promise<DeliveryQueueItem> {
+  const ownerId = row.owner_id as OwnerId;
+  const [recipientName, recipientEmail, recipientAddress, occasionLabel] = await Promise.all([
+    decryptText(ownerId, "recipient_name_enc", row.recipient_name_enc),
+    row.recipient_email_enc
+      ? decryptText(ownerId, "recipient_email_enc", row.recipient_email_enc)
+      : Promise.resolve(undefined),
+    row.recipient_address_enc
+      ? decryptText(ownerId, "recipient_address_enc", row.recipient_address_enc)
+      : Promise.resolve(undefined),
+    decryptText(ownerId, "occasion_label_enc", row.occasion_label_enc),
+  ]);
+
+  return {
+    id: row.id,
+    ownerId,
+    personId: row.person_id,
+    draftId: row.draft_id,
+    recipientName,
+    recipientEmail,
+    recipientAddress,
+    occasionKind: row.occasion_kind,
+    occasionLabel,
+    channel: row.channel,
+    scheduledForISO: row.scheduled_for_iso ?? undefined,
+    status: "queued",
+  };
 }
 
 export class PgDeliveryRepository implements DeliveryRepository {
@@ -220,23 +259,119 @@ export class PgDeliveryRepository implements DeliveryRepository {
   }
 
   async markStatus(
-    _deliveryId: ID,
-    _status: DeliveryStatus,
-    _providerMessageId?: string,
-    _tx?: Tx,
+    deliveryId: ID,
+    status: DeliveryStatus,
+    providerMessageId?: string,
+    tx?: Tx,
   ): Promise<void> {
-    return notImplemented("markStatus");
+    // Idempotent + monotonic: setting status='sent' twice with the same
+    // provider id is a no-op; provider_message_id, once written, sticks
+    // (COALESCE keeps the first non-null value). sent_at is stamped the
+    // first time status flips to 'sent'.
+    //
+    // No ownerId is taken because the call sites are worker / webhook —
+    // see the interface contract in deliveries.ts.
+    if (!tx) {
+      throw new Error(
+        "DeliveryRepository.markStatus must be called inside a worker / webhook tx.",
+      );
+    }
+    await query(
+      tx,
+      `
+        UPDATE deliveries
+        SET status = $2::delivery_status,
+            sent_at = CASE
+              WHEN $2 = 'sent' AND sent_at IS NULL THEN now()
+              ELSE sent_at
+            END,
+            provider_message_id = COALESCE($3, provider_message_id),
+            updated_at = now()
+        WHERE id = $1::uuid
+      `,
+      [deliveryId, status, providerMessageId ?? null],
+    );
   }
 
   async findByProviderMessageId(
-    _providerMessageId: string,
-    _tx?: Tx,
+    providerMessageId: string,
+    tx?: Tx,
   ): Promise<Delivery | null> {
-    return notImplemented("findByProviderMessageId");
+    if (!tx) {
+      throw new Error(
+        "DeliveryRepository.findByProviderMessageId must be called inside a worker / webhook tx.",
+      );
+    }
+    const result = await query<DeliveryRow & QueryResultRow & { owner_id: string }>(
+      tx,
+      `
+        SELECT
+          id::text AS id,
+          owner_id::text AS owner_id,
+          person_id::text AS person_id,
+          recipient_name_enc,
+          occasion_kind,
+          occasion_label_enc,
+          channel,
+          to_char(sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS sent_at_iso,
+          status
+        FROM deliveries
+        WHERE provider_message_id = $1
+        LIMIT 1
+      `,
+      [providerMessageId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    // sent_at IS NULL means the worker stored provider_message_id but
+    // crashed before flipping status='sent'. We can't return a Delivery
+    // shape without sentAtISO; return null and let the caller treat it
+    // as "no webhook target".
+    if (!row.sent_at_iso) return null;
+    return deliveryFromRow(row.owner_id as OwnerId, row);
   }
 
-  async nextQueued(_limit: number, _tx?: Tx): Promise<DeliveryQueueItem[]> {
-    return notImplemented("nextQueued");
+  async nextQueued(limit: number, tx?: Tx): Promise<DeliveryQueueItem[]> {
+    // FOR UPDATE SKIP LOCKED is the no-double-send primitive. Two workers
+    // running concurrently will each lock disjoint rows; this method itself
+    // does not mutate status. Call sites must, in the SAME transaction,
+    // call `markStatus(id, 'sending', ...)` before committing — otherwise
+    // releasing the row lock leaves another worker free to re-pick it.
+    if (!tx) {
+      throw new Error(
+        "DeliveryRepository.nextQueued must be called inside a worker tx so the row lock survives commit ordering.",
+      );
+    }
+    const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const result = await query<QueueItemRow>(
+      tx,
+      `
+        SELECT
+          id::text AS id,
+          owner_id::text AS owner_id,
+          person_id::text AS person_id,
+          draft_id::text AS draft_id,
+          recipient_name_enc,
+          recipient_email_enc,
+          recipient_address_enc,
+          occasion_kind,
+          occasion_label_enc,
+          channel,
+          to_char(scheduled_for AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS scheduled_for_iso
+        FROM deliveries
+        WHERE status = 'queued'
+          AND channel = 'email'
+          AND (scheduled_for IS NULL OR scheduled_for <= now())
+        ORDER BY scheduled_for ASC NULLS FIRST,
+                 created_at ASC,
+                 id ASC
+        LIMIT $1::int
+        FOR UPDATE SKIP LOCKED
+      `,
+      [safeLimit],
+    );
+
+    return Promise.all(result.rows.map(queueItemFromRow));
   }
 }
 

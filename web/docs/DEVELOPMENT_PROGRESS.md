@@ -36,7 +36,7 @@ Rules:
 | Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
-| Email send | Stable enqueue boundary + Workspace wiring + edit flush + send-time recipient | `POST /api/deliveries` + `lib/server/delivery-send/*` enqueue queued rows with sender precondition (email) and ownership checks; the request now carries a validated `recipientEmail` for the email channel, encrypted into `deliveries.recipient_email_enc`. Workspace `Send email` / `Mail as card` flush pending subject/card edits through `PATCH /api/drafts` before calling the queue, so the queued draft is always the version the user just saw. Returns 202 "queued/accepted"; no Gmail call yet. | Gmail send worker, status updates, webhooks, `Person.email` / `person_contacts` model. |
+| Email send | Stable end-to-end (enqueue + 1-row worker + Gmail send) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` (or any other invoker of `processNextQueuedEmail()`) drains one queued email row, calls Gmail via `lib/server/delivery-worker/*`, and flips the row to `sent` (with `provider_message_id`) or `failed`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send. | Webhook ingest (delivered/opened), retry/backoff, cron/daemon, stuck-`sending` reaper, batch drain, post-channel worker, `Person.email` / `person_contacts` model. |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -383,6 +383,100 @@ Out of scope (still future slices):
 - `Person.email` / `person_contacts` schema additions.
 - Address book / contact picker UI in Workspace.
 - Recipient name editing (still derived from `Person.name`).
+
+### P5-A. Gmail Send Worker (one queued email per tick)
+
+Status: done. Guarded by `pnpm test:delivery-worker` (Docker-free
+transport smoke: MIME shape + token exchange + send happy/fail paths)
+and `pnpm test:db:delivery-worker` (Postgres + Gmail stub integration:
+seeds a queued row, drives the worker end-to-end, verifies state
+transitions and no-double-send).
+
+Goal: turn the existing queue boundary into a real send pipeline.
+After P5-A, a user click in Workspace → `POST /api/deliveries`
+(`queued`) → a single worker tick → `sent` row with
+`provider_message_id`, with the email actually delivered to the address
+encrypted into `recipient_email_enc`.
+
+Shipped:
+
+- Schema migration (one-time, minimal): `delivery_status` enum gains
+  `'sending'` (the worker's claim state) and `'failed'` (terminal
+  failure). `'sending'` is needed for double-send safety; `'failed'`
+  is needed because there is no retry queue today.
+- `lib/server/db/transaction.server.ts` gains `workerTransaction()` +
+  `KEEPSAKE_WORKER_DATABASE_URL`. The worker connection MUST `BYPASSRLS`
+  (admin URL in dev / a dedicated worker role in prod). Request-path
+  `transaction()` is untouched.
+- `DeliveryRepository` gains real implementations of:
+  - `nextQueued(limit, tx)` — `SELECT FOR UPDATE SKIP LOCKED`,
+    filtered to `status='queued' AND channel='email'`,
+    `scheduled_for ASC NULLS FIRST, created_at ASC, id ASC`.
+    Decrypts `recipient_name_enc` / `recipient_email_enc` /
+    `recipient_address_enc` / `occasion_label_enc` using each row's
+    own `owner_id`.
+  - `markStatus(deliveryId, status, providerMessageId?, tx)` —
+    idempotent UPDATE; `sent_at` stamped on first `sent`,
+    `provider_message_id` is COALESCEd (monotonic).
+  - `findByProviderMessageId(providerMessageId, tx)` — webhook
+    plumbing; only returns rows with non-null `sent_at`.
+- `GmailAccountRepository.getSendingCredentials(ownerId, tx)` — worker-
+  only method that returns the decrypted refresh token. Documented as
+  never to be returned past the send seam.
+- `lib/server/delivery-worker/` — new seam matching the existing
+  dispatcher pattern (`index.server.ts` env switch +
+  `db.server.ts` real worker + `mock.server.ts` returns `nothing_to_do`
+  + `gmail-transport.server.ts` Gmail HTTP + `types.ts` contracts).
+- The DB worker uses **three transactions**: claim (FOR UPDATE SKIP
+  LOCKED + flip to `sending`), hydrate (read draft + sender creds,
+  no DB lock held during Gmail HTTP), finalise
+  (`markStatus(sent | failed, providerMessageId?)`). Crash between
+  hydrate and finalise leaves the row in `sending`; no reaper.
+- `gmail-transport.server.ts` speaks native `fetch` (no Google SDK).
+  `GOOGLE_TOKEN_ENDPOINT` and `KEEPSAKE_GMAIL_API_BASE` are
+  env-overridable so tests point at local stubs. Errors normalise into
+  `GmailTransportError` with one of `WorkerFailureReason` (`token_invalid`,
+  `gmail_send_error`, `transport_error`).
+- On `token_invalid` the worker also calls
+  `GmailAccountRepository.markExpired(...)` so future enqueues hit the
+  existing 409 `sender_expired` path instead of queueing more
+  un-sendable rows.
+- MIME body is plain text (RFC 2822 / 5322): CRLF newlines, UTF-8,
+  `Content-Transfer-Encoding: 8bit`, conditional RFC 2047 encoded-word
+  for non-ASCII subjects, deterministic `Message-ID:
+  <delivery-{id}@keepsake.local>` seeded by the delivery id.
+- Manual entry point: `pnpm worker:run` →
+  `scripts/run-delivery-worker.mjs`. Runs one tick, prints the JSON
+  result, exit 0 on `sent` / `nothing_to_do`, exit 2 on `failed`,
+  exit 3 on `misconfigured`.
+- **Worker-level misconfiguration never burns the queue.** The DB
+  worker calls `assertGmailTransportConfig()` BEFORE the claim
+  transaction; missing `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
+  returns `{ status: "misconfigured", missing }` with NO DB writes —
+  the queued row stays `queued`, `sent_at` stays NULL, and the Gmail
+  stub is never called. Regression-pinned by phase 0 of
+  `pnpm test:db:delivery-worker` and phase 7 of `pnpm test:delivery-worker`.
+- **Strict 2xx-with-id contract.** A Gmail 2xx response that omits
+  the canonical message id is normalised to `transport_error` rather
+  than silently marking the delivery `sent` with no id to reconcile.
+  `WorkerResult.sent.providerMessageId` is therefore always a
+  non-empty string. Phase 8 of `pnpm test:delivery-worker` pins this.
+
+Out of scope (still future slices):
+
+- No cron / scheduler / daemon. `worker:run` is one-shot.
+- No webhook ingest. `findByProviderMessageId` is implemented but no
+  route consumes it yet.
+- No retry / backoff / dead-letter / "stuck sending" reaper. Operators
+  manually deal with rows stuck in `sending` (process crash between
+  Gmail success and DB mark) or `failed`.
+- No HTML / rich email, no attachments, no threading, no CC/BCC.
+- No post-channel worker. Post-channel queued rows stay queued
+  indefinitely until a future printed-card pipeline lands.
+- No batch drain. One row per tick.
+- No GmailAccountRepository.markExpired call when Gmail rejects the
+  send itself (`gmail_send_error`) — that only fires on `token_invalid`,
+  because a Gmail send refusal may be transient.
 
 ### P5. People Editing MVP
 

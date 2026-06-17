@@ -1,9 +1,9 @@
 import "server-only";
 
 import type { QueryResultRow } from "pg";
-import { encrypt } from "@/lib/server/crypto/envelope.server";
+import { decrypt, encrypt } from "@/lib/server/crypto/envelope.server";
 import { query, transaction } from "@/lib/server/db/transaction.server";
-import type { GmailAccountRepository } from "./gmail-accounts";
+import type { GmailAccountRepository, SendingCredentials } from "./gmail-accounts";
 import type {
   GmailAccount,
   GmailAccountMarkExpiredInput,
@@ -94,6 +94,49 @@ function notFound(method: string): never {
 }
 
 export class PgGmailAccountRepository implements GmailAccountRepository {
+  async getSendingCredentials(
+    ownerId: OwnerId,
+    tx?: Tx,
+  ): Promise<SendingCredentials | null> {
+    return withTx(ownerId, tx, async (activeTx) => {
+      const result = await query<{
+        id: string;
+        email: string;
+        status: GmailAccountStatus;
+        refresh_token_enc: Uint8Array;
+      } & QueryResultRow>(
+        activeTx,
+        `
+          SELECT
+            id::text,
+            email::text,
+            status,
+            refresh_token_enc
+          FROM gmail_accounts
+          WHERE owner_id = $1
+            AND is_primary
+          ORDER BY updated_at DESC, id DESC
+          LIMIT 1
+        `,
+        [ownerId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      const bytes = await decrypt(
+        ownerId,
+        TABLE,
+        "refresh_token_enc",
+        row.refresh_token_enc,
+      );
+      return {
+        accountId: row.id,
+        email: row.email,
+        status: row.status,
+        refreshToken: Buffer.from(bytes).toString("utf8"),
+      };
+    });
+  }
+
   async getPrimary(ownerId: OwnerId, tx?: Tx): Promise<GmailAccount | null> {
     return withTx(ownerId, tx, async (activeTx) => {
       const result = await query<GmailAccountRow>(

@@ -69,7 +69,14 @@ CREATE TYPE tone AS ENUM (
 );
 
 CREATE TYPE channel         AS ENUM ('email', 'post');
-CREATE TYPE delivery_status AS ENUM ('queued', 'sent', 'delivered', 'opened');
+-- 'sending' is the worker's claim state — set after SELECT FOR UPDATE
+-- SKIP LOCKED so concurrent workers can't double-send the same row.
+-- 'failed' is the terminal state for delivery attempts that exhausted
+-- the worker's responsibility without delivering (auth gone, Gmail
+-- refused, malformed row). No retry queue today; see delivery-worker.
+CREATE TYPE delivery_status AS ENUM (
+  'queued', 'sending', 'sent', 'delivered', 'opened', 'failed'
+);
 CREATE TYPE subscription_status AS ENUM ('free', 'plus', 'churned');
 CREATE TYPE gmail_account_status AS ENUM ('connected', 'expired');
 
