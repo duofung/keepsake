@@ -36,7 +36,7 @@ Rules:
 | Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
-| Email send | Stable enqueue boundary + Workspace wiring + edit flush | `POST /api/deliveries` + `lib/server/delivery-send/*` enqueue queued rows with sender precondition (email) and ownership checks; Workspace `Send email` / `Mail as card` flush pending subject/card edits through `PATCH /api/drafts` before calling the queue, so the queued draft is always the version the user just saw. Returns 202 "queued/accepted"; no Gmail call yet. | Gmail send worker, status updates, webhooks. |
+| Email send | Stable enqueue boundary + Workspace wiring + edit flush + send-time recipient | `POST /api/deliveries` + `lib/server/delivery-send/*` enqueue queued rows with sender precondition (email) and ownership checks; the request now carries a validated `recipientEmail` for the email channel, encrypted into `deliveries.recipient_email_enc`. Workspace `Send email` / `Mail as card` flush pending subject/card edits through `PATCH /api/drafts` before calling the queue, so the queued draft is always the version the user just saw. Returns 202 "queued/accepted"; no Gmail call yet. | Gmail send worker, status updates, webhooks, `Person.email` / `person_contacts` model. |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -336,6 +336,53 @@ Out of scope (next slices):
 - No streaming. The route still returns a single `MessageDraft`.
 - No tool-use, function-calling, multi-turn assistant memory, or culture-aware
   taboo enforcement beyond what the system prompt asks for.
+
+### P5-preA. Send-time Recipient Email
+
+Status: done. Guarded by `pnpm test:deliveries` (mock + recipient-email
+shape validation) and `pnpm test:db:deliveries-route` (DB enqueue +
+`recipient_email_enc` decryption). Workspace SSR check in
+`pnpm test:workspace` guards the new `To` row input.
+
+Goal: unblock P5 (the send worker) by giving every queued email row a
+recipient address. Until now `deliveries.recipient_email_enc` was always
+NULL because the enqueue path had nowhere to read a recipient address
+from — `Person` carries no email and there is no `person_contacts` table.
+
+Shipped:
+
+- `DeliveryRequest` gains `recipientEmail?: string`. The route is
+  server-authoritative: the email is validated in the delivery-send seam
+  (basic email regex, ≤254 chars). Missing or malformed values for the
+  email channel return 400 `invalid_request` BEFORE any DB lookup; post
+  channel ignores the field.
+- `enqueueDbDelivery` threads the trimmed, validated value into
+  `DeliveryRepository.enqueue`, which already supported encrypting it
+  into `recipient_email_enc`. The DB column is no longer NULL for new
+  email rows.
+- `QueuedDelivery` does NOT echo `recipientEmail` — recipient identity
+  stays on the server-side queued row only. A receipt that the user
+  sees should not re-state what they typed.
+- Workspace `To` row gains a minimal email `<input type="email">` that
+  posts the address to `/api/deliveries` at send time. Client-side
+  validation catches obvious mistakes ("Add a recipient email…",
+  "Enter a valid recipient email."); the server re-validates regardless.
+  The address is local component state — it is NEVER persisted on the
+  draft (PATCH /api/drafts is untouched) and NEVER backfilled onto
+  Person.
+- The product decision is explicit: recipient identity is named at
+  send time, not stored as a property of the relationship. A future
+  slice may add `Person.email` (or a `person_contacts` table) and have
+  enqueue prefer that over the request body; this slice deliberately
+  does not pick that direction.
+
+Out of scope (still future slices):
+
+- The send worker itself (P5). This slice only fixes the data face so
+  the worker has somewhere to read the recipient address from.
+- `Person.email` / `person_contacts` schema additions.
+- Address book / contact picker UI in Workspace.
+- Recipient name editing (still derived from `Person.name`).
 
 ### P5. People Editing MVP
 

@@ -129,15 +129,23 @@ function encryptedRefreshToken(ownerId, token, encryptionKeyBase64) {
   return Buffer.concat([nonce, ciphertext, cipher.getAuthTag()]);
 }
 
-function decryptRecipientName(ownerId, blob, encryptionKeyBase64) {
+function decryptDeliveryColumn(ownerId, column, blob, encryptionKeyBase64) {
   const key = Buffer.from(encryptionKeyBase64, "base64");
   const nonce = blob.subarray(0, 12);
   const tag = blob.subarray(blob.length - 16);
   const ciphertext = blob.subarray(12, blob.length - 16);
   const decipher = createDecipheriv("aes-256-gcm", key, nonce);
-  decipher.setAAD(Buffer.from(`${ownerId}|deliveries|recipient_name_enc`, "utf8"));
+  decipher.setAAD(Buffer.from(`${ownerId}|deliveries|${column}`, "utf8"));
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+}
+
+function decryptRecipientName(ownerId, blob, encryptionKeyBase64) {
+  return decryptDeliveryColumn(ownerId, "recipient_name_enc", blob, encryptionKeyBase64);
+}
+
+function decryptRecipientEmail(ownerId, blob, encryptionKeyBase64) {
+  return decryptDeliveryColumn(ownerId, "recipient_email_enc", blob, encryptionKeyBase64);
 }
 
 async function postDeliveries(body) {
@@ -282,11 +290,25 @@ try {
   check("Aisha fixture present", !!aisha);
   if (!lin || !aisha) throw new Error("Fixture lookup failed");
 
+  const recipientEmail = "lin-route-test@example.test";
+
+  // 0. Validate that recipientEmail is required for the email channel.
+  //    The validator runs before any DB lookups so a missing email never
+  //    reaches the queue.
+  const missingRecipient = await postDeliveries({
+    personId: lin.id,
+    occasionId: lin.nextOccasionId,
+    channel: "email",
+  });
+  check("missing recipientEmail -> 400", missingRecipient.status === 400);
+  check("missing recipientEmail code", missingRecipient.body?.code === "invalid_request");
+
   // 1. No Gmail account yet, no draft yet → email -> 409 sender_not_connected
   const noSender = await postDeliveries({
     personId: lin.id,
     occasionId: lin.nextOccasionId,
     channel: "email",
+    recipientEmail,
   });
   check("no sender + email -> 409", noSender.status === 409, `status=${noSender.status}`);
   check("no sender code = sender_not_connected", noSender.body?.code === "sender_not_connected");
@@ -323,6 +345,7 @@ try {
     personId: lin.id,
     occasionId: lin.nextOccasionId,
     channel: "email",
+    recipientEmail,
   });
   check("connected sender + no draft -> 409", stillNoDraft.status === 409);
   check("still no_draft", stillNoDraft.body?.code === "no_draft");
@@ -340,6 +363,7 @@ try {
     personId: lin.id,
     occasionId: lin.nextOccasionId,
     channel: "email",
+    recipientEmail,
   });
   check("email enqueue -> 202", queued.status === 202, `status=${queued.status}`);
   check("queued.status === 'queued'", queued.body?.status === "queued");
@@ -355,7 +379,8 @@ try {
     const result = await client.query(
       `
         SELECT id::text AS id, person_id::text AS person_id, draft_id::text AS draft_id,
-               status, channel, sent_at, recipient_name_enc, occasion_kind
+               status, channel, sent_at, recipient_name_enc, recipient_email_enc,
+               occasion_kind
         FROM deliveries
         WHERE owner_id = $1 AND status = 'queued'
       `,
@@ -372,6 +397,17 @@ try {
   check(
     "row.recipient_name_enc decrypts to Lin",
     decryptRecipientName(ownerId, inserted[0]?.recipient_name_enc, encryptionKey) === "Lin",
+  );
+  // P5-preA: recipient_email_enc must be written for email-channel rows;
+  // before this slice the column was always NULL.
+  check(
+    "row.recipient_email_enc is bytea (no longer NULL)",
+    inserted[0]?.recipient_email_enc instanceof Buffer,
+    `value=${typeof inserted[0]?.recipient_email_enc}`,
+  );
+  check(
+    "row.recipient_email_enc decrypts to the request recipient",
+    decryptRecipientEmail(ownerId, inserted[0]?.recipient_email_enc, encryptionKey) === recipientEmail,
   );
 
   // 6. Post channel happy path (sender is connected; bypass should also succeed)
@@ -394,6 +430,7 @@ try {
     personId: lin.id,
     occasionId: lin.nextOccasionId,
     channel: "email",
+    recipientEmail,
   });
   check("expired + email -> 409", expiredEmail.status === 409, `status=${expiredEmail.status}`);
   check("expired code = sender_expired", expiredEmail.body?.code === "sender_expired");

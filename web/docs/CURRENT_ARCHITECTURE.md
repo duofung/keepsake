@@ -364,7 +364,8 @@ to mock by default and to the DB implementation only when
 ```
 browser                   server
   │                         │
-  │  POST /api/deliveries   │   body = { personId, occasionId | null, channel }
+  │  POST /api/deliveries   │   body = { personId, occasionId | null, channel,
+  │                         │            recipientEmail? }
   ├────────────────────────►│
   │                         │  app/api/deliveries/route.ts
   │                         │      │  parse JSON → 400 invalid_request on failure
@@ -374,12 +375,13 @@ browser                   server
   │                         │      │  enqueueDelivery(input)
   │                         │      ├─ KEEPSAKE_DATA_SOURCE unset/mock
   │                         │      │    ▼
-  │                         │      │  delivery-send/mock.server.ts → synthetic QueuedDelivery
+  │                         │      │  delivery-send/mock.server.ts → validate + synthetic QueuedDelivery
+  │                         │      │     (channel "email" requires a well-formed recipientEmail)
   │                         │      │
   │                         │      └─ KEEPSAKE_DATA_SOURCE=db
   │                         │           ▼
   │                         │         delivery-send/db.server.ts
-  │                         │           │  validate UUIDs + channel → 400
+  │                         │           │  validate UUIDs + channel + recipientEmail → 400
   │                         │           │  transaction(ownerId)
   │                         │           │     resolveDbDraftContextInTx
   │                         │           │       → 404 person_not_found / occasion_not_found
@@ -390,12 +392,27 @@ browser                   server
   │                         │           │       → 409 no_draft
   │                         │           │     DeliveryRepository.enqueue
   │                         │           │       INSERT deliveries (status='queued',
-  │                         │           │         sent_at=NULL, encrypted recipient_*)
+  │                         │           │         sent_at=NULL, encrypted recipient_name +
+  │                         │           │         recipient_email when email channel)
   │                         │           ▼
   │  ◄── 202 QueuedDelivery ┤  { id, personId, occasionId, draftId, channel,
   │                         │     status:"queued", scheduledForISO:null, createdAtISO }
+  │                         │  (the response intentionally does NOT echo
+  │                         │   recipientEmail — recipient identity stays on
+  │                         │   the server-side queued row)
   │                         │
 ```
+
+`recipientEmail` is the only piece of recipient identity the client supplies.
+It is **required for the email channel** and must match a basic email-shape
+check (`^[^\s@]+@[^\s@]+\.[^\s@]+$`, ≤254 chars); it is ignored for the post
+channel. The value is encrypted into `deliveries.recipient_email_enc` at
+enqueue and is the only column a future send worker can read to know which
+address to deliver to. It is NOT written back to the `Person` row — Keepsake
+deliberately does not yet have a `Person.email` (or `person_contacts`) model;
+a future slice may add one and have `enqueue` prefer it over the request
+body. The queued receipt that comes back to the client does NOT echo the
+recipient email; the route only confirms "queued, with this draft id".
 
 The route is the queue boundary: it accepts a request to send and persists a
 `queued` row, but does not call Gmail and does not drain the queue. Email
@@ -587,17 +604,21 @@ PR/agent prompt before touching.
    `paragraphs[].highlights: string[]`, applied by the client renderer
    (see [`app/workspace/page.tsx`](../app/workspace/page.tsx) — the
    `renderParagraph` helper). No `<span>`, no HTML strings, ever.
-12. **`POST /api/deliveries` request shape** = `{ personId, occasionId | null, channel: "email" | "post" }`.
-    Returns 202 `QueuedDelivery` on success
-    (`{ id, personId, occasionId, draftId, channel, status: "queued",
-    scheduledForISO: null, createdAtISO }`), 400 `invalid_request` for parse
-    or shape failures, 401 missing auth / 500 misconfigured auth, 404
-    `person_not_found` / `occasion_not_found`, 409 `sender_not_connected` /
-    `sender_expired` (email channel only) / `no_draft`. The route is a queue
-    boundary: it never calls Gmail and never mutates delivery status. Covered
-    by `pnpm test:deliveries` (mock + validation) and
-    `pnpm test:db:deliveries-route` (full DB happy path + sender precondition
-    + ownership + encrypted row inspection).
+12. **`POST /api/deliveries` request shape** = `{ personId, occasionId | null, channel: "email" | "post", recipientEmail? }`.
+    `recipientEmail` is required and basic-email-validated when
+    `channel === "email"`; ignored otherwise. Returns 202 `QueuedDelivery`
+    on success (`{ id, personId, occasionId, draftId, channel,
+    status: "queued", scheduledForISO: null, createdAtISO }`) — the response
+    deliberately does NOT echo `recipientEmail`. 400 `invalid_request` for
+    parse, UUID, channel, or recipient-email shape failures; 401 missing
+    auth / 500 misconfigured auth; 404 `person_not_found` /
+    `occasion_not_found`; 409 `sender_not_connected` / `sender_expired`
+    (email channel only) / `no_draft`. The route is a queue boundary: it
+    never calls Gmail and never mutates delivery status. Covered by
+    `pnpm test:deliveries` (mock + validation, incl. recipient-email shape
+    cases) and `pnpm test:db:deliveries-route` (full DB happy path +
+    sender precondition + ownership + encrypted row inspection, incl.
+    `recipient_email_enc` decryption).
 13. **Server-only modules must begin with `import "server-only"`.** Filename
    convention is `*.server.ts`. See
    [`lib/server/README.md`](../lib/server/README.md) and

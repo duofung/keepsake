@@ -167,10 +167,17 @@ export interface Delivery {
 // `DeliveryRequest` is the wire shape accepted by `POST /api/deliveries`.
 // Intentionally minimal: the server resolves the recipient name, draft id,
 // and occasion metadata from the owner-scoped person/occasion/draft rows.
+//
+// `recipientEmail` is the only piece of recipient identity the client
+// supplies, and only for the email channel — Keepsake's `Person` model has
+// no email today, so "who to send to" is named at send time and stored on
+// the queued row (not on the person). When `channel === "post"` this field
+// is ignored.
 export interface DeliveryRequest {
   personId: ID;
   occasionId: ID | null;
   channel: Channel;
+  recipientEmail?: string;
 }
 
 // `QueuedDelivery` is the "I queued it, here's the receipt" shape returned

@@ -55,6 +55,11 @@ export default function WorkspaceClient({
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [subject, setSubject] = useState("");
   const [hasCard, setHasCard] = useState(true);
+  // Send-time recipient email. Local-only — never persisted on the draft
+  // (the canonical draft does not carry recipient identity) and never
+  // backfilled onto Person. The user types it for each send.
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [recipientEmailError, setRecipientEmailError] = useState<string | null>(null);
   const [log, setLog] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [toast, setToast] = useState<{ text: string; tone: "success" | "error" } | null>(null);
@@ -201,6 +206,11 @@ export default function WorkspaceClient({
     setSubject("");
     setHasCard(true);
     setLog([]);
+    // Send-time recipient identity is per-person; never carry over to a new
+    // person/occasion branch. The same applies to any inline error from the
+    // previous branch's send attempt.
+    setRecipientEmail("");
+    setRecipientEmailError(null);
 
     const query = new URLSearchParams({ personId: person.id });
     if (occasion?.id) query.set("occasionId", occasion.id);
@@ -297,6 +307,24 @@ export default function WorkspaceClient({
     async (channel: Channel) => {
       if (!person || sending) return;
       const recipient = person.name;
+
+      // Client-side recipient-email guard for the email channel. The server
+      // re-validates regardless; this is just so the user gets a fast,
+      // inline error instead of a generic 400.
+      let trimmedRecipientEmail = "";
+      if (channel === "email") {
+        trimmedRecipientEmail = recipientEmail.trim();
+        if (!trimmedRecipientEmail) {
+          setRecipientEmailError("Add a recipient email before queueing this message.");
+          return;
+        }
+        if (!CLIENT_EMAIL_RE.test(trimmedRecipientEmail)) {
+          setRecipientEmailError("Enter a valid recipient email.");
+          return;
+        }
+        setRecipientEmailError(null);
+      }
+
       setSending(true);
       // Persist whatever the user has typed/toggled before handing the
       // delivery off. The send boundary references the latest server-side
@@ -316,6 +344,7 @@ export default function WorkspaceClient({
         personId: person.id,
         occasionId: occasion?.id ?? null,
         channel,
+        ...(channel === "email" ? { recipientEmail: trimmedRecipientEmail } : {}),
       };
       try {
         const res = await fetch("/api/deliveries", {
@@ -346,7 +375,7 @@ export default function WorkspaceClient({
         setSending(false);
       }
     },
-    [person, occasion, sending, router, showToast],
+    [person, occasion, sending, router, showToast, recipientEmail],
   );
 
   function showVersion(version: MessageDraft) {
@@ -580,9 +609,33 @@ export default function WorkspaceClient({
           </div>
 
           <div style={{ padding: "0 22px 12px", borderBottom: "0.5px solid var(--line)" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "5px 0", fontSize: 12.5 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 12.5 }}>
               <span style={{ color: "var(--gray-3)", width: 48 }}>To</span>
               <span style={{ color: "var(--ink)", fontWeight: 500 }}>{person.name}</span>
+              <input
+                type="email"
+                value={recipientEmail}
+                onChange={(e) => {
+                  setRecipientEmail(e.target.value);
+                  if (recipientEmailError) setRecipientEmailError(null);
+                }}
+                placeholder="recipient@example.com"
+                aria-label="Recipient email"
+                data-testid="recipient-email-input"
+                style={{
+                  flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--ink)",
+                  border: "none", outline: "none", background: "none",
+                }}
+              />
+              {recipientEmailError && (
+                <span
+                  role="alert"
+                  data-testid="recipient-email-error"
+                  style={{ fontSize: 11, color: "#C5544C" }}
+                >
+                  {recipientEmailError}
+                </span>
+              )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 12.5 }}>
               <span style={{ color: "var(--gray-3)", width: 48 }}>From</span>
@@ -789,6 +842,11 @@ function saveStatusLabel(status: "idle" | "saving" | "saved" | "error"): string 
       return "Edits save automatically";
   }
 }
+
+// Mirrors the server-side `EMAIL_RE` in `lib/server/delivery-send/mock.server.ts`.
+// The server re-validates regardless; this is only an inline fast-fail so the
+// user doesn't see a generic 400 toast.
+const CLIENT_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const GENERIC_SEND_ERROR =
   "Could not queue this delivery. Please try again.";

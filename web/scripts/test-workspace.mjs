@@ -105,6 +105,13 @@ try {
   check("keeps send footer", body.includes("Send now, or schedule for the day"));
   check("renders Send email button", body.includes("Send email"));
   check("renders Mail as card button", body.includes("Mail as card"));
+  // P5-preA: the To row now carries an email input. The label "To" and the
+  // person name must still render alongside the new field.
+  check("renders recipient email input", body.includes('data-testid="recipient-email-input"'));
+  check("recipient email input uses type=email",
+    /data-testid="recipient-email-input"[\s\S]{0,200}type="email"|type="email"[\s\S]{0,200}data-testid="recipient-email-input"/.test(body));
+  check("recipient email input has placeholder", body.includes('placeholder="recipient@example.com"'));
+  check("To row still renders person name alongside the input", body.includes(">Lin<"));
   // Guard against re-introducing the old fake-success copy: the queue
   // boundary now returns 202 "queued", and the UI must reflect that.
   check("no fake 'Email sent to' copy", !body.includes("Email sent to"));

@@ -152,8 +152,31 @@ await runServer({
     const badChannel = await postDeliveries(baseUrl, { personId, occasionId: null, channel: "telex" });
     check("bad channel -> 400", badChannel.status === 400);
 
-    // ── mock happy path: email ───────────────────────────────────────
-    const emailQueue = await postDeliveries(baseUrl, { personId, occasionId, channel: "email" });
+    // ── email + missing recipientEmail ────────────────────────────────
+    const emailMissingRecipient = await postDeliveries(baseUrl, {
+      personId, occasionId, channel: "email",
+    });
+    check("email + missing recipientEmail -> 400",
+      emailMissingRecipient.status === 400, `status=${emailMissingRecipient.status}`);
+    check("missing recipientEmail code = invalid_request",
+      emailMissingRecipient.body?.code === "invalid_request");
+    check("missing recipientEmail error mentions the field",
+      /recipientemail/i.test(emailMissingRecipient.body?.error ?? ""));
+
+    // ── email + malformed recipientEmail ──────────────────────────────
+    for (const bad of ["not-an-email", "no@dot", "@nope.com", "trailing@space .com", ""]) {
+      const res = await postDeliveries(baseUrl, {
+        personId, occasionId, channel: "email", recipientEmail: bad,
+      });
+      check(`malformed email "${bad}" -> 400`, res.status === 400, `status=${res.status}`);
+      check(`malformed email "${bad}" code = invalid_request`,
+        res.body?.code === "invalid_request");
+    }
+
+    // ── mock happy path: email + valid recipientEmail ─────────────────
+    const emailQueue = await postDeliveries(baseUrl, {
+      personId, occasionId, channel: "email", recipientEmail: "lin@example.test",
+    });
     check("mock email -> 202", emailQueue.status === 202, `status=${emailQueue.status}`);
     check("mock email queued shape: status=queued", emailQueue.body?.status === "queued");
     check("mock email echoes personId", emailQueue.body?.personId === personId);
@@ -163,12 +186,23 @@ await runServer({
     check("mock email has draftId", typeof emailQueue.body?.draftId === "string");
     check("mock email scheduledForISO null", emailQueue.body?.scheduledForISO === null);
     check("mock email has createdAtISO", typeof emailQueue.body?.createdAtISO === "string");
+    // QueuedDelivery does not echo recipient identity — that stays on the
+    // server-side queued row only.
+    check("mock email does NOT echo recipientEmail",
+      !("recipientEmail" in (emailQueue.body ?? {})));
 
-    // ── mock happy path: post ────────────────────────────────────────
+    // ── mock happy path: post (no recipientEmail required) ────────────
     const postQueue = await postDeliveries(baseUrl, { personId, occasionId: null, channel: "post" });
     check("mock post -> 202", postQueue.status === 202, `status=${postQueue.status}`);
     check("mock post echoes channel", postQueue.body?.channel === "post");
     check("mock post occasionId null", postQueue.body?.occasionId === null);
+
+    // ── post + extraneous recipientEmail is allowed (ignored) ─────────
+    const postWithEmail = await postDeliveries(baseUrl, {
+      personId, occasionId: null, channel: "post", recipientEmail: "junk-not-validated",
+    });
+    check("post ignores recipientEmail and still queues -> 202",
+      postWithEmail.status === 202, `status=${postWithEmail.status}`);
   },
 });
 

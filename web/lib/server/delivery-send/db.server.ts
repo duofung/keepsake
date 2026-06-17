@@ -22,7 +22,7 @@ import { createGmailAccountRepository } from "@/lib/repositories/gmail-accounts.
 import { currentUserIdOrThrow } from "@/lib/server/auth/current-user.server";
 import { transaction } from "@/lib/server/db/transaction.server";
 import { resolveDbDraftContextInTx } from "@/lib/server/draft-context/db.server";
-import { validateRequest } from "./mock.server";
+import { normalizedRecipientEmail, validateRequest } from "./mock.server";
 import type { SendBoundaryResult } from "./types";
 
 const deliveryRepository = createDeliveryRepository();
@@ -110,6 +110,7 @@ export async function enqueueDbDelivery(
       }
 
       // 4. enqueue
+      const recipientEmail = normalizedRecipientEmail(input);
       const queued = await deliveryRepository.enqueue(
         ownerId,
         {
@@ -117,6 +118,7 @@ export async function enqueueDbDelivery(
           occasionId: resolvedOccasionId,
           draftId: latestDraft.id,
           recipientName: ctx.ctx.person.name,
+          recipientEmail: recipientEmail ?? undefined,
           occasionKind: ctx.ctx.occasion?.kind ?? DEFAULT_OCCASION_KIND,
           occasionLabel: ctx.ctx.occasion?.label ?? DEFAULT_OCCASION_LABEL,
           channel: input.channel,

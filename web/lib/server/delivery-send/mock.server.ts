@@ -14,6 +14,9 @@ import type { SendBoundaryResult } from "./types";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAIL_LENGTH = 254;
+
 const VALID_CHANNELS: ReadonlySet<Channel> = new Set(["email", "post"]);
 
 export async function enqueueMockDelivery(
@@ -63,7 +66,30 @@ export function validateRequest(input: DeliveryRequest): SendBoundaryResult | nu
     return invalid('channel must be "email" or "post".');
   }
 
+  // recipientEmail is required for the email channel and must look like an
+  // address. Post-channel callers may include it (ignored) or omit it.
+  if (input.channel === "email") {
+    const value = input.recipientEmail;
+    if (typeof value !== "string" || value.length === 0) {
+      return invalid("recipientEmail is required for the email channel.");
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || trimmed.length > MAX_EMAIL_LENGTH || !EMAIL_RE.test(trimmed)) {
+      return invalid("recipientEmail must be a valid email address.");
+    }
+  }
+
   return null;
+}
+
+/**
+ * Trimmed, validated recipient email for the email channel. Returns `null`
+ * for non-email channels so call sites can pass it straight to enqueue
+ * without re-validating. Assumes `validateRequest` has already passed.
+ */
+export function normalizedRecipientEmail(input: DeliveryRequest): string | null {
+  if (input.channel !== "email") return null;
+  return typeof input.recipientEmail === "string" ? input.recipientEmail.trim() : null;
 }
 
 function invalid(error: string): SendBoundaryResult {
