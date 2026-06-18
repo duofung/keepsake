@@ -71,6 +71,33 @@ export async function currentUserOrThrow(): Promise<CurrentUser> {
   };
 }
 
+/**
+ * Cookie-only resolver. NEVER falls back to `DEV_OWNER_*` env.
+ * Pages that want to enforce "must have a real `keepsake_session`"
+ * use this via `requireSessionUserOrRedirect()`; the rest of the
+ * stack (routes, API handlers, server seams) keeps calling
+ * `currentUserOrThrow()` and continues to allow env fallback.
+ *
+ * Errors:
+ *   - missing cookie → `AuthError("unauthenticated", …)`
+ *   - invalid / expired / tampered cookie → `AuthError("unauthenticated", …)`
+ *   - missing `APP_SESSION_SIGNING_SECRET` when a cookie is present
+ *     → `AuthError("misconfigured", …)` (inherited from the helper).
+ */
+export async function currentSessionUserOrThrow(): Promise<CurrentUser> {
+  const fromCookie = await tryResolveFromCookie();
+  if (!fromCookie) {
+    throw new AuthError(
+      "unauthenticated",
+      "No session cookie present.",
+    );
+  }
+  return {
+    ...fromCookie,
+    sendingAccount: await sendingAccountFor(fromCookie.id),
+  };
+}
+
 async function currentUserBaseOrThrow(): Promise<Omit<CurrentUser, "sendingAccount">> {
   const fromCookie = await tryResolveFromCookie();
   if (fromCookie) return fromCookie;

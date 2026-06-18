@@ -1,5 +1,5 @@
 import Icon from "@/components/Icon";
-import { currentUserOrThrow } from "@/lib/server/auth/current-user.server";
+import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
 
 export const dynamic = "force-dynamic";
 
@@ -7,7 +7,7 @@ const CONNECT_HREF = "/api/oauth/gmail/start?returnTo=/profile";
 const DISCONNECT_ACTION = "/api/gmail/disconnect";
 
 export default async function ProfilePage() {
-  const user = await currentUserOrThrow();
+  const user = await requireSessionUserOrRedirect("/profile");
 
   return (
     <div className="ks-page">

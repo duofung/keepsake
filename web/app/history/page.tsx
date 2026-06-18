@@ -1,7 +1,10 @@
 import Icon from "@/components/Icon";
+import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
 import { getDeliveryHistory } from "@/lib/server/delivery-history/index.server";
 import { cardGradientByHint, channelBadge, occasionIcon } from "@/lib/presentation";
 import type { Delivery, OccasionKind } from "@/lib/domain";
+
+export const dynamic = "force-dynamic";
 
 const gradientByOccasion: Record<OccasionKind, string> = {
   anniversary: cardGradientByHint.rose,
@@ -32,6 +35,7 @@ function shortDate(iso: string): string {
 }
 
 export default async function HistoryPage() {
+  await requireSessionUserOrRedirect("/history");
   const history = await getDeliveryHistory();
   const groups = groupByMonth(history);
   const deliveryCount = history.length;

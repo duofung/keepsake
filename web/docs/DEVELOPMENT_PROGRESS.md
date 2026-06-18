@@ -33,7 +33,7 @@ Rules:
 | People data | Stable read path | DB-backed people payload and repository reads. | People CRUD UI/API, imports, merge/archive semantics. |
 | Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence + user-edit versioning | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. `PATCH /api/drafts` persists Workspace subject + card edits as new canonical versions with `prompt_input_hash = NULL`. | Paragraph / tone editing, prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
-| Auth/current user | Cookie-backed session foundation + Google sign-in transport + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source; `DEV_OWNER_*` env still works as fallback when no cookie is present. `currentUserOrThrow` / `currentUserIdOrThrow` are async. `/api/auth/google/{start,callback}` runs the real Google identity flow (P6-B) — `users` row find-or-created, session cookie minted, no Gmail-sender impact. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap. `/api/session` shape unchanged. | `/signin` page + middleware redirect (P6-C), removing `DEV_OWNER_*` fallback. |
+| Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start now 303s when given `?returnTo=`. `/api/session` shape unchanged. | UI logout, retiring the `DEV_OWNER_*` env fallback from the cookie-first seam. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. | Webhook ingest (delivered/opened), retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model. |
@@ -686,6 +686,68 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P6-C. Sign-in Page + Unauthenticated Page Redirects
+
+Status: done. Guarded by `pnpm test:auth` — the new `test-signin.mjs`
+script adds 32 assertions across 6 phases (signin page renders for
+unauth + Google CTA shape, signin authed → returnTo, dev CTA
+visibility gated by `ENABLE_DEV_SESSION_ROUTES`, all 5 product pages
+redirect unauth → `/signin` with the correct `returnTo`, all 5
+product pages 200 with a valid cookie, misconfigured auth surfaces
+as 500 NOT a /signin redirect). The existing 4 page smokes
+(`test-home`, `test-profile`, `test-workspace`, `test-history`) now
+mint a real `keepsake_session` cookie at the start of each smoke so
+the existing assertions still hold under the stricter page guard.
+
+Goal: turn P6-B's Google sign-in transport into a real product
+entrypoint. After P6-C, opening any of the 5 in-product pages
+unauthenticated lands the user on `/signin`, signing in returns
+them to the page they wanted, and a deployment-level auth break
+shows a 500 instead of looping users back to `/signin`.
+
+Shipped:
+
+- `app/signin/page.tsx` — server component. Renders a minimal CTA
+  page when the visitor has no session; 307s to `returnTo` (default
+  `/`) when they do. Google CTA is always visible; "Continue as dev
+  owner" form appears only when `ENABLE_DEV_SESSION_ROUTES=1`.
+- `lib/server/auth/require-session.server.ts` — new helper
+  `requireSessionUserOrRedirect(returnTo)`. Cookie-only via
+  `currentSessionUserOrThrow()`; unauthenticated → `redirect("/signin?returnTo=…")`;
+  misconfigured → re-raises as 500. Also exports a strict
+  `safeReturnTo()` (only relative paths survive).
+- `lib/server/auth/current-user.server.ts` — new export
+  `currentSessionUserOrThrow()`. Same shape as
+  `currentUserOrThrow()` but skips the `DEV_OWNER_*` env fallback.
+- `app/{,people,workspace,history,profile}/page.tsx` migrated to
+  `requireSessionUserOrRedirect()`. Each page declares its own
+  `returnTo` (workspace preserves `?person=…`).
+- `app/api/auth/dev-session/start/route.ts` extended: when
+  `?returnTo=` is present in the query, the route 303s with the
+  session cookie attached so the `/signin` dev-CTA form gets a
+  proper redirect; without it, the original 200 + JSON receipt is
+  preserved.
+- The 4 page smokes (`test-home`, `test-profile`, `test-workspace`,
+  `test-history`) gained a `mintSession()` setup step that POSTs to
+  `/api/auth/dev-session/start` once at boot and threads the
+  cookie through subsequent fetches. The existing assertions are
+  unchanged.
+
+Out of scope (still future slices):
+
+- **No** middleware. Each page guards itself; no global
+  authenticated-by-default behaviour.
+- **No** global navigation / logout button. `/api/auth/dev-session/clear`
+  exists as a CLI tool; a UI logout lands in a later slice.
+- **No** removal of the `DEV_OWNER_*` fallback from the
+  cookie-first `currentUserOrThrow()` path. The API / route / seam
+  layer continues to allow env fallback so existing smokes don't
+  need a sign-in step.
+- **No** Gmail-sender flow changes. Profile / Workspace / Gmail
+  connect-disconnect routes still work identically.
+- **No** mobile-specific layout for `/signin` — desktop-first
+  minimal layout only.
 
 ### P5. People Editing MVP
 

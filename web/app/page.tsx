@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
-import { currentUserOrThrow } from "@/lib/server/auth/current-user.server";
+import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
 import { getPeoplePayload } from "@/lib/server/people-payload/index.server";
 import { nodeChipText, urgencyLevel } from "@/lib/presentation";
 
@@ -16,10 +16,13 @@ const metaColor: Record<string, string> = {
 };
 
 export default async function HomePage() {
-  const [user, { people, occasions }] = await Promise.all([
-    currentUserOrThrow(),
-    getPeoplePayload(),
-  ]);
+  // The auth guard must complete BEFORE we hit the people payload — in
+  // KEEPSAKE_DATA_SOURCE=db mode, getPeoplePayload() reaches into
+  // currentUserIdOrThrow() inside its own transaction, and a concurrent
+  // Promise.all would race a `redirect()` against a 500 unauthenticated
+  // throw. The redirect must always win.
+  const user = await requireSessionUserOrRedirect("/");
+  const { people, occasions } = await getPeoplePayload();
   const occasionById = (id: string | null | undefined) =>
     id ? occasions.find((o) => o.id === id) : undefined;
 

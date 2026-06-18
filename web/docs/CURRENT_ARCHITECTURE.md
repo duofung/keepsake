@@ -80,6 +80,50 @@ payload) is NEVER silently downgraded to env fallback.** It returns
 401 `Unauthenticated`. The signing secret being absent while a cookie
 is present is `Auth is misconfigured` (500).
 
+### `/signin` page and page-level redirects
+
+After P6-C, every "inside the product" page (`/`, `/people`,
+`/workspace`, `/history`, `/profile`) calls a stricter helper —
+`requireSessionUserOrRedirect(currentPath)` from
+`lib/server/auth/require-session.server.ts` — instead of the
+cookie-first-with-env-fallback `currentUserOrThrow()`. The helper:
+
+1. calls `currentSessionUserOrThrow()` (cookie-only — no `DEV_OWNER_*`
+   fallback);
+2. on `AuthError("unauthenticated", …)` `redirect()`s to
+   `/signin?returnTo=<currentPath>`;
+3. on `AuthError("misconfigured", …)` re-raises so Next surfaces a
+   500 — a deployment break is NOT masked as a sign-in prompt.
+
+`/signin` (`app/signin/page.tsx`) is a server component. It calls
+`currentSessionUserOrThrow()` itself: visitors who already have a
+valid `keepsake_session` are 307-redirected to `returnTo` (default
+`/`). Unauthenticated visitors see a minimal page with one CTA:
+
+- **Continue with Google** — `<a href="/api/auth/google/start?returnTo=…">`.
+- When `ENABLE_DEV_SESSION_ROUTES=1` is set, a second
+  **Continue as dev owner** form posts to
+  `/api/auth/dev-session/start?returnTo=…`. The dev-session route
+  was extended this slice: when `returnTo` is present in the query,
+  the response is 303 to that path (with the session cookie
+  attached); without it, the historical 200 + JSON receipt is
+  preserved.
+
+`returnTo` is uniformly validated as a strict relative path
+(`/foo/bar` ok, `//evil.example`, `https://…`, anything that isn't
+a leading `/`-prefixed non-double-slash path is rejected). Invalid
+values fall back to `/`. The 5 product pages each declare their own
+`returnTo` string so the post-sign-in redirect lands the user back
+on the exact view they tried to open (workspace preserves
+`?person=…`).
+
+`currentUserOrThrow()` is deliberately unchanged: routes, API
+handlers, and server seams still get cookie-first behaviour with
+`DEV_OWNER_*` fallback so the existing smoke suite + local dev
+continue to work without a sign-in step. The split is intentional:
+the **page** layer is strict; the **machine** layer is permissive
+until the env fallback is retired in a later slice.
+
 `/api/auth/google/start` (GET) and `/api/auth/google/callback` (GET)
 are the real **Google identity sign-in transport** (P6-B). This is a
 SEPARATE OAuth flow from `lib/server/oauth/gmail.server.ts` — that flow

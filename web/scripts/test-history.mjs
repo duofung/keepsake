@@ -15,6 +15,14 @@ const projectRoot = resolve(__dirname, "..");
 const PORT = Number(process.env.TEST_PORT ?? 3134);
 const BASE = `http://localhost:${PORT}`;
 
+const SESSION_SECRET = "test-history-app-session-secret-min-32-chars";
+const TEST_USER = {
+  id: "77777777-7777-4777-8777-777777777777",
+  email: "history-fixture@example.test",
+  name: "History Fixture",
+};
+let sessionCookie = "";
+
 // React encodes apostrophes as `&#x27;` in attributes and stitches text
 // segments around interpolated values with empty HTML comments
 // (`Hello<!-- -->4<!-- --> world`). Normalize both so substring assertions
@@ -29,7 +37,9 @@ function normalize(html) {
 }
 
 async function getHistory() {
-  const res = await fetch(`${BASE}/history`);
+  const res = await fetch(`${BASE}/history`, {
+    headers: sessionCookie ? { cookie: `keepsake_session=${sessionCookie}` } : {},
+  });
   const text = await res.text();
   return { status: res.status, html: text, body: normalize(text) };
 }
@@ -38,12 +48,26 @@ async function waitForReady(timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(`${BASE}/history`);
-      if (r.ok) return;
+      // /history now redirects unauthenticated users. Use /api/session
+      // (which 200s on env-fallback) as the readiness probe instead.
+      const r = await fetch(`${BASE}/api/session`);
+      if (r.status < 500) return;
     } catch {}
     await wait(500);
   }
   throw new Error(`dev server did not become ready at ${BASE}`);
+}
+
+async function mintSession() {
+  const res = await fetch(`${BASE}/api/auth/dev-session/start`, {
+    method: "POST",
+  });
+  if (res.status !== 200) {
+    throw new Error(`dev-session/start failed: status=${res.status}`);
+  }
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  sessionCookie = setCookie.match(/keepsake_session=([^;]+)/)?.[1] ?? "";
+  if (!sessionCookie) throw new Error("dev-session/start did not set a cookie");
 }
 
 const failures = [];
@@ -63,6 +87,11 @@ const child = spawn(nextBin, ["dev", "--port", String(PORT)], {
   env: {
     ...process.env,
     BROWSER: "none",
+    DEV_OWNER_ID: TEST_USER.id,
+    DEV_OWNER_EMAIL: TEST_USER.email,
+    DEV_OWNER_NAME: TEST_USER.name,
+    APP_SESSION_SIGNING_SECRET: SESSION_SECRET,
+    ENABLE_DEV_SESSION_ROUTES: "1",
     KEEPSAKE_DATA_SOURCE: "mock",
     NEXT_TELEMETRY_DISABLED: "1",
   },
@@ -79,6 +108,7 @@ child.on("exit", (code) => {
 try {
   process.stdout.write(`booting next dev on :${PORT}…\n`);
   await waitForReady();
+  await mintSession();
   process.stdout.write(`server ready, running assertions:\n`);
 
   const { status, body } = await getHistory();

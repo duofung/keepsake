@@ -57,12 +57,35 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Session issue failed" }, { status: 500 });
   }
 
+  // When called from the `/signin` page form, we want a redirect to
+  // `returnTo` instead of a JSON payload. The presence of the query
+  // param is the signal — operators using `curl` without it still
+  // get the JSON receipt they expect.
+  const url = new URL(req.url);
+  const returnToParam = url.searchParams.get("returnTo");
+  const redirectTo = returnToParam !== null ? safeReturnTo(returnToParam) : null;
+
+  if (redirectTo !== null) {
+    // 303 See Other lets the browser follow with GET after a POST.
+    const response = NextResponse.redirect(`${url.origin}${redirectTo}`, {
+      status: 303,
+    });
+    response.cookies.set(cookie.name, cookie.value, cookie.options);
+    return response;
+  }
+
   const response = NextResponse.json(
     { user: { ...identity, sendingAccount: null } },
     { status: 200 },
   );
   response.cookies.set(cookie.name, cookie.value, cookie.options);
   return response;
+}
+
+const RELATIVE_PATH = /^\/(?!\/)[^\s]*$/;
+function safeReturnTo(input: string | null): string {
+  const value = input?.trim() ?? "";
+  return RELATIVE_PATH.test(value) ? value : "/";
 }
 
 function isSecureOrigin(req: Request): boolean {

@@ -10,7 +10,7 @@
     "env:init": "node scripts/init-dev-env.mjs",
     "db:seed:dev": "node scripts/seed-dev-fixtures.mjs",
     "test:boundaries": "node scripts/test-boundaries.mjs",
-    "test:auth": "node scripts/test-auth-current-user.mjs && node scripts/test-session-route.mjs && node scripts/test-google-signin.mjs",
+    "test:auth": "node scripts/test-auth-current-user.mjs && node scripts/test-session-route.mjs && node scripts/test-google-signin.mjs && node scripts/test-signin.mjs",
     "test:oauth": "node scripts/test-gmail-oauth-routes.mjs",
     "test:gmail-disconnect": "node scripts/test-gmail-disconnect-route.mjs",
     "test:deliveries": "node scripts/test-deliveries-route.mjs",

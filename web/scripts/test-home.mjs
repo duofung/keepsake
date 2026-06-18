@@ -21,6 +21,9 @@ const testUser = {
   name: "Home Fixture",
 };
 
+const SESSION_SECRET = "test-home-app-session-secret-min-32-chars-ok";
+let sessionCookie = "";
+
 function normalize(html) {
   return html
     .replace(/<!--\s*-->/g, "")
@@ -46,9 +49,23 @@ async function waitForReady(timeoutMs = 60_000) {
 }
 
 async function getHome() {
-  const res = await fetch(BASE);
+  const res = await fetch(BASE, {
+    headers: sessionCookie ? { cookie: `keepsake_session=${sessionCookie}` } : {},
+  });
   const text = await res.text();
   return { status: res.status, body: normalize(text) };
+}
+
+async function mintSession() {
+  const res = await fetch(`${BASE}/api/auth/dev-session/start`, {
+    method: "POST",
+  });
+  if (res.status !== 200) {
+    throw new Error(`dev-session/start failed: status=${res.status}`);
+  }
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  sessionCookie = setCookie.match(/keepsake_session=([^;]+)/)?.[1] ?? "";
+  if (!sessionCookie) throw new Error("dev-session/start did not set a cookie");
 }
 
 const failures = [];
@@ -70,6 +87,8 @@ const child = spawn(nextBin, ["dev", "--port", String(PORT)], {
     DEV_OWNER_ID: testUser.id,
     DEV_OWNER_EMAIL: testUser.email,
     DEV_OWNER_NAME: testUser.name,
+    APP_SESSION_SIGNING_SECRET: SESSION_SECRET,
+    ENABLE_DEV_SESSION_ROUTES: "1",
     KEEPSAKE_DATA_SOURCE: "mock",
     NEXT_TELEMETRY_DISABLED: "1",
   },
@@ -86,6 +105,7 @@ child.on("exit", (code) => {
 try {
   process.stdout.write(`booting next dev on :${PORT}...\n`);
   await waitForReady();
+  await mintSession();
   process.stdout.write("server ready, running assertions:\n");
 
   const { status, body } = await getHome();
