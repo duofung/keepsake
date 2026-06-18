@@ -8,7 +8,7 @@ import { createPeopleRepository } from "@/lib/repositories/people.server";
 const peopleRepository = createPeopleRepository();
 
 export async function getDbPeoplePayload(): Promise<PeoplePayload> {
-  const ownerId = currentUserIdOrThrow();
+  const ownerId = await currentUserIdOrThrow();
   return transaction(ownerId, (tx) => (
     peopleRepository.listWithRelations(ownerId, tx)
   ));

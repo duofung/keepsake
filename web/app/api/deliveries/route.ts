@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     // The dispatcher itself calls `dataSource()`, which throws `AuthError`
     // when `KEEPSAKE_DATA_SOURCE` is invalid — same misconfigured contract
     // as `/api/session` and `/api/gmail/disconnect`.
-    currentUserIdOrThrow();
+    await currentUserIdOrThrow();
     result = await enqueueDelivery(body);
   } catch (error) {
     return authFailureResponse(error);

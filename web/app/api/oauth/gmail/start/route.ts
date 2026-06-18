@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const ownerId = currentUserIdOrThrow();
+    const ownerId = await currentUserIdOrThrow();
     const result = await startGmailOAuth({
       ownerId,
       returnTo: url.searchParams.get("returnTo")?.trim() || null,

@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const url = new URL(req.url);
-    const ownerId = currentUserIdOrThrow();
+    const ownerId = await currentUserIdOrThrow();
     const result = await disconnectGmailAccount(ownerId, url.origin);
     return NextResponse.redirect(result.redirectTo, 303);
   } catch (error) {

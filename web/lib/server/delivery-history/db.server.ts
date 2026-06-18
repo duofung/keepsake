@@ -8,7 +8,7 @@ import { transaction } from "@/lib/server/db/transaction.server";
 const deliveryRepository = createDeliveryRepository();
 
 export async function getDbDeliveryHistory(): Promise<Delivery[]> {
-  const ownerId = currentUserIdOrThrow();
+  const ownerId = await currentUserIdOrThrow();
   return transaction(ownerId, (tx) => (
     deliveryRepository.listByMonth(ownerId, { limit: 50 }, tx)
   ));

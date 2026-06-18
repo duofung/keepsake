@@ -33,7 +33,7 @@ Rules:
 | People data | Stable read path | DB-backed people payload and repository reads. | People CRUD UI/API, imports, merge/archive semantics. |
 | Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence + user-edit versioning | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. `PATCH /api/drafts` persists Workspace subject + card edits as new canonical versions with `prompt_input_hash = NULL`. | Paragraph / tone editing, prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
-| Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
+| Auth/current user | Cookie-backed session foundation + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source; `DEV_OWNER_*` env still works as fallback when no cookie is present (transitional). `currentUserOrThrow` / `currentUserIdOrThrow` are async. `/api/auth/dev-session/start` mints a cookie from env; `/api/auth/dev-session/clear` removes it. `/api/session` shape unchanged. | Real sign-in / OAuth-issued sessions, retiring the `DEV_OWNER_*` fallback. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. | Webhook ingest (delivered/opened), retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model. |
@@ -554,6 +554,68 @@ Out of scope (still future slices):
   documented that path explicitly.
 - No metrics / structured tracing infrastructure beyond the JSON
   summary the manual script prints.
+
+### P6-A. Cookie-backed App Session Foundation
+
+Status: done. Guarded by `pnpm test:auth` (sign/verify roundtrip,
+tamper / expiry / missing-secret matrix on the helper, end-to-end
+cookie / env-fallback / no-silent-fallback flow against the real
+route layer via `dev-session/start` + `dev-session/clear`).
+
+Goal: turn the `DEV_OWNER_*` env-read auth seam into a real
+**session container** so future sign-in slices have somewhere to
+land, without changing the public `{ user }` contract or shipping a
+sign-in product.
+
+Shipped:
+
+- `lib/server/auth/session.server.ts` — stateless signed cookie
+  helper. `issueSessionCookie({ ownerId, email, name, nowMs?,
+  ttlSeconds?, secure? })` → `{ name: "keepsake_session", value,
+  options }`. `verifySessionCookie({ cookieValue, nowMs? })`
+  validates HMAC-SHA256 + expiry. Secret = `APP_SESSION_SIGNING_SECRET`
+  (≥32 chars). Cookie attributes: HttpOnly, SameSite=Lax, Path=/,
+  Secure on https origins. Default TTL 24h. Errors normalise to
+  `SessionError("unauthenticated" | "misconfigured", …)`.
+- `lib/server/auth/current-user.server.ts` — cookie-first resolver.
+  Order: (1) verify `keepsake_session` cookie if present; (2)
+  `DEV_OWNER_*` env fallback when NO cookie is present. A present
+  but invalid cookie (bad signature / expired / malformed payload)
+  raises `AuthError("unauthenticated")` and DOES NOT silently
+  downgrade to env — that's the explicit transitional contract.
+  Both `currentUserOrThrow()` and `currentUserIdOrThrow()` are now
+  `async` (Next 15's `cookies()` is async-only); every call site
+  was already in an async chain — 11 sites migrated, one-line each.
+- `app/api/auth/dev-session/start/route.ts` — POST. Gated behind
+  `ENABLE_DEV_SESSION_ROUTES=1` (404 when unset, no information
+  leak). Bootstrap is env-ONLY (`devOwnerFromEnvOrThrow()`); the
+  route deliberately does NOT consult any existing cookie, so a
+  tampered cookie cannot block bootstrap and a stale-but-valid
+  cookie cannot deflect identity. Mints a fresh cookie and returns
+  the same `{ user }` shape as `/api/session`. `Secure` on https
+  origins.
+- `app/api/auth/dev-session/clear/route.ts` — POST. Same gate. 404
+  when disabled, Max-Age=0 cookie when enabled.
+- `currentUserIdOrThrow()` migrated to async, all 11 call sites
+  awaited.
+- `.env.example` documents `APP_SESSION_SIGNING_SECRET` separately
+  from the existing `OAUTH_STATE_SIGNING_SECRET` so operators don't
+  conflate the two.
+
+Out of scope (still future slices):
+
+- No real sign-in / Google identity / OAuth-driven session minting.
+- No registration, password, magic-link, or email-confirmation
+  flows.
+- No multi-session management (one cookie, one device, one TTL).
+- No DB session table — stateless cookie is enough for the
+  foundation; persistent sessions land if/when we need
+  revocation-on-demand.
+- No middleware that gates the whole site. Each route / page still
+  reaches into the auth seam directly.
+- `DEV_OWNER_*` env fallback is intentionally kept so the existing
+  smoke suite + local dev keep working. It will be retired in a
+  later slice when real sign-in lands.
 
 ### P5. People Editing MVP
 

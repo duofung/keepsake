@@ -145,7 +145,7 @@ export async function generateDbDraft(
   if (invalid) return invalid;
 
   try {
-    const ownerId = currentUserIdOrThrow();
+    const ownerId = await currentUserIdOrThrow();
     // Resolve generator outside the transaction so a misconfigured provider
     // fails fast without holding a DB connection.
     const draftGenerator = getDraftGenerator();
@@ -199,7 +199,7 @@ export async function getLatestDbDraft(
   if (invalid) return invalid;
 
   try {
-    const ownerId = currentUserIdOrThrow();
+    const ownerId = await currentUserIdOrThrow();
 
     return await transaction(ownerId, async (tx) => {
       const result = await resolveDbDraftContextInTx(
@@ -246,7 +246,7 @@ export async function saveDbDraftEdit(
   }
 
   try {
-    const ownerId = currentUserIdOrThrow();
+    const ownerId = await currentUserIdOrThrow();
 
     return await transaction(ownerId, async (tx) => {
       const baseEntry = await draftRepository.getEditBaseById(
@@ -311,7 +311,7 @@ export async function listDbDraftVersions(
   if (invalid) return invalid;
 
   try {
-    const ownerId = currentUserIdOrThrow();
+    const ownerId = await currentUserIdOrThrow();
     const safeLimit = safeVersionsLimit(input.limit);
     const readLimit = Math.min(30, Math.max(safeLimit * 3, safeLimit));
 

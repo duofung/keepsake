@@ -39,7 +39,7 @@ export async function enqueueDbDelivery(
   if (invalid) return invalid;
 
   try {
-    const ownerId = currentUserIdOrThrow();
+    const ownerId = await currentUserIdOrThrow();
 
     return await transaction(ownerId, async (tx) => {
       // 1. person + occasion ownership through the shared context resolver

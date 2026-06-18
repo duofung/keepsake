@@ -13,7 +13,7 @@ const STATE_COOKIE_NAME = "keepsake_gmail_oauth_state";
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const ownerId = currentUserIdOrThrow();
+    const ownerId = await currentUserIdOrThrow();
     const cookieStore = await cookies();
     const stateCookie = cookieStore.get(STATE_COOKIE_NAME)?.value ?? null;
 

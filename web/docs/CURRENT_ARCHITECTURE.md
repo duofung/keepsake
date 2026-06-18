@@ -61,11 +61,41 @@ client                    server
   │                         │
 ```
 
-This is the stable public session contract. Today `current-user` reads the
-dev-only `DEV_OWNER_*` env values and validates UUID/email/name. It does not
-touch DB, cookies, OAuth, Gmail, or write paths. Future cookie/OAuth work
-replaces the internals of `lib/server/auth/current-user.server.ts`; the route
-continues to return `{ user }`.
+This is the stable public session contract.
+
+`lib/server/auth/current-user.server.ts` now resolves identity in this
+order:
+
+1. **App session cookie** (`keepsake_session`). The cookie is a
+   signed `<base64url payload>.<base64url sig>` produced by
+   `lib/server/auth/session.server.ts` (HMAC-SHA256 over the payload,
+   secret = `APP_SESSION_SIGNING_SECRET`, min 32 chars, default TTL
+   24h). Successful verification yields `{ ownerId, email, name }`.
+2. **`DEV_OWNER_*` env fallback** when NO cookie is present. This is
+   the transitional bridge that keeps local dev + the existing smoke
+   suite runnable while real sign-in lands later.
+
+**A cookie that is present but invalid (signature, expiry, malformed
+payload) is NEVER silently downgraded to env fallback.** It returns
+401 `Unauthenticated`. The signing secret being absent while a cookie
+is present is `Auth is misconfigured` (500).
+
+`/api/auth/dev-session/start` (POST) and `/api/auth/dev-session/clear`
+(POST) are minimal dev/test bootstrap routes. **Both are gated behind
+`ENABLE_DEV_SESSION_ROUTES=1`** and return 404 when the flag is unset
+so they cannot be exercised in production / staging deployments. When
+enabled: `start` reads identity STRICTLY from `DEV_OWNER_*` env via
+`devOwnerFromEnvOrThrow()` (never consulting any existing cookie, so a
+tampered cookie can't block bootstrap and a stale-but-valid cookie
+can't deflect identity), mints a fresh session cookie, and returns the
+same `{ user }` shape as `/api/session`. `clear` issues a `Max-Age=0`
+cookie. They are not a sign-in product.
+
+Public contract is unchanged: `{ user }` on success; 401 / 500 stay
+the same. `currentUserIdOrThrow()` is now `async` (it must read the
+cookie via `next/headers`); every call site is already in an async
+chain — see `git log` for the one-line migrations across the
+routes / server seams.
 
 ### `GET /api/oauth/gmail/start` and `GET /api/oauth/gmail/callback`
 

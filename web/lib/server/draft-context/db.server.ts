@@ -15,7 +15,7 @@ export async function resolveDbDraftContext(
   input: DraftRequest,
 ): Promise<DraftContextResolution> {
   try {
-    const ownerId = currentUserIdOrThrow();
+    const ownerId = await currentUserIdOrThrow();
 
     return await transaction(ownerId, (tx) => (
       resolveDbDraftContextInTx(ownerId, input, tx)
