@@ -19,3 +19,13 @@ import type { WorkerResult } from "./types";
 export async function processNextQueuedEmailMock(): Promise<WorkerResult> {
   return { status: "nothing_to_do" };
 }
+
+/**
+ * Mock recovery is a no-op: there is no persistent queue in mock mode.
+ * The signature matches the DB seam so the dispatcher stays uniform.
+ */
+export async function recoverStaleSendingDeliveriesMock(
+  _staleAfterSeconds: number,
+): Promise<readonly string[]> {
+  return [];
+}

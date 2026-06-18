@@ -229,6 +229,14 @@ export async function __closeWorkerPoolForTest() {
     "@/lib/repositories/gmail-accounts.server": gmailAccts,
     "./gmail-transport.server": transport,
   });
+  const mockWorker = await tr("lib/server/delivery-worker/mock.server.ts");
+  const runtime = await tr("lib/server/delivery-worker/runtime.server.ts");
+  const dispatcher = await tr("lib/server/delivery-worker/index.server.ts", {
+    "./db.server": dbWorker,
+    "./mock.server": mockWorker,
+    "./runtime.server": runtime,
+    "./gmail-transport.server": transport,
+  });
 
   const txExports = require(txMod);
   helperClose = async () => {
@@ -239,7 +247,12 @@ export async function __closeWorkerPoolForTest() {
       await txExports.__closePoolForTest();
     }
   };
-  return { processNextQueuedEmailDb: require(dbWorker).processNextQueuedEmailDb };
+  const dispatcherExports = require(dispatcher);
+  return {
+    processNextQueuedEmailDb: require(dbWorker).processNextQueuedEmailDb,
+    recoverStaleSendingDeliveriesDb: require(dbWorker).recoverStaleSendingDeliveriesDb,
+    runWorkerLoop: dispatcherExports.runWorkerLoop,
+  };
 }
 
 // ────────────────────────────── main ──────────────────────────────────
@@ -422,7 +435,11 @@ try {
   delete process.env.GOOGLE_CLIENT_ID;
   delete process.env.GOOGLE_CLIENT_SECRET;
 
-  const { processNextQueuedEmailDb } = await loadWorker();
+  const {
+    processNextQueuedEmailDb,
+    recoverStaleSendingDeliveriesDb,
+    runWorkerLoop,
+  } = await loadWorker();
 
   // ── Phase 0: WORKER MISCONFIG MUST NOT BURN QUEUED ROWS ─────────────
   process.stdout.write("phase 0 — misconfigured worker does NOT consume queue:\n");
@@ -621,6 +638,247 @@ try {
   const result5 = await processNextQueuedEmailDb();
   check("final tick returns nothing_to_do",
     result5.status === "nothing_to_do", JSON.stringify(result5));
+
+  // Helper for the loop / recovery phases.
+  async function insertQueuedRow() {
+    return withClient(adminUrl, async (client) => {
+      const nameEnc = encryptToBytea(
+        ownerId, "deliveries", "recipient_name_enc", "Lin", key32);
+      const emailEnc = encryptToBytea(
+        ownerId, "deliveries", "recipient_email_enc", recipientEmail, key32);
+      const labelEnc = encryptToBytea(
+        ownerId, "deliveries", "occasion_label_enc", "Anniversary", key32);
+      const r = await client.query(
+        `
+          INSERT INTO deliveries (
+            owner_id, person_id, draft_id, recipient_name_enc, recipient_email_enc,
+            occasion_kind, occasion_label_enc, channel, status
+          )
+          VALUES ($1, $2, $3, $4, $5, 'anniversary', $6, 'email', 'queued')
+          RETURNING id::text AS id
+        `,
+        [ownerId, linPersonId, draftId, nameEnc, emailEnc, labelEnc],
+      );
+      return r.rows[0].id;
+    });
+  }
+  async function insertSendingRow(ageInterval) {
+    return withClient(adminUrl, async (client) => {
+      const nameEnc = encryptToBytea(
+        ownerId, "deliveries", "recipient_name_enc", "Lin", key32);
+      const emailEnc = encryptToBytea(
+        ownerId, "deliveries", "recipient_email_enc", recipientEmail, key32);
+      const labelEnc = encryptToBytea(
+        ownerId, "deliveries", "occasion_label_enc", "Anniversary", key32);
+      const r = await client.query(
+        `
+          INSERT INTO deliveries (
+            owner_id, person_id, draft_id, recipient_name_enc, recipient_email_enc,
+            occasion_kind, occasion_label_enc, channel, status,
+            updated_at
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, 'anniversary', $6, 'email', 'sending',
+            now() - $7::interval
+          )
+          RETURNING id::text AS id
+        `,
+        [ownerId, linPersonId, draftId, nameEnc, emailEnc, labelEnc, ageInterval],
+      );
+      return r.rows[0].id;
+    });
+  }
+  async function selectDelivery(id) {
+    return withClient(adminUrl, async (client) => {
+      const r = await client.query(
+        `SELECT status, sent_at, provider_message_id, updated_at FROM deliveries WHERE id = $1::uuid`,
+        [id],
+      );
+      return r.rows[0];
+    });
+  }
+
+  // ── Phase 6: runWorkerLoop drains multiple queued rows ─────────────
+  process.stdout.write("phase 6 — runWorkerLoop drains multiple queued rows:\n");
+  const sendCallsBeforeLoop = rig.sendCalls.length;
+  const phase6Rows = [
+    await insertQueuedRow(),
+    await insertQueuedRow(),
+    await insertQueuedRow(),
+  ];
+  const loopSummary = await runWorkerLoop({ maxTicks: 10 });
+  check("loop sent === 3",
+    loopSummary.sent === 3, JSON.stringify(loopSummary));
+  check("loop failed === 0", loopSummary.failed === 0);
+  check("loop recovered === 0", loopSummary.recovered === 0);
+  check("loop stopReason === empty",
+    loopSummary.stopReason === "empty");
+  check("loop ticks === 4 (3 sent + 1 nothing_to_do)",
+    loopSummary.ticks === 4, `ticks=${loopSummary.ticks}`);
+  check("Gmail send called 3 more times",
+    rig.sendCalls.length === sendCallsBeforeLoop + 3);
+  for (let i = 0; i < phase6Rows.length; i++) {
+    const row = await selectDelivery(phase6Rows[i]);
+    check(`row ${i} now sent`, row.status === "sent");
+    check(`row ${i} has provider_message_id`,
+      typeof row.provider_message_id === "string" && row.provider_message_id.length > 0);
+  }
+
+  // ── Phase 7: stale `sending` recovery + replay ─────────────────────
+  process.stdout.write("phase 7 — stale sending recovery requeues + replays:\n");
+  const staleId = await insertSendingRow("30 minutes");
+  const freshSendingId = await insertSendingRow("10 seconds");
+  // Sanity: both rows exist in sending before recovery runs.
+  {
+    const stale = await selectDelivery(staleId);
+    const fresh = await selectDelivery(freshSendingId);
+    check("stale row starts in sending", stale.status === "sending");
+    check("fresh row starts in sending", fresh.status === "sending");
+  }
+  const sendCallsBeforeRecovery = rig.sendCalls.length;
+  const recoverySummary = await runWorkerLoop({
+    maxTicks: 5,
+    recovery: { staleAfterSeconds: 600 },  // 10 minutes
+  });
+  check("recovered === 1 (only the stale one)",
+    recoverySummary.recovered === 1, JSON.stringify(recoverySummary));
+  check("sent === 1 (the recovered row was processed)",
+    recoverySummary.sent === 1);
+  check("stopReason === empty",
+    recoverySummary.stopReason === "empty");
+  {
+    const stale = await selectDelivery(staleId);
+    check("stale row was requeued + sent",
+      stale.status === "sent", `status=${stale.status}`);
+    check("stale row's provider_message_id was captured on the replay",
+      typeof stale.provider_message_id === "string" && stale.provider_message_id.length > 0);
+    check("Gmail send was called for the recovered row",
+      rig.sendCalls.length === sendCallsBeforeRecovery + 1);
+    const fresh = await selectDelivery(freshSendingId);
+    check("fresh `sending` row was NOT touched",
+      fresh.status === "sending", `status=${fresh.status}`);
+  }
+
+  // ── Phase 8: direct recovery method, no-op when nothing is stale ───
+  process.stdout.write("phase 8 — recoverStaleSendingDeliveriesDb no-op on healthy queue:\n");
+  {
+    const recovered = await recoverStaleSendingDeliveriesDb(600);
+    check("no rows recovered (only the still-fresh sending row exists)",
+      recovered.length === 0, `recovered=${recovered.length}`);
+  }
+
+  // ── Phase 9: misconfig pre-claim still works inside loop ──────────
+  process.stdout.write("phase 9 — loop refuses to claim when misconfigured:\n");
+  await insertQueuedRow();
+  const savedClientId = process.env.GOOGLE_CLIENT_ID;
+  const savedClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  delete process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_CLIENT_SECRET;
+  const sendCallsBeforeMis = rig.sendCalls.length;
+  const queuedCountBefore = await withClient(adminUrl, async (client) => {
+    const r = await client.query(
+      `SELECT COUNT(*)::int AS n FROM deliveries WHERE status = 'queued'`,
+    );
+    return r.rows[0].n;
+  });
+  const misSummary = await runWorkerLoop({ maxTicks: 5 });
+  process.env.GOOGLE_CLIENT_ID = savedClientId;
+  process.env.GOOGLE_CLIENT_SECRET = savedClientSecret;
+  check("loop stopReason === misconfigured",
+    misSummary.stopReason === "misconfigured", JSON.stringify(misSummary));
+  check("loop missing lists the env vars",
+    Array.isArray(misSummary.missing) && misSummary.missing.length === 2);
+  check("loop sent === 0", misSummary.sent === 0);
+  check("Gmail send was NOT called during misconfigured loop",
+    rig.sendCalls.length === sendCallsBeforeMis);
+  const queuedCountAfter = await withClient(adminUrl, async (client) => {
+    const r = await client.query(
+      `SELECT COUNT(*)::int AS n FROM deliveries WHERE status = 'queued'`,
+    );
+    return r.rows[0].n;
+  });
+  check("queued count unchanged by misconfigured loop",
+    queuedCountAfter === queuedCountBefore,
+    `before=${queuedCountBefore} after=${queuedCountAfter}`);
+
+  // ── Phase 10: preflight gates RECOVERY too (P5-B blocker fix) ──────
+  // Critical regression: with `recovery` configured, a misconfigured
+  // worker must NOT requeue stale `sending` rows. Recovery carries a
+  // duplicate-send risk and cannot run when we already know the send
+  // path is broken.
+  process.stdout.write("phase 10 — misconfigured loop with recovery is side-effect free:\n");
+  // Insert a stale sending row that the recovery threshold WOULD touch.
+  const staleId10 = await insertSendingRow("30 minutes");
+  // And a fresh queued row to confirm even tick claim doesn't happen.
+  const queuedId10 = await insertQueuedRow();
+
+  const sendCallsBefore10 = rig.sendCalls.length;
+  const queuedCountBefore10 = await withClient(adminUrl, async (client) => {
+    const r = await client.query(
+      `SELECT COUNT(*)::int AS n FROM deliveries WHERE status = 'queued'`,
+    );
+    return r.rows[0].n;
+  });
+  const sendingCountBefore10 = await withClient(adminUrl, async (client) => {
+    const r = await client.query(
+      `SELECT COUNT(*)::int AS n FROM deliveries WHERE status = 'sending'`,
+    );
+    return r.rows[0].n;
+  });
+
+  const savedClientId10 = process.env.GOOGLE_CLIENT_ID;
+  const savedClientSecret10 = process.env.GOOGLE_CLIENT_SECRET;
+  delete process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_CLIENT_SECRET;
+  const summary10 = await runWorkerLoop({
+    maxTicks: 5,
+    recovery: { staleAfterSeconds: 600 },
+  });
+  process.env.GOOGLE_CLIENT_ID = savedClientId10;
+  process.env.GOOGLE_CLIENT_SECRET = savedClientSecret10;
+
+  check("stopReason === misconfigured",
+    summary10.stopReason === "misconfigured", JSON.stringify(summary10));
+  check("recovered === 0 (recovery NOT executed)",
+    summary10.recovered === 0,
+    `recovered=${summary10.recovered}`);
+  check("sent === 0", summary10.sent === 0);
+  check("ticks === 0", summary10.ticks === 0);
+  check("Gmail stub was NOT called",
+    rig.sendCalls.length === sendCallsBefore10,
+    `before=${sendCallsBefore10} after=${rig.sendCalls.length}`);
+
+  const stale10After = await selectDelivery(staleId10);
+  check("stale sending row remains in sending",
+    stale10After.status === "sending",
+    `status=${stale10After.status}`);
+  check("stale row's updated_at was NOT bumped to now",
+    stale10After.updated_at instanceof Date
+      && (Date.now() - stale10After.updated_at.getTime()) > 5_000,
+    `updated_at=${stale10After.updated_at?.toISOString()}`);
+  const queued10After = await selectDelivery(queuedId10);
+  check("fresh queued row remains in queued",
+    queued10After.status === "queued",
+    `status=${queued10After.status}`);
+
+  const queuedCountAfter10 = await withClient(adminUrl, async (client) => {
+    const r = await client.query(
+      `SELECT COUNT(*)::int AS n FROM deliveries WHERE status = 'queued'`,
+    );
+    return r.rows[0].n;
+  });
+  check("queued count unchanged (no recovery → no requeue)",
+    queuedCountAfter10 === queuedCountBefore10,
+    `before=${queuedCountBefore10} after=${queuedCountAfter10}`);
+  const sendingCountAfter10 = await withClient(adminUrl, async (client) => {
+    const r = await client.query(
+      `SELECT COUNT(*)::int AS n FROM deliveries WHERE status = 'sending'`,
+    );
+    return r.rows[0].n;
+  });
+  check("sending count unchanged (stale row still stale)",
+    sendingCountAfter10 === sendingCountBefore10,
+    `before=${sendingCountBefore10} after=${sendingCountAfter10}`);
 } catch (error) {
   process.stderr.write(`\n${error?.message ?? String(error)}\n`);
   failures.push("harness");

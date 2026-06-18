@@ -331,6 +331,39 @@ export class PgDeliveryRepository implements DeliveryRepository {
     return deliveryFromRow(row.owner_id as OwnerId, row);
   }
 
+  async requeueStaleSending(
+    staleAfterSeconds: number,
+    tx?: Tx,
+  ): Promise<readonly ID[]> {
+    if (!tx) {
+      throw new Error(
+        "DeliveryRepository.requeueStaleSending must be called inside a worker tx.",
+      );
+    }
+    if (!(staleAfterSeconds > 0)) {
+      // Refuse to "recover" rows we just touched — that would race with
+      // a healthy worker that's mid-send.
+      throw new Error(
+        "staleAfterSeconds must be a positive number of seconds.",
+      );
+    }
+    const seconds = Math.max(1, Math.floor(staleAfterSeconds));
+    const result = await query<{ id: string }>(
+      tx,
+      `
+        UPDATE deliveries
+        SET status = 'queued',
+            provider_message_id = NULL,
+            updated_at = now()
+        WHERE status = 'sending'
+          AND updated_at < now() - make_interval(secs => $1::int)
+        RETURNING id::text AS id
+      `,
+      [seconds],
+    );
+    return result.rows.map((row) => row.id);
+  }
+
   async nextQueued(limit: number, tx?: Tx): Promise<DeliveryQueueItem[]> {
     // FOR UPDATE SKIP LOCKED is the no-double-send primitive. Two workers
     // running concurrently will each lock disjoint rows; this method itself

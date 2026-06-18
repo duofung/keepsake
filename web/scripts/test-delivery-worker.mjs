@@ -33,27 +33,37 @@ function check(name, cond, detail = "") {
   }
 }
 
-async function loadTransport() {
-  const src = await readFile(
-    join(projectRoot, "lib/server/delivery-worker/gmail-transport.server.ts"),
-    "utf8",
-  );
-  const cleaned = src.replace(/^import "server-only";\n/m, "");
-  const compiled = ts.transpileModule(cleaned, {
-    fileName: "gmail-transport.server.ts",
-    compilerOptions: {
-      esModuleInterop: true,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
-  }).outputText;
+async function loadDeliveryWorkerModules() {
   const tempRoot = join(projectRoot, ".next", "test-delivery-worker");
   await mkdir(tempRoot, { recursive: true });
   const tempDir = await mkdtemp(join(tempRoot, "run-"));
-  const out = join(tempDir, "gmail-transport.cjs");
-  await writeFile(out, compiled);
+  async function transpile(relPath) {
+    const src = await readFile(join(projectRoot, relPath), "utf8");
+    const cleaned = src.replace(/^import "server-only";\n/m, "");
+    const compiled = ts.transpileModule(cleaned, {
+      fileName: relPath,
+      compilerOptions: {
+        esModuleInterop: true,
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+      },
+    }).outputText;
+    const out = join(
+      tempDir,
+      relPath.replace(/[\/\\]/g, "_").replace(/\.ts$/, ".cjs"),
+    );
+    await writeFile(out, compiled);
+    return out;
+  }
+  const transportPath = await transpile(
+    "lib/server/delivery-worker/gmail-transport.server.ts",
+  );
+  const runtimePath = await transpile(
+    "lib/server/delivery-worker/runtime.server.ts",
+  );
   return {
-    mod: require(out),
+    transport: require(transportPath),
+    runtime: require(runtimePath),
     cleanup: () => rm(tempDir, { force: true, recursive: true }),
   };
 }
@@ -124,7 +134,7 @@ function startStub() {
   });
 }
 
-const { mod, cleanup } = await loadTransport();
+const { transport: mod, runtime: runtimeMod, cleanup } = await loadDeliveryWorkerModules();
 const stub = await startStub();
 process.stdout.write(`stub provider listening on :${STUB_PORT}\n`);
 
@@ -369,8 +379,256 @@ try {
     check("config valid after restoring env", ok === true);
   }
 
-  // ── 8. 2xx without canonical id → transport_error ──────────────────
-  process.stdout.write("phase 8 — 2xx without canonical id is strict:\n");
+  // ── 9-13. runDeliveryWorkerLoop ────────────────────────────────────
+  // The loop is pure logic; we inject `tick` + `recover` so we don't
+  // need DB or HTTP. Each phase configures a sequence of fake results.
+  process.stdout.write("phase 9 — loop stops on nothing_to_do (empty queue):\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    let tickCount = 0;
+    const tick = async () => {
+      tickCount++;
+      return { status: "nothing_to_do" };
+    };
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 5 },
+      { tick, recover: async () => [], preflight: () => [] },
+    );
+    check("stopReason is empty", summary.stopReason === "empty");
+    check("did exactly one tick", summary.ticks === 1 && tickCount === 1);
+    check("sent / failed / recovered are zero",
+      summary.sent === 0 && summary.failed === 0 && summary.recovered === 0);
+  }
+
+  process.stdout.write("phase 10 — loop drains multiple sent then stops:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    const sequence = [
+      { status: "sent", deliveryId: "a", providerMessageId: "g-1" },
+      { status: "sent", deliveryId: "b", providerMessageId: "g-2" },
+      { status: "sent", deliveryId: "c", providerMessageId: "g-3" },
+      { status: "nothing_to_do" },
+    ];
+    let i = 0;
+    const tick = async () => sequence[i++];
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 10 },
+      { tick, recover: async () => [], preflight: () => [] },
+    );
+    check("ticks counts every call including the final empty",
+      summary.ticks === 4, `ticks=${summary.ticks}`);
+    check("sent === 3", summary.sent === 3);
+    check("stopReason is empty", summary.stopReason === "empty");
+  }
+
+  process.stdout.write("phase 11 — misconfigured halts immediately:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    let tickCount = 0;
+    const tick = async () => {
+      tickCount++;
+      return {
+        status: "misconfigured",
+        missing: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+      };
+    };
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 5 },
+      { tick, recover: async () => [], preflight: () => [] },
+    );
+    check("stopReason is misconfigured",
+      summary.stopReason === "misconfigured");
+    check("missing list surfaced",
+      Array.isArray(summary.missing) && summary.missing.length === 2);
+    check("only one tick made it through",
+      summary.ticks === 1 && tickCount === 1);
+  }
+
+  process.stdout.write("phase 12 — max_ticks caps a busy queue:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    let tickCount = 0;
+    const tick = async () => {
+      tickCount++;
+      return { status: "sent", deliveryId: `id-${tickCount}`, providerMessageId: "x" };
+    };
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 3 },
+      { tick, recover: async () => [], preflight: () => [] },
+    );
+    check("stops at the budget", summary.ticks === 3);
+    check("stopReason is max_ticks", summary.stopReason === "max_ticks");
+    check("sent === 3 (every tick succeeded)", summary.sent === 3);
+  }
+
+  process.stdout.write("phase 13 — recovery runs once, before ticks:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    let recoverCalls = 0;
+    let recoverArg = null;
+    const tick = async () => ({ status: "nothing_to_do" });
+    const recover = async (sec) => {
+      recoverCalls++;
+      recoverArg = sec;
+      return ["r-1", "r-2", "r-3"];
+    };
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 5, recovery: { staleAfterSeconds: 600 } },
+      { tick, recover, preflight: () => [] },
+    );
+    check("recover called exactly once", recoverCalls === 1);
+    check("recover got the configured threshold", recoverArg === 600);
+    check("recovered count matches returned ids", summary.recovered === 3);
+    check("stopReason is empty (nothing left after recovery)",
+      summary.stopReason === "empty");
+  }
+
+  process.stdout.write("phase 14 — stopOnFailure halts on first failed:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    const seq = [
+      { status: "sent", deliveryId: "a", providerMessageId: "g-1" },
+      { status: "failed", deliveryId: "b", reason: "gmail_send_error" },
+      { status: "sent", deliveryId: "c", providerMessageId: "g-3" }, // should never run
+    ];
+    let i = 0;
+    const tick = async () => seq[i++];
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 5, stopOnFailure: true },
+      { tick, recover: async () => [], preflight: () => [] },
+    );
+    check("stopReason is stopped_on_failure",
+      summary.stopReason === "stopped_on_failure");
+    check("ticks is 2", summary.ticks === 2);
+    check("sent is 1, failed is 1",
+      summary.sent === 1 && summary.failed === 1);
+    check("third tick was NOT reached", i === 2);
+  }
+
+  process.stdout.write("phase 15 — without stopOnFailure, loop drains past failures:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    const seq = [
+      { status: "failed", deliveryId: "a", reason: "gmail_send_error" },
+      { status: "sent", deliveryId: "b", providerMessageId: "g-2" },
+      { status: "failed", deliveryId: "c", reason: "transport_error" },
+      { status: "nothing_to_do" },
+    ];
+    let i = 0;
+    const tick = async () => seq[i++];
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 10 },
+      { tick, recover: async () => [], preflight: () => [] },
+    );
+    check("ticks is 4", summary.ticks === 4);
+    check("sent === 1, failed === 2",
+      summary.sent === 1 && summary.failed === 2);
+    check("stopReason is empty",
+      summary.stopReason === "empty");
+  }
+
+  process.stdout.write("phase 16 — fatal tick error is caught:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    const tick = async () => { throw new Error("boom"); };
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 3 },
+      { tick, recover: async () => [], preflight: () => [] },
+    );
+    check("stopReason is fatal_error",
+      summary.stopReason === "fatal_error");
+    check("fatalError mentions the cause",
+      typeof summary.fatalError === "string" && summary.fatalError.includes("boom"));
+    check("ticks is 0 (nothing finalised)", summary.ticks === 0);
+  }
+
+  process.stdout.write("phase 17 — fatal recovery error halts before any tick:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    let tickCount = 0;
+    const tick = async () => { tickCount++; return { status: "nothing_to_do" }; };
+    const recover = async () => { throw new Error("recovery boom"); };
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 3, recovery: { staleAfterSeconds: 60 } },
+      { tick, recover, preflight: () => [] },
+    );
+    check("stopReason is fatal_error",
+      summary.stopReason === "fatal_error");
+    check("ticks is 0 (recovery failed before any tick)",
+      summary.ticks === 0 && tickCount === 0);
+    check("fatalError mentions recovery",
+      typeof summary.fatalError === "string"
+        && summary.fatalError.includes("recovery boom"));
+  }
+
+  process.stdout.write("phase 18 — invalid maxTicks is a no-op cap:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    let tickCount = 0;
+    const tick = async () => { tickCount++; return { status: "nothing_to_do" }; };
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 0 },
+      { tick, recover: async () => [], preflight: () => [] },
+    );
+    check("zero maxTicks does NOT call tick",
+      tickCount === 0 && summary.ticks === 0);
+    check("stopReason is max_ticks",
+      summary.stopReason === "max_ticks");
+  }
+
+  process.stdout.write("phase 19 — preflight gates recovery + ticks:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    let tickCalls = 0;
+    let recoverCalls = 0;
+    const tick = async () => {
+      tickCalls++;
+      return { status: "nothing_to_do" };
+    };
+    const recover = async (_sec) => {
+      recoverCalls++;
+      return ["should-never-be-recovered"];
+    };
+    const preflight = () => ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"];
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 5, recovery: { staleAfterSeconds: 600 } },
+      { tick, recover, preflight },
+    );
+    check("stopReason is misconfigured",
+      summary.stopReason === "misconfigured", JSON.stringify(summary));
+    check("missing list propagated from preflight",
+      Array.isArray(summary.missing) && summary.missing.length === 2);
+    check("recover was NOT called",
+      recoverCalls === 0, `recoverCalls=${recoverCalls}`);
+    check("tick was NOT called",
+      tickCalls === 0, `tickCalls=${tickCalls}`);
+    check("ticks counter is 0", summary.ticks === 0);
+    check("recovered counter is 0", summary.recovered === 0);
+  }
+
+  process.stdout.write("phase 20 — preflight that throws becomes fatal_error:\n");
+  {
+    const { runDeliveryWorkerLoop } = runtimeMod;
+    let recoverCalls = 0;
+    let tickCalls = 0;
+    const summary = await runDeliveryWorkerLoop(
+      { maxTicks: 5, recovery: { staleAfterSeconds: 600 } },
+      {
+        preflight: () => { throw new Error("preflight boom"); },
+        tick: async () => { tickCalls++; return { status: "nothing_to_do" }; },
+        recover: async () => { recoverCalls++; return []; },
+      },
+    );
+    check("stopReason is fatal_error",
+      summary.stopReason === "fatal_error");
+    check("fatalError mentions preflight",
+      typeof summary.fatalError === "string" && summary.fatalError.includes("preflight boom"));
+    check("recover NOT called", recoverCalls === 0);
+    check("tick NOT called", tickCalls === 0);
+  }
+
+  // ── 21. 2xx without canonical id → transport_error ─────────────────
+  process.stdout.write("phase 21 — 2xx without canonical id is strict:\n");
   freshRig();
   rig.nextSendResponse = { status: 200, body: { threadId: "thread-only" } };
   {

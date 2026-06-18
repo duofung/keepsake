@@ -1,12 +1,22 @@
 #!/usr/bin/env node
-// Manual one-shot delivery-worker entry point.
+// Manual delivery-worker entry point.
 //
-// Runs exactly one tick of `processNextQueuedEmail()` and prints the JSON
-// result. Intended for local / staging operator use, not a daemon.
-// Production scheduling lives outside this slice (the brief defers it).
+// Runs the loop runtime once: an optional stuck-`sending` recovery pass
+// followed by a bounded series of `processNextQueuedEmail()` ticks.
+// Prints the JSON summary. Intended for local / staging operator use,
+// not a daemon. Production scheduling lives outside this slice.
+//
+// Defaults match a conservative "operator runs this every few minutes":
+//   maxTicks               = 50
+//   recovery.staleAfterSeconds = 600   (10 minutes)
+//   stopOnFailure          = false     (drain past per-delivery failures)
+//
+// Override via env so we don't have to maintain a flag parser:
+//   KEEPSAKE_WORKER_MAX_TICKS=10
+//   KEEPSAKE_WORKER_RECOVERY_AFTER=900     # seconds; 0 disables recovery
+//   KEEPSAKE_WORKER_STOP_ON_FAILURE=1
 //
 // Usage:
-//   pnpm db:seed:dev            # if you need a fixture
 //   KEEPSAKE_DATA_SOURCE=db \
 //     DATABASE_URL=... \
 //     KEEPSAKE_WORKER_DATABASE_URL=... \      # optional; defaults to DATABASE_URL
@@ -23,10 +33,6 @@ import ts from "typescript";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = normalize(join(__dirname, ".."));
 const require = createRequire(import.meta.url);
-
-// Workers run outside `next dev`, so we transpile + import the seam
-// directly. This mirrors how other repo / integration smokes load TS code
-// (test-deliveries-repository.mjs, test-draft-autosave.mjs).
 
 async function loadWorker() {
   const tempRoot = join(projectRoot, ".next", "run-delivery-worker");
@@ -52,17 +58,12 @@ async function loadWorker() {
     return dest;
   }
 
-  // Resolve `@/lib/...` aliases by transpiling each module and rewriting
-  // sibling imports to the transpiled file paths.
-  const trMap = new Map();
   async function tr(relPath, aliases = {}) {
     const replacements = Object.entries(aliases).map(([alias, target]) => [
       `from "${alias}"`,
       `from "${target}"`,
     ]);
-    const dest = await transpile(relPath, replacements);
-    trMap.set(relPath, dest);
-    return dest;
+    return transpile(relPath, replacements);
   }
 
   // Order: dependencies first, then dependents.
@@ -90,23 +91,61 @@ async function loadWorker() {
     "@/lib/repositories/gmail-accounts.server": gmailAccts,
     "./gmail-transport.server": transport,
   });
+  const runtime = await tr("lib/server/delivery-worker/runtime.server.ts");
+  const mockWorker = await tr("lib/server/delivery-worker/mock.server.ts");
+  const dispatcher = await tr("lib/server/delivery-worker/index.server.ts", {
+    "./db.server": dbWorker,
+    "./mock.server": mockWorker,
+    "./runtime.server": runtime,
+    "./gmail-transport.server": transport,
+  });
 
   return {
     cleanup,
-    processNextQueuedEmailDb: require(dbWorker).processNextQueuedEmailDb,
+    runWorkerLoop: require(dispatcher).runWorkerLoop,
   };
 }
 
-const { cleanup, processNextQueuedEmailDb } = await loadWorker();
+function readNumberEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    throw new Error(`${name} must be a finite number; got ${raw}.`);
+  }
+  return value;
+}
+
+function readBoolEnv(name) {
+  const raw = process.env[name];
+  if (raw === undefined) return false;
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+const maxTicks = Math.max(1, Math.floor(readNumberEnv("KEEPSAKE_WORKER_MAX_TICKS", 50)));
+const recoverAfter = Math.max(0, Math.floor(readNumberEnv("KEEPSAKE_WORKER_RECOVERY_AFTER", 600)));
+const stopOnFailure = readBoolEnv("KEEPSAKE_WORKER_STOP_ON_FAILURE");
+
+const options = {
+  maxTicks,
+  stopOnFailure,
+  ...(recoverAfter > 0
+    ? { recovery: { staleAfterSeconds: recoverAfter } }
+    : {}),
+};
+
+const { cleanup, runWorkerLoop } = await loadWorker();
 try {
-  const result = await processNextQueuedEmailDb();
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-  // Distinct exit codes so operators / CI can branch:
-  //   0 sent / nothing_to_do
-  //   2 per-delivery failure (operator investigates the one row)
-  //   3 worker-level misconfiguration (no row was claimed; fix env)
-  if (result.status === "failed") process.exit(2);
-  if (result.status === "misconfigured") process.exit(3);
+  const summary = await runWorkerLoop(options);
+  process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
+  // Exit codes so operators / CI can branch:
+  //   0 clean run (no per-delivery failures)
+  //   2 the loop saw at least one per-delivery `failed`
+  //   3 deployment-level misconfiguration (queue untouched)
+  //   4 unexpected runtime crash inside the loop
+  if (summary.stopReason === "misconfigured") process.exit(3);
+  if (summary.stopReason === "fatal_error") process.exit(4);
+  if (summary.failed > 0) process.exit(2);
   process.exit(0);
 } catch (error) {
   process.stderr.write(

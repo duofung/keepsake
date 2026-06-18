@@ -23,6 +23,7 @@ import "server-only";
 // brief explicitly defers retry / dead-letter queues.
 
 import type { DeliveryQueueItem, OwnerId, Tx } from "@/lib/repositories";
+import type { ID } from "@/lib/domain";
 import { createDeliveryRepository } from "@/lib/repositories/deliveries.server";
 import { createDraftRepository } from "@/lib/repositories/drafts.server";
 import { createGmailAccountRepository } from "@/lib/repositories/gmail-accounts.server";
@@ -203,4 +204,25 @@ export async function processNextQueuedEmailDb(): Promise<WorkerResult> {
     );
   });
   return { status: "sent", deliveryId: claimed.id, providerMessageId };
+}
+
+/**
+ * Move stuck `'sending'` rows back to `'queued'` so a subsequent worker
+ * tick re-attempts them. Only rows whose last `updated_at` is older than
+ * `staleAfterSeconds` are touched, so we don't fight a healthy worker
+ * mid-send.
+ *
+ * DUPLICATE-SEND RISK: if Gmail accepted the original send and the worker
+ * died after Gmail's 2xx but before the finalise tx committed, requeue
+ * will cause a SECOND send to the same recipient. There is no Gmail
+ * idempotency we can rely on here. The runtime contract surfaces the
+ * recovered-id count to operators so they can audit; the threshold
+ * default in `runtime.server.ts` is intentionally conservative.
+ */
+export async function recoverStaleSendingDeliveriesDb(
+  staleAfterSeconds: number,
+): Promise<readonly ID[]> {
+  return workerTransaction(async (tx) => {
+    return deliveryRepository.requeueStaleSending(staleAfterSeconds, tx);
+  });
 }

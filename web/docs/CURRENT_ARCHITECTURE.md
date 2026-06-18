@@ -501,19 +501,103 @@ mutating any row. This separates deployment problems (the operator
 fixes env) from per-delivery failures (the operator investigates that
 one row).
 
-Status lifecycle (post P5-A):
+Status lifecycle (post P5-B):
 
 ```
 queued ──claim──► sending ──Gmail OK──► sent ──webhook──► delivered ──open──► opened
-                     │
-                     └─Gmail / token error──► failed
+   ▲                 │
+   │                 └─Gmail / token error──► failed
+   │
+   └───stale recovery───── (only when `updated_at < now() - staleAfterSeconds`)
+       see runtime.server.ts: requeueing a stuck `sending` row CAN
+       cause a duplicate send when Gmail accepted the original send
+       but the worker died before the finalise tx committed.
 ```
+
+### Delivery-worker runtime: `runWorkerLoop`
+
+```
+operator                  server
+  │                         │
+  │  pnpm worker:run        │   one call → many ticks + optional recovery
+  ├────────────────────────►│
+  │                         │  scripts/run-delivery-worker.mjs
+  │                         │      │
+  │                         │      ▼
+  │                         │  lib/server/delivery-worker/index.server.ts
+  │                         │      │  runWorkerLoop(options)
+  │                         │      ▼
+  │                         │  lib/server/delivery-worker/runtime.server.ts
+  │                         │      │
+  │                         │      │  preflight()                         ← side-effect free
+  │                         │      │    DB mode: assertGmailTransportConfig()
+  │                         │      │    mock mode: always []
+  │                         │      │  if (missing.length > 0)
+  │                         │      │    return { stopReason: "misconfigured", missing }
+  │                         │      │    ↑ NO recovery, NO tick, NO DB writes
+  │                         │      │
+  │                         │      │  if (options.recovery)
+  │                         │      │    recover(staleAfterSeconds)        ← once
+  │                         │      │       requeueStaleSending(seconds)
+  │                         │      │
+  │                         │      │  loop:
+  │                         │      │    result = await tick()             ← processNextQueuedEmail
+  │                         │      │    if nothing_to_do  → stop "empty"
+  │                         │      │    if misconfigured  → stop "misconfigured"
+  │                         │      │    if failed & stopOnFailure → stop "stopped_on_failure"
+  │                         │      │    if ticks ≥ maxTicks → stop "max_ticks"
+  │                         │      │    on tick exception  → stop "fatal_error"
+  │                         │      ▼
+  │  ◄── JSON summary ──────┤   DeliveryWorkerLoopSummary:
+  │                         │     { ticks, sent, failed, recovered,
+  │                         │       stopReason, missing?, fatalError? }
+```
+
+Defaults in `pnpm worker:run` (overridable via env):
+- `KEEPSAKE_WORKER_MAX_TICKS=50`
+- `KEEPSAKE_WORKER_RECOVERY_AFTER=600` (10 minutes; `0` disables recovery)
+- `KEEPSAKE_WORKER_STOP_ON_FAILURE` unset
+
+Manual-run exit codes (the script never daemonises):
+- **0** clean run, no per-delivery failures
+- **2** the loop recorded at least one per-delivery `failed`
+- **3** deployment-level misconfiguration (queue untouched)
+- **4** unexpected runtime crash inside the loop
+
+### Stuck-`sending` recovery — explicit duplicate-send risk
+
+The worker uses three transactions on purpose (claim, hydrate, finalise)
+so we never hold a row lock across the Gmail HTTP call. If the process
+dies between Gmail's 2xx and the finalise tx commit, the row stays
+`sending` forever; there is no Gmail-side idempotency we can rely on.
+
+`runWorkerLoop({ recovery: { staleAfterSeconds } })` adds a one-shot
+recovery pass:
+`DeliveryRepository.requeueStaleSending(seconds)` runs
+`UPDATE deliveries SET status='queued', provider_message_id=NULL,
+updated_at=now() WHERE status='sending' AND updated_at < now() -
+make_interval(secs => $1)` and returns the recovered ids. The loop's
+`recovered` count surfaces straight to the operator so a non-zero
+value is auditable.
+
+**This can cause a duplicate send.** A row stuck in `sending` MAY have
+been delivered to Gmail before the worker crashed. Requeueing it means
+the recipient gets a second copy. We chose requeue over "mark failed"
+because:
+- A duplicate is recoverable (the recipient sees two warm messages);
+  a silent drop is not (the user thinks Keepsake delivered it).
+- The threshold is operator-controlled, so a careful operator can
+  inspect the row before relaxing the window.
+
+This is NOT a retry queue. There is no backoff, no max-attempts, no
+dead-letter. Operators decide what to do with `failed` rows; they're
+not auto-retried.
 
 Out of scope this slice (deferred to later P-checkpoints): webhook
 ingest (`provider_message_id` is captured but `findByProviderMessageId`
-is implemented for future use), retry / backoff, cron / daemon, batch
-draining, post-channel worker, HTML email, attachments, threaded
-replies.
+is implemented for future use), retry / backoff queue, cron / daemon,
+batch / concurrent draining, post-channel worker, HTML email,
+attachments, threaded replies.
 
 Workspace consumes this boundary: `app/workspace/WorkspaceClient.tsx` POSTs
 to `/api/deliveries` when the user clicks `Send email` / `Mail as card`,

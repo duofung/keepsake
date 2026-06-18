@@ -36,7 +36,7 @@ Rules:
 | Auth/current user | Stable dev + DB sender seam | `currentUserOrThrow`, `/api/session`, Home/Profile/Workspace identity wiring, DB-mode `sendingAccount` hydration from primary Gmail account. | Real session/OAuth auth. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
-| Email send | Stable end-to-end (enqueue + 1-row worker + Gmail send) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` (or any other invoker of `processNextQueuedEmail()`) drains one queued email row, calls Gmail via `lib/server/delivery-worker/*`, and flips the row to `sent` (with `provider_message_id`) or `failed`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send. | Webhook ingest (delivered/opened), retry/backoff, cron/daemon, stuck-`sending` reaper, batch drain, post-channel worker, `Person.email` / `person_contacts` model. |
+| Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. | Webhook ingest (delivered/opened), retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model. |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -477,6 +477,83 @@ Out of scope (still future slices):
 - No GmailAccountRepository.markExpired call when Gmail rejects the
   send itself (`gmail_send_error`) — that only fires on `token_invalid`,
   because a Gmail send refusal may be transient.
+
+### P5-B. Worker Runtime Loop + Stuck-`sending` Recovery
+
+Status: done. Guarded by `pnpm test:delivery-worker` (Docker-free
+runtime-logic phases 9–18: empty queue, multi-row drain, misconfigured
+halt, `max_ticks` cap, recovery-runs-once, `stopOnFailure`,
+drain-past-failures, fatal tick / recovery error, zero-budget cap) and
+`pnpm test:db:delivery-worker` (Postgres + Gmail stub phases 6–9:
+multi-row loop drains 3 rows end-to-end, stale-`sending` recovery
+requeues + replays a row while leaving fresh `sending` rows alone,
+direct `recoverStaleSendingDeliveriesDb` no-op on a healthy queue,
+loop-level misconfig refuses to claim).
+
+Goal: take the P5-A "manual single tick" worker and make it operable
+without writing a daemon — bounded loop + minimal stuck-`sending`
+recovery, both honest about the duplicate-send risk.
+
+Shipped:
+
+- `lib/server/delivery-worker/runtime.server.ts` — pure-logic
+  `runDeliveryWorkerLoop(options, deps)` with injected `tick` and
+  `recover` callbacks. Stop reasons: `empty` (nothing_to_do),
+  `misconfigured` (env miss), `max_ticks` (budget hit),
+  `stopped_on_failure` (opt-in halt on first failed),
+  `fatal_error` (tick or recovery threw). Summary surfaces `ticks`,
+  `sent`, `failed`, `recovered`, plus `missing[]` /
+  `fatalError` when relevant.
+- `lib/server/delivery-worker/index.server.ts` —
+  `runWorkerLoop(options)` wires the runtime to the production
+  dispatchers (`processNextQueuedEmail` + `recoverStaleSendingDeliveries`).
+- `lib/server/delivery-worker/{mock,db}.server.ts` — both gain a
+  `recoverStaleSendingDeliveries…` function; mock returns `[]`,
+  DB delegates to the repo.
+- `DeliveryRepository.requeueStaleSending(staleAfterSeconds, tx)` —
+  worker-only SQL: `UPDATE deliveries SET status='queued',
+  provider_message_id=NULL, updated_at=now() WHERE status='sending'
+  AND updated_at < now() - make_interval(secs => $1) RETURNING id`.
+  Refuses `staleAfterSeconds <= 0` to keep "recovery" from racing
+  healthy workers.
+- `pnpm worker:run` now drives `runWorkerLoop` with conservative
+  defaults: `maxTicks=50`, `recovery.staleAfterSeconds=600` (10 min),
+  `stopOnFailure=false`. Overridable via env
+  (`KEEPSAKE_WORKER_MAX_TICKS`, `KEEPSAKE_WORKER_RECOVERY_AFTER` —
+  `0` disables recovery —, `KEEPSAKE_WORKER_STOP_ON_FAILURE`).
+- Exit codes: **0** clean run, **2** at least one per-delivery
+  `failed`, **3** misconfigured (queue untouched), **4** runtime
+  crashed inside the loop.
+
+Recovery is honest about duplicate-send risk:
+
+- A row stuck in `'sending'` MAY have been delivered to Gmail before
+  the worker crashed; we have no Gmail-side idempotency. Requeueing
+  means a possible second email to the recipient.
+- We chose requeue over "mark failed" because a duplicate is more
+  recoverable for Keepsake's warm-message use case than a silent drop:
+  the recipient sees two notes instead of zero, and Keepsake's UX is
+  about consistent presence, not transactional uniqueness.
+- The threshold is operator-controlled. Default 600s (10 min) is a
+  practical floor — well above a healthy worker's tick budget — and
+  operators can raise it for tighter control or lower it for faster
+  recovery cycles, with eyes open about the duplicate risk.
+
+Out of scope (still future slices):
+
+- This is NOT a retry queue. There is no backoff, no max-attempts
+  per row, no dead-letter classification. `failed` rows stay
+  `failed`; operators decide what to do.
+- No webhook ingest (delivered/opened) yet.
+- No daemon / cron / scheduler configuration files. Production
+  scheduling is the operator's responsibility for now;
+  `runWorkerLoop` is the well-bounded primitive they can call from
+  whatever they already have.
+- No concurrent / multi-worker pool. `SELECT FOR UPDATE SKIP LOCKED`
+  already permits concurrent workers, but we haven't tested or
+  documented that path explicitly.
+- No metrics / structured tracing infrastructure beyond the JSON
+  summary the manual script prints.
 
 ### P5. People Editing MVP
 

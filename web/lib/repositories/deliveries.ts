@@ -69,4 +69,21 @@ export interface DeliveryRepository {
    * the request path must not use this.
    */
   nextQueued(limit: number, tx?: Tx): Promise<DeliveryQueueItem[]>;
+
+  /**
+   * Recover deliveries that have been stuck in `'sending'` for longer than
+   * `staleAfterSeconds`. Implementations move them back to `'queued'` so a
+   * subsequent worker tick re-attempts the send.
+   *
+   * IMPORTANT: this CAN introduce a duplicate send when Gmail accepted
+   * the original send but the worker died before the finalise tx
+   * committed. There is no Gmail-side dedup, so operators must understand
+   * the risk before lowering the threshold.
+   *
+   * Worker-only call site; the request path must not use this.
+   */
+  requeueStaleSending(
+    staleAfterSeconds: number,
+    tx?: Tx,
+  ): Promise<readonly ID[]>;
 }
