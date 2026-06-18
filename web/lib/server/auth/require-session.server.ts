@@ -53,7 +53,10 @@ export function signinUrlFor(returnTo: string | null): string {
     : "/signin";
 }
 
-export function safeReturnTo(input: string | null): string {
+export function safeReturnTo(
+  input: string | null,
+  fallback: string = "/",
+): string {
   const value = input?.trim() ?? "";
-  return RELATIVE_PATH.test(value) ? value : "/";
+  return RELATIVE_PATH.test(value) ? value : fallback;
 }

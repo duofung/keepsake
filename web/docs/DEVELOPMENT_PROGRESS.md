@@ -33,7 +33,7 @@ Rules:
 | People data | Stable read path | DB-backed people payload and repository reads. | People CRUD UI/API, imports, merge/archive semantics. |
 | Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence + user-edit versioning | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. `PATCH /api/drafts` persists Workspace subject + card edits as new canonical versions with `prompt_input_hash = NULL`. | Paragraph / tone editing, prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
-| Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start now 303s when given `?returnTo=`. `/api/session` shape unchanged. | UI logout, retiring the `DEV_OWNER_*` env fallback from the cookie-first seam. |
+| Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + sign-out + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start 303s when given `?returnTo=`. `POST /api/auth/signout` clears the cookie and 303s to `/signin` — no DB, no Google revoke, no Gmail disconnect. Profile's "Sign out" row is now a real form POST. `/api/session` shape unchanged. | Retiring the `DEV_OWNER_*` env fallback from the cookie-first seam; Google grant revoke on signout. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. | Webhook ingest (delivered/opened), retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model. |
@@ -686,6 +686,50 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P6-D. Sign-out Route + Profile Sign-out Wiring
+
+Status: done. Guarded by `pnpm test:auth` — the new `test-signout.mjs`
+script adds 14 assertions across 3 phases (signout 303 + cleared
+cookie + safe / unsafe `returnTo`, Profile renders the real form
+when authed and a cleared cookie immediately bounces back to
+`/signin?returnTo=/profile`, signout works with no DB / Google /
+Gmail env wiring).
+
+Goal: close the session loop. After P6-D, the user can hit the
+"Sign out" row in Profile and end up back on `/signin` with the
+cookie cleared, without any client component, modal, or DB hit.
+
+Shipped:
+
+- `app/api/auth/signout/route.ts` — POST-only thin route. Clears
+  `keepsake_session` (`Max-Age=0`) and 303s to `/signin`. Optional
+  `?returnTo=` goes through the shared `safeReturnTo()`; unsafe
+  values fall back to `/signin` (NOT `/`). Does not read the
+  current user, touch the DB, revoke the Google grant, or
+  disconnect Gmail.
+- `lib/server/auth/require-session.server.ts` — `safeReturnTo()`
+  now takes an optional `fallback` parameter so the signout route
+  can use `/signin` instead of `/`. Existing callers (the
+  `signinUrlFor()` helper) keep the original default.
+- `app/profile/page.tsx` — the static "Sign out" row is gone. A
+  new server-rendered `SignOutRow` wraps a `<form method="post" action="/api/auth/signout">`
+  around a full-width submit button styled to match the existing
+  settings rows. No client component, no modal.
+
+Out of scope (still future slices):
+
+- **No** Google grant revoke. Signout only tears down the app
+  session cookie.
+- **No** Gmail-account disconnect. That stays at
+  `POST /api/gmail/disconnect`.
+- **No** middleware. Pages still self-guard via
+  `requireSessionUserOrRedirect()`.
+- **No** removal of `DEV_OWNER_*` env fallback in the cookie-first
+  `currentUserOrThrow()` path.
+- **No** mobile-specific layout polish.
+- **No** command channel / global nav logout.
+- **No** DB schema changes.
 
 ### P6-C. Sign-in Page + Unauthenticated Page Redirects
 

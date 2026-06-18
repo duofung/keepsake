@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 const CONNECT_HREF = "/api/oauth/gmail/start?returnTo=/profile";
 const DISCONNECT_ACTION = "/api/gmail/disconnect";
+const SIGNOUT_ACTION = "/api/auth/signout";
 
 export default async function ProfilePage() {
   const user = await requireSessionUserOrRedirect("/profile");
@@ -52,7 +53,7 @@ export default async function ProfilePage() {
       <Section label="ACCOUNT">
         <Row icon="i-crown" title="Keepsake+ subscription" desc="Renews 14 May 2026 · designed cards, your voice" right={<Chev />} />
         <Row icon="i-shield" title="Privacy & data" desc="Your relationships stay yours, encrypted" right={<Chev />} />
-        <Row icon="i-logout" title="Sign out" last />
+        <SignOutRow />
       </Section>
       </div>
     </div>
@@ -158,6 +159,56 @@ function ConnectLink({ label }: { label: string }) {
     >
       {label}
     </a>
+  );
+}
+
+function SignOutRow() {
+  return (
+    <form
+      method="post"
+      action={SIGNOUT_ACTION}
+      style={{ margin: 0 }}
+      data-testid="profile-signout-form"
+    >
+      <button
+        type="submit"
+        data-testid="profile-signout-button"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 13,
+          padding: "14px 16px",
+          width: "100%",
+          background: "transparent",
+          border: "none",
+          borderTop: "0.5px solid var(--line)",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          textAlign: "left",
+          color: "var(--ink)",
+        }}
+      >
+        <span
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            background: "var(--soft)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--gray-1)",
+            fontSize: 17,
+            flexShrink: 0,
+          }}
+        >
+          <Icon name="i-logout" />
+        </span>
+        <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>
+          Sign out
+        </span>
+      </button>
+    </form>
   );
 }
 

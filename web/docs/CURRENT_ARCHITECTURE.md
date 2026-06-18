@@ -112,10 +112,26 @@ valid `keepsake_session` are 307-redirected to `returnTo` (default
 `returnTo` is uniformly validated as a strict relative path
 (`/foo/bar` ok, `//evil.example`, `https://…`, anything that isn't
 a leading `/`-prefixed non-double-slash path is rejected). Invalid
-values fall back to `/`. The 5 product pages each declare their own
-`returnTo` string so the post-sign-in redirect lands the user back
-on the exact view they tried to open (workspace preserves
-`?person=…`).
+values fall back to `/` (or, for sign-out, to `/signin` — see
+below). The 5 product pages each declare their own `returnTo`
+string so the post-sign-in redirect lands the user back on the
+exact view they tried to open (workspace preserves `?person=…`).
+
+### Sign-out
+
+`POST /api/auth/signout` (`app/api/auth/signout/route.ts`) closes
+the loop: it clears `keepsake_session` (`Max-Age=0`) and 303s to
+`/signin` (or to a safe relative `?returnTo=…`; unsafe values fall
+back to `/signin`, NOT to `/`). The route deliberately does NOT
+read the current user, touch the DB, revoke the Google OAuth
+grant, or disconnect Gmail. Gmail sender disconnect remains its
+own slice at `POST /api/gmail/disconnect`; Google revoke is not
+in scope yet.
+
+Profile's "Sign out" row is now a real `<form method="post" action="/api/auth/signout">`
+with a single submit button (no client component, no modal). The
+form lives at the bottom of the ACCOUNT section in
+`app/profile/page.tsx`.
 
 `currentUserOrThrow()` is deliberately unchanged: routes, API
 handlers, and server seams still get cookie-first behaviour with
@@ -765,7 +781,7 @@ interactive buttons.
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
 | Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts`, autosaves subject + card toggle through `PATCH /api/drafts`, and POSTs the send buttons to `/api/deliveries` for queue-boundary enqueue (after first flushing any pending edits); History calls the delivery-history dispatcher. | yes (Workspace draft fetches + autosave PATCH + delivery enqueue) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/session/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail. | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
+| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail. | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock,generator-errors}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/draft-generator/{index,mock,openai}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts` | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; `draft-generator/index.server.ts` dispatches `mock` vs `openai` behind `KEEPSAKE_DRAFT_SOURCE` so the route contract stays unchanged; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
@@ -931,6 +947,7 @@ The route handlers do not move.
 | `app/api/session/route.ts` | Unchanged route contract over real auth | Thin shape: call auth service → return `{ user }`; 401 for missing auth; 500 for invalid server auth config; no DB/cookies/OAuth/Gmail writes in the route | `pnpm test:auth` |
 | `app/api/oauth/gmail/start/route.ts` and `app/api/oauth/gmail/callback/route.ts` | Unchanged route contract over real Gmail OAuth | Thin shape: auth → delegate to `oauth/gmail.server.ts` → JSON failure or redirect; route files do not exchange tokens, write DB, or update `sendingAccount` directly | `pnpm test:oauth`, `pnpm test:boundaries` |
 | `app/api/gmail/disconnect/route.ts` | Unchanged thin POST route | auth → `disconnectGmailAccount(ownerId, origin)` from `lib/server/gmail-account/disconnect.server.ts` → `303` to `/profile`; idempotent; no SQL in the route. The helper reuses the auth seam's strict `dataSource()`, so a misconfigured `KEEPSAKE_DATA_SOURCE` maps to 500 with the existing auth-misconfigured error shape (no new contract). | `pnpm test:db:current-user`, `pnpm test:profile`, `pnpm test:gmail-disconnect`, `pnpm test:boundaries` |
+| `app/api/auth/signout/route.ts` | Stays a thin POST route owned by the auth seam | clears `keepsake_session` (`Max-Age=0`) and 303s to `/signin` — or to a safe relative `?returnTo=…`, falling back to `/signin` (NOT `/`) on anything unsafe. Does not read current user, touch DB, revoke the Google grant, or disconnect Gmail. Profile's sign-out row is a plain `<form method="post" action="/api/auth/signout">`. | `pnpm test:auth` (`test-signout.mjs`: 303 + cleared cookie + safe returnTo + profile form HTML + post-signout redirect + no-aux-env) |
 | `lib/server/oauth/gmail.server.ts` | Real Gmail OAuth service | `startGmailOAuth` and `completeGmailOAuth` result union; start can redirect to Google when configured; callback still 400 invalid/provider-denied or 501 until token exchange/state validation are wired; account persistence only through `GmailAccountRepository`; no send/enqueue behavior | `pnpm test:oauth` |
 | `lib/repositories/gmail-accounts.server.ts` | Auth/OAuth-facing Gmail account repository | Plaintext refresh token only appears in `GmailAccountUpsertInput`; repo encrypts `refresh_token_enc`; read methods never expose tokens; owner-scoped RLS remains active | `pnpm test:db:gmail-accounts` |
 | `lib/server/people-payload/index.server.ts` | Keep as dispatcher until mock can be deleted | `getPeoplePayload()` signature; `GET /api/people` returning `PeoplePayload` | `pnpm test:people`, `pnpm test:db:people-route` |
