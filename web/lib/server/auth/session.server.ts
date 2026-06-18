@@ -99,6 +99,18 @@ function readSecret(): Buffer {
   return Buffer.from(raw, "utf8");
 }
 
+/**
+ * Pure check that the session signing secret is present and long
+ * enough. Callers that need to surface "we won't be able to mint a
+ * session" EARLY — before kicking off a sign-in redirect / token
+ * exchange — call this instead of waiting for `issueSessionCookie()`
+ * to throw mid-flow.
+ */
+export function hasValidSessionSecret(): boolean {
+  const raw = process.env.APP_SESSION_SIGNING_SECRET?.trim() ?? "";
+  return raw.length >= MIN_SECRET_LENGTH;
+}
+
 function sign(payloadB64: string, secret: Buffer): string {
   return base64url(createHmac("sha256", secret).update(payloadB64).digest());
 }

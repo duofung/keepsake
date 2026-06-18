@@ -33,7 +33,7 @@ Rules:
 | People data | Stable read path | DB-backed people payload and repository reads. | People CRUD UI/API, imports, merge/archive semantics. |
 | Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence + user-edit versioning | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. `PATCH /api/drafts` persists Workspace subject + card edits as new canonical versions with `prompt_input_hash = NULL`. | Paragraph / tone editing, prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
 | Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
-| Auth/current user | Cookie-backed session foundation + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source; `DEV_OWNER_*` env still works as fallback when no cookie is present (transitional). `currentUserOrThrow` / `currentUserIdOrThrow` are async. `/api/auth/dev-session/start` mints a cookie from env; `/api/auth/dev-session/clear` removes it. `/api/session` shape unchanged. | Real sign-in / OAuth-issued sessions, retiring the `DEV_OWNER_*` fallback. |
+| Auth/current user | Cookie-backed session foundation + Google sign-in transport + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source; `DEV_OWNER_*` env still works as fallback when no cookie is present. `currentUserOrThrow` / `currentUserIdOrThrow` are async. `/api/auth/google/{start,callback}` runs the real Google identity flow (P6-B) — `users` row find-or-created, session cookie minted, no Gmail-sender impact. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap. `/api/session` shape unchanged. | `/signin` page + middleware redirect (P6-C), removing `DEV_OWNER_*` fallback. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. | Webhook ingest (delivered/opened), retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model. |
@@ -616,6 +616,76 @@ Out of scope (still future slices):
 - `DEV_OWNER_*` env fallback is intentionally kept so the existing
   smoke suite + local dev keep working. It will be retired in a
   later slice when real sign-in lands.
+
+### P6-B. Google Identity Sign-In Transport
+
+Status: done. Guarded by `pnpm test:auth` (default no-Docker route
+smoke for both routes — not configured, configured-redirect, provider
+denied, missing state cookie, state mismatch, data-source-not-db) and
+`pnpm test:db:google-signin` (Docker PG + local Google token stub:
+new email → users row created + session cookie minted +
+`/api/session` reflects the persisted user; same email → SAME
+`users.id` reused; new email → second `users` row).
+
+Goal: hook the P6-A `keepsake_session` cookie up to a real Google
+sign-in flow — without shipping a full sign-in product. After P6-B
+the system has the transport: users can sign in with Google, the
+callback mints a session, `/api/session` returns the same `{ user }`
+shape it always did. No page guards, no sign-in UI, no `/signin`
+page yet (that's P6-C).
+
+Shipped:
+
+- `lib/server/auth/google-signin.server.ts` — `startGoogleSignIn` +
+  `completeGoogleSignIn`. Builds the auth URL (scope: `openid email
+  profile`), signs the state cookie with `OAUTH_STATE_SIGNING_SECRET`
+  (same secret as the Gmail OAuth flow), exchanges code via native
+  `fetch` against `KEEPSAKE_AUTH_GOOGLE_TOKEN_ENDPOINT` (defaults to
+  `https://oauth2.googleapis.com/token`), decodes the `id_token`
+  payload for `email` + `name` (rejects `email_verified === false`),
+  find-or-creates the `users` row, mints `keepsake_session` via the
+  P6-A helper. Every callback response (success or failure) clears
+  the auth state cookie.
+- `lib/repositories/users.{ts,server.ts}` — minimal users repo:
+  `findByEmail(email, tx?)` + `createFromGoogleProfile({ email,
+  displayName }, tx?)`. Runs inside `workerTransaction` because the
+  sign-in path discovers identity before it knows the owner.
+- `app/api/auth/google/start/route.ts` (GET) — thin: parse
+  `returnTo`, delegate to `startGoogleSignIn`, apply 307 +
+  state-cookie or JSON error.
+- `app/api/auth/google/callback/route.ts` (GET) — thin: parse
+  `code` / `state` / `error` query params + state cookie, delegate
+  to `completeGoogleSignIn`, apply 307 + session cookie + cleared
+  state cookie on success, JSON error + cleared state cookie on
+  failure.
+- Env vars: `KEEPSAKE_AUTH_GOOGLE_CLIENT_ID` / `_SECRET` /
+  `_REDIRECT_URI` (with `__ORIGIN__` magic value),
+  `KEEPSAKE_AUTH_GOOGLE_AUTH_URL` (default Google), `KEEPSAKE_AUTH_GOOGLE_TOKEN_ENDPOINT`
+  (default Google). State cookie reuses `OAUTH_STATE_SIGNING_SECRET`.
+- Routes registered: `/api/auth/google/start`, `/api/auth/google/callback`.
+- `.env.example` documents the new env vars and explicitly notes
+  that this is a SEPARATE OAuth client from the Gmail sender flow.
+
+Explicit out of scope for P6-B:
+
+- **No** Gmail sender connect / disconnect changes. The
+  `gmail_accounts` table and `/api/oauth/gmail/*` flow are
+  untouched.
+- **No** sign-in UI / `/signin` page. Callers wire the start URL
+  themselves.
+- **No** middleware / page redirects. Pages still reach the auth
+  seam directly; `DEV_OWNER_*` fallback is preserved so the existing
+  smoke suite stays unchanged.
+- **No** people seed on user creation. New users get an empty
+  workspace until they add anyone.
+- **No** id_token JWT signature verification against Google's JWKS.
+  We trust the TLS chain to `KEEPSAKE_AUTH_GOOGLE_TOKEN_ENDPOINT`
+  the same way the existing Gmail callback does.
+- **No** removal of the `DEV_OWNER_*` fallback. That retirement
+  lands when sign-in is also the only on-ramp, in a later slice.
+- Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
+  returns 501 `not_configured` because there's no DB to persist
+  users into.
 
 ### P5. People Editing MVP
 

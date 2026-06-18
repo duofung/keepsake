@@ -80,6 +80,22 @@ payload) is NEVER silently downgraded to env fallback.** It returns
 401 `Unauthenticated`. The signing secret being absent while a cookie
 is present is `Auth is misconfigured` (500).
 
+`/api/auth/google/start` (GET) and `/api/auth/google/callback` (GET)
+are the real **Google identity sign-in transport** (P6-B). This is a
+SEPARATE OAuth flow from `lib/server/oauth/gmail.server.ts` — that flow
+asks Google for `gmail.send` and persists into `gmail_accounts`; this
+flow asks Google for `openid email profile`, never touches
+`gmail_accounts`, and on success: (a) finds-or-creates a `users` row on
+the verified email, (b) issues a `keepsake_session` cookie, (c) clears
+the auth state cookie, (d) 307s to the request's `returnTo` (default
+`/`). Configuration env: `KEEPSAKE_AUTH_GOOGLE_CLIENT_ID` /
+`_SECRET` / `_REDIRECT_URI` (state cookie reuses
+`OAUTH_STATE_SIGNING_SECRET`). 501 `not_configured` if env missing
+OR if `KEEPSAKE_DATA_SOURCE !== "db"` (no DB means no users row).
+400 `invalid_callback` / `provider_error` follow the same shape as
+the Gmail OAuth flow; every callback response (success or failure)
+clears the auth state cookie.
+
 `/api/auth/dev-session/start` (POST) and `/api/auth/dev-session/clear`
 (POST) are minimal dev/test bootstrap routes. **Both are gated behind
 `ENABLE_DEV_SESSION_ROUTES=1`** and return 404 when the flag is unset
