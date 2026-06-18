@@ -21,6 +21,23 @@ import type {
   Tx,
 } from "./types";
 
+export interface MarkStatusInput {
+  readonly deliveryId: ID;
+  readonly status: DeliveryStatus;
+  readonly providerMessageId?: string;
+  readonly providerStatus?: string;
+  readonly deliveredAtISO?: string;
+  readonly openedAtISO?: string;
+  readonly failureReason?: string;
+}
+
+export interface MarkStatusResult {
+  /** True iff the row's `status` changed as a result of this call. */
+  readonly updated: boolean;
+  /** The row's status after the call (idempotent / final). */
+  readonly status: DeliveryStatus;
+}
+
 export interface DeliveryRepository {
   // ── User-scoped ────────────────────────────────────────────────────────
 
@@ -44,15 +61,26 @@ export interface DeliveryRepository {
   // ── Worker / webhook (no ownerId) ──────────────────────────────────────
 
   /**
-   * Idempotent status update. Implementations should be safe to call twice
-   * with the same `(deliveryId, status)` because webhook providers retry.
+   * Idempotent + monotonic status update.
+   *
+   *   - `status` is the target. Implementations advance the row only when
+   *     the target ranks strictly above the current status in the
+   *     forward order `queued < sending < sent < delivered < opened`.
+   *     `'failed'` is a side-branch terminal: writable from
+   *     {queued, sending, sent} but NOT from {delivered, opened, failed}.
+   *   - Idempotent same-status calls leave the row unchanged but still
+   *     return the row's final status, so webhook providers can retry.
+   *   - Timestamps (`sent_at`, `delivered_at`, `opened_at`) are stamped
+   *     only on the first transition through their state and are never
+   *     overwritten.
+   *   - `provider_message_id`, `provider_status`, `failure_reason` are
+   *     COALESCEd in.
+   *
+   * `updated === false` means the row didn't move (already at or past
+   * the target, or already terminal). The webhook ingest treats that
+   * the same as success.
    */
-  markStatus(
-    deliveryId: ID,
-    status: DeliveryStatus,
-    providerMessageId?: string,
-    tx?: Tx,
-  ): Promise<void>;
+  markStatus(input: MarkStatusInput, tx?: Tx): Promise<MarkStatusResult>;
 
   /**
    * Webhook ingest hands us the provider's message id, not our `owner_id`.

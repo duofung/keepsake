@@ -4,7 +4,11 @@ import type { QueryResultRow } from "pg";
 import type { Channel, Delivery, ID, OccasionKind, QueuedDelivery } from "../domain";
 import { decrypt, encrypt } from "@/lib/server/crypto/envelope.server";
 import { query, transaction } from "@/lib/server/db/transaction.server";
-import type { DeliveryRepository } from "./deliveries";
+import type {
+  DeliveryRepository,
+  MarkStatusInput,
+  MarkStatusResult,
+} from "./deliveries";
 import type {
   DeliveriesListOptions,
   DeliveryEnqueueInput,
@@ -259,15 +263,15 @@ export class PgDeliveryRepository implements DeliveryRepository {
   }
 
   async markStatus(
-    deliveryId: ID,
-    status: DeliveryStatus,
-    providerMessageId?: string,
+    input: MarkStatusInput,
     tx?: Tx,
-  ): Promise<void> {
-    // Idempotent + monotonic: setting status='sent' twice with the same
-    // provider id is a no-op; provider_message_id, once written, sticks
-    // (COALESCE keeps the first non-null value). sent_at is stamped the
-    // first time status flips to 'sent'.
+  ): Promise<MarkStatusResult> {
+    // Idempotent + monotonic. The forward order is
+    //   queued < sending < sent < delivered < opened
+    // and `failed` is a side-branch terminal. The UPDATE keeps the
+    // existing `status` whenever the requested target would regress, so
+    // a late-arriving 'delivered' webhook after 'opened' is a no-op on
+    // status but still gets to fill in delivered_at if it was missing.
     //
     // No ownerId is taken because the call sites are worker / webhook —
     // see the interface contract in deliveries.ts.
@@ -276,21 +280,98 @@ export class PgDeliveryRepository implements DeliveryRepository {
         "DeliveryRepository.markStatus must be called inside a worker / webhook tx.",
       );
     }
-    await query(
+    const result = await query<{ status: DeliveryStatus; updated: boolean }>(
       tx,
       `
-        UPDATE deliveries
-        SET status = $2::delivery_status,
-            sent_at = CASE
-              WHEN $2 = 'sent' AND sent_at IS NULL THEN now()
-              ELSE sent_at
+        WITH forward AS (
+          SELECT unnest(ARRAY['queued','sending','sent','delivered','opened']::text[]) AS s,
+                 generate_series(0, 4) AS r
+        ),
+        cur AS (
+          SELECT status::text AS s FROM deliveries WHERE id = $1::uuid
+        ),
+        new_status AS (
+          SELECT CASE
+            -- terminal: nothing leaves 'failed'
+            WHEN cur.s = 'failed' THEN cur.s
+            -- side-branch terminal: 'failed' is writable only from queued/sending/sent
+            WHEN $2 = 'failed' AND cur.s IN ('queued','sending','sent') THEN 'failed'
+            WHEN $2 = 'failed' THEN cur.s
+            -- monotonic forward: advance only when target ranks higher (or equal — idempotent)
+            WHEN (SELECT r FROM forward WHERE s = $2) >=
+                 (SELECT r FROM forward WHERE s = cur.s) THEN $2
+            ELSE cur.s
+          END AS s
+          FROM cur
+        ),
+        accepted AS (
+          -- True iff the requested target was honoured. When the
+          -- request would regress (e.g. opened → delivered) the
+          -- repo refuses to mutate ANY side-effect field — provider
+          -- diagnostic fields and timestamps stay frozen.
+          SELECT (SELECT s FROM new_status) = $2 AS ok
+        )
+        UPDATE deliveries d
+        SET status = (SELECT s FROM new_status)::delivery_status,
+            sent_at = CASE WHEN (SELECT ok FROM accepted) THEN
+              COALESCE(
+                d.sent_at,
+                CASE WHEN (SELECT s FROM new_status) IN ('sent','delivered','opened')
+                     THEN now() END
+              )
+              ELSE d.sent_at
             END,
-            provider_message_id = COALESCE($3, provider_message_id),
-            updated_at = now()
-        WHERE id = $1::uuid
+            delivered_at = CASE WHEN (SELECT ok FROM accepted) THEN
+              COALESCE(
+                d.delivered_at,
+                CASE WHEN (SELECT s FROM new_status) IN ('delivered','opened')
+                     THEN COALESCE($4::timestamptz, now()) END
+              )
+              ELSE d.delivered_at
+            END,
+            opened_at = CASE WHEN (SELECT ok FROM accepted) THEN
+              COALESCE(
+                d.opened_at,
+                CASE WHEN (SELECT s FROM new_status) = 'opened'
+                     THEN COALESCE($5::timestamptz, now()) END
+              )
+              ELSE d.opened_at
+            END,
+            provider_message_id = CASE WHEN (SELECT ok FROM accepted)
+              THEN COALESCE(d.provider_message_id, $3)
+              ELSE d.provider_message_id
+            END,
+            provider_status = CASE WHEN (SELECT ok FROM accepted)
+              THEN COALESCE($6, d.provider_status)
+              ELSE d.provider_status
+            END,
+            failure_reason = CASE WHEN (SELECT ok FROM accepted)
+              THEN COALESCE($7, d.failure_reason)
+              ELSE d.failure_reason
+            END,
+            updated_at = CASE WHEN (SELECT ok FROM accepted) THEN now() ELSE d.updated_at END
+        WHERE d.id = $1::uuid
+        RETURNING
+          d.status::text AS status,
+          (d.status::text IS DISTINCT FROM (SELECT s FROM cur)) AS updated
       `,
-      [deliveryId, status, providerMessageId ?? null],
+      [
+        input.deliveryId,
+        input.status,
+        input.providerMessageId ?? null,
+        input.deliveredAtISO ?? null,
+        input.openedAtISO ?? null,
+        input.providerStatus ?? null,
+        input.failureReason ?? null,
+      ],
     );
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error(
+        `DeliveryRepository.markStatus: row not found for id=${input.deliveryId}`,
+      );
+    }
+    return { updated: row.updated, status: row.status };
   }
 
   async findByProviderMessageId(

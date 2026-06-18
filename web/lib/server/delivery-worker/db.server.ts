@@ -118,7 +118,10 @@ export async function processNextQueuedEmailDb(): Promise<WorkerResult> {
     const items = await deliveryRepository.nextQueued(1, tx);
     if (items.length === 0) return null;
     const item = items[0];
-    await deliveryRepository.markStatus(item.id, "sending", undefined, tx);
+    await deliveryRepository.markStatus(
+      { deliveryId: item.id, status: "sending" },
+      tx,
+    );
     return item;
   });
   if (!claimed) return { status: "nothing_to_do" };
@@ -128,7 +131,14 @@ export async function processNextQueuedEmailDb(): Promise<WorkerResult> {
 
   if (!hydration.ok) {
     await workerTransaction(async (tx) => {
-      await deliveryRepository.markStatus(claimed.id, "failed", undefined, tx);
+      await deliveryRepository.markStatus(
+        {
+          deliveryId: claimed.id,
+          status: "failed",
+          failureReason: `${hydration.reason}${hydration.detail ? `: ${hydration.detail}` : ""}`,
+        },
+        tx,
+      );
     });
     return {
       status: "failed",
@@ -166,7 +176,14 @@ export async function processNextQueuedEmailDb(): Promise<WorkerResult> {
   // 4. FINALISE
   if (transportError) {
     await workerTransaction(async (tx) => {
-      await deliveryRepository.markStatus(claimed.id, "failed", undefined, tx);
+      await deliveryRepository.markStatus(
+        {
+          deliveryId: claimed.id,
+          status: "failed",
+          failureReason: `${transportError!.reason}: ${transportError!.message}`,
+        },
+        tx,
+      );
       // Token-invalid means the refresh token is dead — surface that on
       // the Gmail account so a future enqueue can hit the 409 path
       // instead of queuing yet another row that can't be sent.
@@ -197,9 +214,7 @@ export async function processNextQueuedEmailDb(): Promise<WorkerResult> {
   const providerMessageId = sendResult!.providerMessageId;
   await workerTransaction(async (tx) => {
     await deliveryRepository.markStatus(
-      claimed.id,
-      "sent",
-      providerMessageId,
+      { deliveryId: claimed.id, status: "sent", providerMessageId },
       tx,
     );
   });

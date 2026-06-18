@@ -721,6 +721,77 @@ references whatever the user just saw, not a stale generator output.
 
 ---
 
+### `POST /api/webhooks/deliveries` — provider status callback
+
+```
+provider                  server
+  │                         │
+  │  POST /api/webhooks/    │   header  x-keepsake-webhook-secret: <env-shared>
+  │       deliveries        │   body    { provider: "gmail"|"mock",
+  ├────────────────────────►│             providerMessageId, event,
+  │                         │             occurredAtISO?, failureReason?,
+  │                         │             providerStatus? }
+  │                         │  app/api/webhooks/deliveries/route.ts
+  │                         │      │  env DELIVERY_WEBHOOK_SECRET unset → 501 not_configured
+  │                         │      │  header mismatch                  → 401 unauthorized
+  │                         │      │  json parse failure               → 400 invalid_json
+  │                         │      ▼
+  │                         │  lib/server/delivery-webhook/ingest.server.ts
+  │                         │      │  validate event shape             → 400 invalid_event (+ detail)
+  │                         │      ├─ KEEPSAKE_DATA_SOURCE unset/mock
+  │                         │      │    ▼
+  │                         │      │  mock.server.ts → 404 delivery_not_found
+  │                         │      │
+  │                         │      └─ KEEPSAKE_DATA_SOURCE=db
+  │                         │           ▼
+  │                         │         db.server.ts (workerTransaction — BYPASSRLS)
+  │                         │           │  DeliveryRepository.findByProviderMessageId
+  │                         │           │       no row → 404 delivery_not_found
+  │                         │           │  DeliveryRepository.markStatus({ deliveryId,
+  │                         │           │       status, providerStatus?, deliveredAtISO?,
+  │                         │           │       openedAtISO?, failureReason? })
+  │                         │           │       monotonic: queued < sending < sent <
+  │                         │           │       delivered < opened; 'failed' writable
+  │                         │           │       only from {queued, sending, sent}.
+  │                         │           │       Regression requests freeze ALL fields.
+  │                         │           ▼
+  │  ◄── 200 { ok, status,  ┤  status = row's final status (idempotent)
+  │           deliveryId,   │  updated = true iff this call changed status
+  │           updated }     │
+  │                         │
+```
+
+The webhook is identity-by-`providerMessageId`: it does NOT call
+`currentUserOrThrow()` and is NOT a Keepsake user-session route. The
+provider is whoever holds the shared `DELIVERY_WEBHOOK_SECRET`. The
+worker stamped `provider_message_id` on the row when it sent the
+message; the webhook closes the loop by reading status callbacks back
+into the same row. `provider_message_id` is DB-unique when non-null
+(`deliveries_provider_msg_idx`, partial UNIQUE), so the webhook
+lookup is unambiguous — duplicate worker writes would fail at insert
+time rather than fork the status timeline.
+
+Event → status mapping:
+
+- `delivered` → status `delivered`; stamps `delivered_at`
+- `opened`    → status `opened`; stamps `opened_at` (AND `delivered_at`
+  if null, since opened implies delivered)
+- `failed`    → status `failed`; stamps `failure_reason`
+
+`occurredAtISO` is the provider-reported event time; when omitted, the
+repo stamps `now()` instead. Late-arriving callbacks that would
+*regress* status (e.g. `delivered` after `opened`, or `failed` after
+`opened`) return `200 { updated: false, status: <unchanged> }` and the
+DB row's timestamps / diagnostic fields stay frozen — providers can
+retry safely.
+
+The webhook deliberately does NOT send any email, run the worker, or
+revoke OAuth grants. The route is the contract; a future Gmail push
+subscription is its own slice and will land as a new
+`provider: "gmail"` adapter on top of the same ingest.
+
+---
+
 ### Future: command channel platform
 
 WhatsApp, Telegram, Slack, and similar tools should be treated as command
@@ -781,7 +852,7 @@ interactive buttons.
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
 | Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts`, autosaves subject + card toggle through `PATCH /api/drafts`, and POSTs the send buttons to `/api/deliveries` for queue-boundary enqueue (after first flushing any pending edits); History calls the delivery-history dispatcher. | yes (Workspace draft fetches + autosave PATCH + delivery enqueue) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail. | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
+| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts`, `app/api/webhooks/deliveries/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail; `/api/webhooks/deliveries` is the provider-agnostic delivery-status callback (shared-secret gate, never reads current user). | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only, delivery status updates from webhook in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock,generator-errors}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/draft-generator/{index,mock,openai}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts` | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; `draft-generator/index.server.ts` dispatches `mock` vs `openai` behind `KEEPSAKE_DRAFT_SOURCE` so the route contract stays unchanged; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
@@ -934,6 +1005,9 @@ These seams are the only places that move when the back end goes real.
 | `lib/server/delivery-send/index.server.ts` | Dispatches `enqueueDelivery(input)` to mock by default, or DB when `KEEPSAKE_DATA_SOURCE=db`. Returns a `SendBoundaryResult` discriminated union the route maps to HTTP status. | Real auth replaces `currentUserIdOrThrow()`; future Gmail send worker reads queued rows out-of-band. The route signature does not move. |
 | `lib/server/delivery-send/mock.server.ts` | Shared `validateRequest` (UUIDs + channel) and `enqueueMockDelivery` that returns a synthetic `QueuedDelivery`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/delivery-send/db.server.ts` | `enqueueDbDelivery` resolves the owner, opens one transaction, reuses `resolveDbDraftContextInTx` for person/occasion ownership, enforces the email sender precondition via `GmailAccountRepository.getPrimary`, looks up the latest draft, and calls `DeliveryRepository.enqueue`. No Gmail call; row inserted with `status='queued'` and `sent_at=NULL`. | Same orchestration with real auth; a future Gmail worker drains queued rows and updates status. |
+| `lib/server/delivery-webhook/ingest.server.ts` | `ingestDeliveryWebhookEvent(input)` validates the provider-agnostic event (provider ∈ {gmail, mock}; event ∈ {delivered, opened, failed}) and dispatches by `KEEPSAKE_DATA_SOURCE`. Identity = `providerMessageId`; never reads current user. | A future Gmail push subscription wires `provider: "gmail"` directly into this seam; no route signature change. |
+| `lib/server/delivery-webhook/mock.server.ts` | Mock dispatch — no `deliveries` rows exist, so every well-formed event resolves to `delivery_not_found`. Keeps the contract exercisable without Postgres. | Deleted when DB is the only source. |
+| `lib/server/delivery-webhook/db.server.ts` | `ingestWebhookEventDb` runs under `workerTransaction` (BYPASSRLS), looks up the row via `DeliveryRepository.findByProviderMessageId(providerMessageId)`, maps the event to a target `DeliveryStatus`, and calls `DeliveryRepository.markStatus({ deliveryId, status, providerStatus?, deliveredAtISO?, openedAtISO?, failureReason? })`. `opened` events also pass `deliveredAtISO` so the row picks up a delivered timestamp even when the provider skipped the delivered event. | Future per-provider HMAC verification + retry queue layer on top; the seam contract stays. |
 
 The route handlers do not move.
 
@@ -948,6 +1022,7 @@ The route handlers do not move.
 | `app/api/oauth/gmail/start/route.ts` and `app/api/oauth/gmail/callback/route.ts` | Unchanged route contract over real Gmail OAuth | Thin shape: auth → delegate to `oauth/gmail.server.ts` → JSON failure or redirect; route files do not exchange tokens, write DB, or update `sendingAccount` directly | `pnpm test:oauth`, `pnpm test:boundaries` |
 | `app/api/gmail/disconnect/route.ts` | Unchanged thin POST route | auth → `disconnectGmailAccount(ownerId, origin)` from `lib/server/gmail-account/disconnect.server.ts` → `303` to `/profile`; idempotent; no SQL in the route. The helper reuses the auth seam's strict `dataSource()`, so a misconfigured `KEEPSAKE_DATA_SOURCE` maps to 500 with the existing auth-misconfigured error shape (no new contract). | `pnpm test:db:current-user`, `pnpm test:profile`, `pnpm test:gmail-disconnect`, `pnpm test:boundaries` |
 | `app/api/auth/signout/route.ts` | Stays a thin POST route owned by the auth seam | clears `keepsake_session` (`Max-Age=0`) and 303s to `/signin` — or to a safe relative `?returnTo=…`, falling back to `/signin` (NOT `/`) on anything unsafe. Does not read current user, touch DB, revoke the Google grant, or disconnect Gmail. Profile's sign-out row is a plain `<form method="post" action="/api/auth/signout">`. | `pnpm test:auth` (`test-signout.mjs`: 303 + cleared cookie + safe returnTo + profile form HTML + post-signout redirect + no-aux-env) |
+| `app/api/webhooks/deliveries/route.ts` | Stays thin; delegates to `lib/server/delivery-webhook/ingest.server.ts` | env `DELIVERY_WEBHOOK_SECRET` + header `x-keepsake-webhook-secret` gate. JSON body → `ingestDeliveryWebhookEvent`; success → 200 `{ ok, deliveryId, status, updated }`; lookup miss → 404 `delivery_not_found`; shape miss → 400 `invalid_event` (+ detail). No SQL in the route; never reads current user; the provider's `providerMessageId` is the identity. | `pnpm test:webhook-deliveries` (default 14-assertion smoke), `pnpm test:db:webhook-deliveries` (36-assertion DB smoke: transitions + no-downgrade + 404 + secret gate) |
 | `lib/server/oauth/gmail.server.ts` | Real Gmail OAuth service | `startGmailOAuth` and `completeGmailOAuth` result union; start can redirect to Google when configured; callback still 400 invalid/provider-denied or 501 until token exchange/state validation are wired; account persistence only through `GmailAccountRepository`; no send/enqueue behavior | `pnpm test:oauth` |
 | `lib/repositories/gmail-accounts.server.ts` | Auth/OAuth-facing Gmail account repository | Plaintext refresh token only appears in `GmailAccountUpsertInput`; repo encrypts `refresh_token_enc`; read methods never expose tokens; owner-scoped RLS remains active | `pnpm test:db:gmail-accounts` |
 | `lib/server/people-payload/index.server.ts` | Keep as dispatcher until mock can be deleted | `getPeoplePayload()` signature; `GET /api/people` returning `PeoplePayload` | `pnpm test:people`, `pnpm test:db:people-route` |

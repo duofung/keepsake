@@ -384,7 +384,7 @@ CREATE INDEX deliveries_owner_sent_idx ON deliveries(owner_id, sent_at DESC);
 CREATE INDEX deliveries_owner_scheduled_idx
   ON deliveries(owner_id, scheduled_for)
   WHERE status = 'queued' AND scheduled_for IS NOT NULL;
-CREATE INDEX deliveries_provider_msg_idx
+CREATE UNIQUE INDEX deliveries_provider_msg_idx                       -- webhook identity
   ON deliveries(provider_message_id)
   WHERE provider_message_id IS NOT NULL;
 CREATE INDEX deliveries_status_idx
@@ -418,7 +418,7 @@ CREATE INDEX deliveries_status_idx
 | Reminder scheduler (cron) | `occasion_nodes` by `date_iso` | `occasion_nodes_date_idx` |
 | Send worker | `deliveries` by `status IN ('queued','sent')` | `deliveries_status_idx` (partial) |
 | Send scheduler | `deliveries` by `(owner_id, scheduled_for)` for queued rows | `deliveries_owner_scheduled_idx` |
-| Webhook ingest | `deliveries` by `provider_message_id` | `deliveries_provider_msg_idx` (partial) |
+| Webhook ingest | `deliveries` by `provider_message_id` | `deliveries_provider_msg_idx` (partial **UNIQUE** — webhook identity is unambiguous) |
 
 ---
 

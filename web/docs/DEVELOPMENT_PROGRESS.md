@@ -36,7 +36,7 @@ Rules:
 | Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + sign-out + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start 303s when given `?returnTo=`. `POST /api/auth/signout` clears the cookie and 303s to `/signin` — no DB, no Google revoke, no Gmail disconnect. Profile's "Sign out" row is now a real form POST. `/api/session` shape unchanged. | Retiring the `DEV_OWNER_*` env fallback from the cookie-first seam; Google grant revoke on signout. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
-| Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. | Webhook ingest (delivered/opened), retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model. |
+| Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model. |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -686,6 +686,74 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P7-A. Delivery Webhook Ingest Contract
+
+Status: done. Guarded by `pnpm test:webhook-deliveries` (default smoke,
+14 assertions: secret gate + body validation + mock 404) and
+`pnpm test:db:webhook-deliveries` (Docker Postgres, 36 assertions:
+sent→delivered, delivered→opened, opened→delivered no-downgrade,
+sent→opened skip-delivered (still stamps delivered_at), sent→failed
+with reason, failed-after-open blocked with no side effects, unknown
+providerMessageId → 404, wrong secret in DB mode → 401).
+
+Goal: give external providers a way to report delivery progress
+without going through user-session auth. The webhook is
+provider-agnostic; identity is `provider_message_id`, the value the
+worker stamped on the row when it called Gmail. This slice ships the
+contract + DB path; the real Gmail push subscription, retries, and
+crons are still future slices.
+
+Shipped:
+
+- `db/schema.sql` — `deliveries` gains four columns:
+  `delivered_at timestamptz`, `opened_at timestamptz`,
+  `provider_status text`, `failure_reason text`. The
+  `delivery_status` enum already covered the full ladder.
+- `lib/repositories/deliveries.ts` — `DeliveryRepository.markStatus`
+  now takes `MarkStatusInput` (deliveryId / status /
+  providerMessageId? / providerStatus? / deliveredAtISO? /
+  openedAtISO? / failureReason?) and returns
+  `{ updated, status }`. The contract pins the forward order
+  `queued < sending < sent < delivered < opened` plus the
+  side-branch terminal `failed` (writable from
+  {queued, sending, sent} only).
+- `lib/repositories/deliveries.server.ts` — implementation enforces
+  the rank rules in one UPDATE: when the requested target would
+  regress, ALL side-effect fields stay frozen (timestamps,
+  provider_status, failure_reason). Idempotent same-target calls
+  COALESCE in late-arriving diagnostic data without overwriting.
+- `lib/server/delivery-worker/db.server.ts` — worker call sites
+  migrated to the new signature; failure paths now thread the
+  reason into `failure_reason` instead of dropping it.
+- `lib/server/delivery-webhook/{ingest,db,mock,types}.server.ts` —
+  new seam. `ingestDeliveryWebhookEvent(input)` validates the
+  provider-agnostic event shape (provider ∈ {gmail, mock}, event ∈
+  {delivered, opened, failed}, optional ISO `occurredAtISO`),
+  dispatches by `KEEPSAKE_DATA_SOURCE`, and returns a discriminated
+  result union (200 ok + {deliveryId, status, updated} / 400
+  invalid_event + detail / 404 delivery_not_found / 500
+  ingest_failed). NO `currentUser*` read; identity = providerMessageId.
+- `app/api/webhooks/deliveries/route.ts` — thin POST route. Gates on
+  `DELIVERY_WEBHOOK_SECRET` env + `x-keepsake-webhook-secret`
+  header (501 when unset, 401 on mismatch), then delegates. The
+  route never touches SQL.
+
+Out of scope (still future slices):
+
+- **No** real Gmail push subscription (the route is
+  provider-agnostic so a `provider:"gmail"` event with a real
+  Gmail messageId already works in DB mode; wiring Gmail's push
+  pubsub topic is its own slice).
+- **No** retry/backoff queue.
+- **No** cron / daemon to re-drive failures.
+- **No** UI changes — History page still reads status as-is.
+- **No** command channels (WhatsApp/Telegram). The webhook is for
+  provider delivery callbacks, not user-driven commands.
+- **No** `Person.email` / `person_contacts` schema work.
+- **No** provider signature / HMAC verification. Shared-secret
+  header is the gate today; HMAC bodies land when a real provider
+  push lands.
 
 ### P6-D. Sign-out Route + Profile Sign-out Wiring
 

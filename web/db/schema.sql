@@ -338,8 +338,12 @@ CREATE TABLE deliveries (
 
   scheduled_for            timestamptz,
   sent_at                  timestamptz,
+  delivered_at             timestamptz,                                -- provider webhook 'delivered' stamp
+  opened_at                timestamptz,                                -- provider webhook 'opened' stamp
   status                   delivery_status NOT NULL DEFAULT 'queued',
   provider_message_id      text,                                      -- Gmail messageId / postal vendor ref
+  provider_status          text,                                      -- raw provider state string (debugging)
+  failure_reason           text,                                      -- terminal failure detail (worker or webhook)
 
   created_at               timestamptz NOT NULL DEFAULT now(),
   updated_at               timestamptz NOT NULL DEFAULT now()
@@ -352,7 +356,11 @@ CREATE INDEX deliveries_owner_scheduled_idx
   ON deliveries (owner_id, scheduled_for)
   WHERE status = 'queued' AND scheduled_for IS NOT NULL;
 
-CREATE INDEX deliveries_provider_msg_idx
+-- Webhook identity = provider_message_id. The partial UNIQUE index makes
+-- that identity unambiguous (no two non-null rows can share the value)
+-- AND lets multiple rows coexist while provider_message_id is still NULL
+-- (the worker stamps it on the FINALISE step, not at enqueue time).
+CREATE UNIQUE INDEX deliveries_provider_msg_idx
   ON deliveries (provider_message_id)
   WHERE provider_message_id IS NOT NULL;
 
