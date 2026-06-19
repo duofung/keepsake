@@ -113,8 +113,26 @@ async function waitForNext() {
   throw new Error(`Next dev did not become ready at ${base}: ${lastError?.message ?? "unknown error"}`);
 }
 
+let sessionCookie = "";
+
+async function mintSession() {
+  const res = await fetch(`${base}/api/auth/dev-session/start`, {
+    method: "POST",
+  });
+  if (res.status !== 200) {
+    throw new Error(`dev-session/start failed: status=${res.status}`);
+  }
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  sessionCookie = setCookie.match(/keepsake_session=([^;]+)/)?.[1] ?? "";
+  if (!sessionCookie) {
+    throw new Error("dev-session/start returned no cookie");
+  }
+}
+
 async function getHistory() {
-  const res = await fetch(`${base}/history`);
+  const res = await fetch(`${base}/history`, {
+    headers: { cookie: `keepsake_session=${sessionCookie}` },
+  });
   return {
     status: res.status,
     text: await res.text(),
@@ -179,6 +197,10 @@ try {
     await client.query(`GRANT CONNECT ON DATABASE keepsake TO ${appRole}`);
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
     await client.query(`GRANT SELECT ON deliveries TO ${appRole}`);
+    // P6-A's `currentSessionUserOrThrow` hydrates `sendingAccount` from the
+    // owner's primary Gmail row, even on /history. Give the app role read
+    // access so the page can load.
+    await client.query(`GRANT SELECT ON gmail_accounts TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 
@@ -212,6 +234,12 @@ try {
       DEV_OWNER_NAME: "History Route Fixture",
       KEEPSAKE_DATA_SOURCE: "db",
       NEXT_TELEMETRY_DISABLED: "1",
+      // P6-C made /history reject env-only auth — every request needs a
+      // real keepsake_session cookie. Enable the dev-session bootstrap
+      // route and bind a session secret so we can mint one below.
+      APP_SESSION_SIGNING_SECRET:
+        "test-history-db-app-session-secret-min-32-chars",
+      ENABLE_DEV_SESSION_ROUTES: "1",
     },
   });
 
@@ -222,6 +250,7 @@ try {
 
   process.stdout.write(`booting next dev on :${port} with KEEPSAKE_DATA_SOURCE=db...\n`);
   await waitForNext();
+  await mintSession();
   process.stdout.write("server ready, running assertions:\n");
 
   const { status, text } = await getHistory();
@@ -241,6 +270,15 @@ try {
   check("contains Priya", normalizedText.includes("Priya"));
   check("contains Delivered", normalizedText.includes("Delivered"));
   check("contains Opened", normalizedText.includes("Opened"));
+  check("contains Failed", normalizedText.includes("Failed"));
+  // The seed fixture sources its row set from `lib/mock.ts`, where Jun's
+  // birthday row carries status='failed' with a non-null sent_at — so
+  // `DeliveryRepository.listByMonth` (which still filters
+  // `sent_at IS NOT NULL`) includes it and the History view surfaces it.
+  check(
+    "renders data-delivery-status=\"failed\" in DB mode",
+    text.includes('data-delivery-status="failed"'),
+  );
 
   if (serverError && failures.length) {
     process.stdout.write(`\nnext stderr:\n${serverError}\n`);

@@ -790,6 +790,21 @@ revoke OAuth grants. The route is the contract; a future Gmail push
 subscription is its own slice and will land as a new
 `provider: "gmail"` adapter on top of the same ingest.
 
+P7-A writes the row's terminal status; P7-B (`app/history/page.tsx`)
+reads it back. The History page maps `deliveries.status` to a tone
+trio via `deliveryStatusBadge` in `lib/presentation.ts`:
+
+- `queued` / `sending` / `sent` → neutral (gray / blue clock + send icons)
+- `delivered` / `opened` → success (`#3F9E78` green check)
+- `failed` → warn (`#C2381C` red `i-alert` — visually distinct from
+  the success green, so a bounced row is never read as "ok")
+
+Each row also tags itself with a `data-delivery-status="<value>"`
+attribute so smoke tests can assert the tone families don't blur.
+The History page does NOT poll for updates — a fresh page navigation
+re-reads the row's current status. Live updates / SSE / polling are
+explicit non-goals for this slice.
+
 ---
 
 ### Future: command channel platform

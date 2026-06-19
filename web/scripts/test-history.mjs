@@ -150,6 +150,38 @@ try {
   // ── Status labels ────────────────────────────────────────────────────
   check("contains status 'Delivered'", body.includes("Delivered"));
   check("contains status 'Opened'",    body.includes("Opened"));
+  check("contains status 'Failed'",    body.includes("Failed"));
+
+  // ── Each status row tags itself with a `data-delivery-status` attr ───
+  check("renders data-delivery-status=\"delivered\"",
+    body.includes('data-delivery-status="delivered"'));
+  check("renders data-delivery-status=\"opened\"",
+    body.includes('data-delivery-status="opened"'));
+  check("renders data-delivery-status=\"failed\"",
+    body.includes('data-delivery-status="failed"'));
+
+  // ── Failed must NOT borrow the delivered/opened green-check ──────────
+  // Slice the HTML around the `failed` row and verify it uses the warn
+  // tone class + alert icon, never the green success markers used by
+  // delivered/opened.
+  const failedMatch = body.match(
+    /data-delivery-status="failed"[\s\S]{0,400}?<\/div>/,
+  );
+  check("failed status block is present in HTML",
+    failedMatch !== null, "no failed status block found");
+  if (failedMatch) {
+    const block = failedMatch[0];
+    check("failed block carries ks-delivery-status--warn class",
+      block.includes("ks-delivery-status--warn"));
+    check("failed block does NOT carry ks-delivery-status--success class",
+      !block.includes("ks-delivery-status--success"));
+    check("failed block uses i-alert icon",
+      block.includes("#i-alert"));
+    check("failed block does NOT use i-check-plain icon",
+      !block.includes("#i-check-plain"));
+    check("failed block does NOT use the success green (#3F9E78)",
+      !block.includes("#3F9E78"));
+  }
 } catch (err) {
   process.stdout.write(`harness error: ${err?.message ?? err}\n`);
   failures.push("harness");

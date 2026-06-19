@@ -1,7 +1,7 @@
 // Maps domain values to UI tokens (icon names, gradients, badge backgrounds).
 // Kept out of domain.ts so the DB shape stays clean and these can change freely.
 
-import type { Channel, OccasionKind, Tone } from "./domain";
+import type { Channel, DeliveryStatus, OccasionKind, Tone } from "./domain";
 
 export const occasionIcon: Record<OccasionKind, string> = {
   anniversary: "i-heart",
@@ -59,6 +59,35 @@ export const cardGradientByHint: Record<string, string> = {
 export const channelBadge: Record<Channel, { bg: string; fg: string; label: string; icon: string }> = {
   email: { bg: "var(--blue-wash)", fg: "var(--blue-deep)", label: "Email", icon: "i-mail" },
   post: { bg: "#FBEFE4", fg: "#B5832E", label: "Card", icon: "i-truck" },
+};
+
+// Delivery-status presentation. The History page surfaces these directly;
+// other pages may follow once they care about post-send progress.
+//
+// `tone` groups statuses into the colour family they belong to:
+//   * "neutral" — in-flight / not-yet-confirmed (queued, sending, sent)
+//   * "success" — provider reported a positive outcome (delivered, opened)
+//   * "warn"    — provider reported a terminal failure (failed)
+//
+// We use literal hex codes for the success / warn colours so smoke tests
+// can assert that a `failed` row does NOT borrow the success green.
+export const DELIVERY_STATUS_SUCCESS_COLOR = "#3F9E78";
+export const DELIVERY_STATUS_WARN_COLOR = "#C2381C";
+
+export interface DeliveryStatusBadge {
+  readonly label: string;
+  readonly icon: string;
+  readonly color: string;
+  readonly tone: "neutral" | "success" | "warn";
+}
+
+export const deliveryStatusBadge: Record<DeliveryStatus, DeliveryStatusBadge> = {
+  queued:    { label: "Queued",    icon: "i-clock",       color: "var(--gray-2)",    tone: "neutral" },
+  sending:   { label: "Sending",   icon: "i-send",        color: "var(--blue-deep)", tone: "neutral" },
+  sent:      { label: "Sent",      icon: "i-send",        color: "var(--gray-1)",    tone: "neutral" },
+  delivered: { label: "Delivered", icon: "i-check-plain", color: DELIVERY_STATUS_SUCCESS_COLOR, tone: "success" },
+  opened:    { label: "Opened",    icon: "i-check-plain", color: DELIVERY_STATUS_SUCCESS_COLOR, tone: "success" },
+  failed:    { label: "Failed",    icon: "i-alert",       color: DELIVERY_STATUS_WARN_COLOR,    tone: "warn" },
 };
 
 // "in 12 days" → soon; "in 4 months" → mid; "Last note · 2 mo ago" → far.

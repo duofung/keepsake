@@ -36,7 +36,7 @@ Rules:
 | Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + sign-out + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start 303s when given `?returnTo=`. `POST /api/auth/signout` clears the cookie and 303s to `/signin` — no DB, no Google revoke, no Gmail disconnect. Profile's "Sign out" row is now a real form POST. `/api/session` shape unchanged. | Retiring the `DEV_OWNER_*` env fallback from the cookie-first seam; Google grant revoke on signout. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
-| Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model. |
+| Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -686,6 +686,60 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P7-B. Surface Delivery Status in History UI
+
+Status: done. Guarded by `pnpm test:history` (23 assertions: every row
+renders, Delivered/Opened/Failed labels all present, every status
+tags itself with `data-delivery-status`, failed row carries the
+`ks-delivery-status--warn` class + `i-alert` icon + a non-green
+colour) and `pnpm test:db:history-route` (DB-mode `/history` renders
+Failed and the matching `data-delivery-status="failed"` hook).
+
+Goal: close the visual loop opened by P7-A. The webhook can now drive
+a row from `sent` to `delivered` / `opened` / `failed`, and History
+needs to read that status faithfully — especially failed bounces,
+which were previously rendered with the same green check as a
+successful delivery.
+
+Shipped:
+
+- `lib/presentation.ts` — new `deliveryStatusBadge` map (label / icon
+  / color / tone) for all six `DeliveryStatus` values. Three tones:
+  neutral (queued, sending, sent), success (delivered, opened — both
+  use `#3F9E78` green check), warn (failed — `#C2381C` red `i-alert`).
+  Constants `DELIVERY_STATUS_SUCCESS_COLOR` / `_WARN_COLOR` are
+  exported so future surfaces can reuse them.
+- `app/history/page.tsx` — replaces the inline
+  `it.status === "opened" ? "Opened" : …` block with
+  `deliveryStatusBadge[it.status]`. Each status `<div>` now carries
+  `data-delivery-status="<value>"` + `class="ks-delivery-status
+  ks-delivery-status--<tone>"` so smoke tests can pin the tone
+  family without parsing the DOM. No client component, no polling.
+- `lib/mock.ts` — Jun's birthday email flipped from `opened` to
+  `failed` (1 of 4 keepsakes). The row still has a real `sentAtISO`,
+  so `DeliveryRepository.listByMonth`'s `sent_at IS NOT NULL` filter
+  is unchanged and the DB fixture inherits the same sample via
+  `scripts/seed-dev-fixtures.mjs`.
+- `scripts/test-history.mjs` — adds 10 new assertions covering the
+  Failed label, data-attribute hooks for all three rendered statuses,
+  and that the failed row does NOT share the success green / check.
+- `scripts/test-history-db-route.mjs` — DB smoke gains Failed +
+  `data-delivery-status="failed"` assertions (the same Jun row,
+  end-to-end through schema + seeder + repository + page).
+
+Out of scope (still future slices):
+
+- **No** Gmail push subscription. The webhook still accepts
+  `provider:"mock"` events for tests; real Gmail wiring is its own
+  slice.
+- **No** retry / backoff / dead-letter for failed rows.
+- **No** cron / daemon.
+- **No** live updates / polling / SSE. A failed row only updates on
+  page refresh.
+- **No** Workspace-side delivery status timeline.
+- **No** schema changes (the four columns added in P7-A cover it).
+- **No** change to `/api/webhooks/deliveries`.
 
 ### P7-A. Delivery Webhook Ingest Contract
 

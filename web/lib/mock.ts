@@ -144,7 +144,10 @@ export const people: Person[] = [
 export const deliveries: Delivery[] = [
   { id: "d-1", personId: "p-other-ahma", recipientName: "Ah Ma", occasionKind: "lunar-new-year", occasionLabel: "Lunar New Year", channel: "post", sentAtISO: "2026-03-02", status: "delivered" },
   { id: "d-2", personId: "p-lin", recipientName: "Lin", occasionKind: "custom", occasionLabel: "Valentine's note", channel: "email", sentAtISO: "2026-02-14", status: "opened" },
-  { id: "d-3", personId: "p-other-jun", recipientName: "Jun", occasionKind: "birthday", occasionLabel: "Birthday", channel: "email", sentAtISO: "2026-01-20", status: "opened" },
+  // Jun's birthday note was sent but the provider later reported a bounce.
+  // History should render this row in the `failed` tone — distinct from the
+  // green delivered/opened rows above. The keepsake count stays at 4.
+  { id: "d-3", personId: "p-other-jun", recipientName: "Jun", occasionKind: "birthday", occasionLabel: "Birthday", channel: "email", sentAtISO: "2026-01-20", status: "failed" },
   { id: "d-4", personId: "p-other-priya", recipientName: "Priya", occasionKind: "deepavali", occasionLabel: "Deepavali", channel: "post", sentAtISO: "2026-01-08", status: "delivered" },
 ];
 

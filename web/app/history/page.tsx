@@ -1,7 +1,12 @@
 import Icon from "@/components/Icon";
 import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
 import { getDeliveryHistory } from "@/lib/server/delivery-history/index.server";
-import { cardGradientByHint, channelBadge, occasionIcon } from "@/lib/presentation";
+import {
+  cardGradientByHint,
+  channelBadge,
+  deliveryStatusBadge,
+  occasionIcon,
+} from "@/lib/presentation";
 import type { Delivery, OccasionKind } from "@/lib/domain";
 
 export const dynamic = "force-dynamic";
@@ -59,9 +64,7 @@ export default async function HistoryPage() {
             </div>
             {g.items.map((it) => {
               const badge = channelBadge[it.channel];
-              const statusLabel = it.status === "opened" ? "Opened"
-                : it.status === "delivered" ? "Delivered"
-                : it.status === "sent" ? "Sent" : "Queued";
+              const status = deliveryStatusBadge[it.status];
               return (
                 <div key={it.id} style={{
                   display: "flex", alignItems: "center", gap: 14, padding: 13,
@@ -98,12 +101,17 @@ export default async function HistoryPage() {
                     <div style={{ fontSize: 11.5, color: "var(--gray-3)", textAlign: "right" }}>
                       {shortDate(it.sentAtISO)}
                     </div>
-                    <div style={{
-                      fontSize: 10.5, color: "#3F9E78", display: "flex",
-                      alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 3,
-                    }}>
-                      <span style={{ fontSize: 12 }}><Icon name="i-check-plain" /></span>
-                      {statusLabel}
+                    <div
+                      data-delivery-status={it.status}
+                      className={`ks-delivery-status ks-delivery-status--${status.tone}`}
+                      style={{
+                        fontSize: 10.5, color: status.color, display: "flex",
+                        alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 3,
+                        fontWeight: 500,
+                      }}
+                    >
+                      <span style={{ fontSize: 12 }}><Icon name={status.icon} /></span>
+                      {status.label}
                     </div>
                   </div>
                 </div>
