@@ -198,6 +198,52 @@ export interface GmailAccountMarkExpiredInput {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Channel accounts (P8-B)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Provider identity for command channels. Must stay in lock-step with
+ * `lib/server/channels/types.ts`'s `ChannelProvider` and the
+ * `channel_provider` enum in `db/schema.sql` — when a provider is
+ * added, all three update at once.
+ */
+export type ChannelProvider = "whatsapp" | "telegram" | "slack" | "mock";
+
+export type ChannelAccountStatus = "active" | "revoked";
+
+export type ChannelAccountId = ID & { readonly __brand: "ChannelAccountId" };
+
+/**
+ * Domain view of a `channel_accounts` row. The repository implementation
+ * is responsible for envelope encryption — `displayName` here is the
+ * already-decrypted plaintext (or `null` when the column is null OR
+ * when the caller is a list-for-owner view that doesn't need it).
+ */
+export interface ChannelAccount {
+  id: ChannelAccountId;
+  ownerId: OwnerId;
+  provider: ChannelProvider;
+  externalUserId: string;
+  externalThreadId: string | null;
+  displayName: string | null;
+  status: ChannelAccountStatus;
+  rawProfile: Readonly<Record<string, unknown>>;
+  createdAtISO: string;
+  updatedAtISO: string;
+  lastSeenAtISO: string | null;
+}
+
+export interface ChannelAccountLinkInput {
+  readonly provider: ChannelProvider;
+  readonly externalUserId: string;
+  readonly externalThreadId?: string | null;
+  /** Provider-side display name. Implementation encrypts before insert. */
+  readonly displayName?: string | null;
+  /** Non-sensitive provider metadata. NO message text, NO tokens. */
+  readonly rawProfile?: Readonly<Record<string, unknown>>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Re-exports for convenience inside the repo layer
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -822,15 +822,22 @@ account setup, and final send confirmation.
 P8-A ships the provider-agnostic contract: a normalised `CommandEvent`, a
 pure-logic router, a `CommandResponse` discriminated by status, and one
 mock route so the contract is testable without WhatsApp / Telegram / Slack.
-Real provider webhooks land in later slices; each will normalise its
-payload into the same `CommandEvent` and delegate to the same router.
+P8-B adds the identity-link schema (`channel_accounts`) and the repository
+interface (`ChannelAccountRepository`) so a future provider webhook can
+resolve `(provider, externalUserId) → owner_id` BEFORE running any
+owner-scoped logic. Real provider webhooks land in later slices; each
+will normalise its payload into the same `CommandEvent` and delegate to
+the same router.
 
 ```text
-WhatsApp webhook ┐
-Telegram webhook ├─ provider adapter ──> CommandEvent ──> routeCommandEvent ──> CommandResponse
-Slack events     ┘   (sig verify,                            (deterministic,         (status,
-mock route       ┘    normalise)                              keyword-based today)   intent,
-                                                                                     suggestedAction)
+WhatsApp webhook ┐                                    ┌─ ChannelAccountRepository
+Telegram webhook ├─ provider adapter ──> CommandEvent ┤  .findByProviderUser(provider,
+Slack events     ┘   (sig verify,                     │   externalUserId)            ──> owner_id
+mock route       ┘    normalise)                      │                              ──> null (link-needed)
+                                                      │
+                                                      └─ routeCommandEvent ──> CommandResponse
+                                                         (deterministic,         (status, intent,
+                                                          keyword-based today)    suggestedAction)
 ```
 
 The boundary types live in `lib/server/channels/types.ts`:
@@ -904,10 +911,14 @@ Provider adapters (future) MUST:
   NOT to crypto helpers, NOT to worker-only delivery methods.
 
 Channel identity is **not auth**. A Telegram chat/user id, WhatsApp
-`wa_id`/phone, or Slack user/team/channel id will link to a Keepsake
-`owner_id` through future channel-account link tables — not columns on
-`users`. Webhook routes do not have web sessions and must not call
-`currentUserIdOrThrow()`.
+`wa_id`/phone, or Slack user/team/channel id links to a Keepsake
+`owner_id` through the `channel_accounts` table (P8-B) — never through
+columns on `users`. Webhook routes do not have web sessions and must
+not call `currentUserIdOrThrow()`. A webhook with no matching row
+MUST respond with a link-needed acknowledgment; it MUST NOT fall back
+on a `keepsake_session` cookie, a `DEV_OWNER_*` env value, or the
+request-path user. The `ChannelAccountRepository.findByProviderUser`
+contract pins this — see `lib/repositories/channel-accounts.ts`.
 
 Provider notes (still future):
 

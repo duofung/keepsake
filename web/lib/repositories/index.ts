@@ -15,8 +15,14 @@ export type { PeopleRepository } from "./people";
 export type { DraftRepository } from "./drafts";
 export type { DeliveryRepository } from "./deliveries";
 export type { GmailAccountRepository } from "./gmail-accounts";
+export type { ChannelAccountRepository } from "./channel-accounts";
 
 export type {
+  ChannelAccount,
+  ChannelAccountId,
+  ChannelAccountLinkInput,
+  ChannelAccountStatus,
+  ChannelProvider,
   DeliveriesListOptions,
   DeliveryEnqueueInput,
   DeliveryQueueItem,

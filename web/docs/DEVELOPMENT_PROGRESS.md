@@ -37,7 +37,7 @@ Rules:
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
-| Command Channel Platform | Foundation started (P8-A) | Provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock` test endpoint. Channel layer never sends mail, never enqueues, never creates a draft — successful `compose_request` events return `needs_review`, pointing the user back to Keepsake. | WhatsApp / Telegram / Slack adapters (signature verification, dedupe, normalisation), channel account linking → `owner_id`, owner-explicit server seams (`getPeoplePayloadForOwner`, etc.), notification + reminder outbound, LLM intent classifier behind the same router seam. |
+| Command Channel Platform | Foundation + identity-link schema designed (P8-A, P8-B) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design (`findByProviderUser` / `listForOwner` / `link` / `markRevoked`) wires provider-side identity onto `owner_id`. NO runtime implementation, NO provider adapters yet. | WhatsApp / Telegram / Slack adapters (signature verification, dedupe, normalisation), `ChannelAccountRepository` Postgres implementation, owner-explicit server seams (`getPeoplePayloadForOwner`, etc.), notification + reminder outbound, LLM intent classifier behind the same router seam. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
 
@@ -686,6 +686,86 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P8-B. Channel Account Linking Schema + Repository Interface
+
+Status: done. Guarded by `pnpm test:channel-accounts` — pure file-read
+anchor smoke (no Docker, no DB) over `db/schema.sql`,
+`lib/repositories/channel-accounts.ts`, and the docs. Asserts the
+enum + table + unique index + RLS policy survive future churn, that
+the repo interface keeps its four contracted methods, and that the
+docs continue to call out the "external_user_id NOT encrypted" /
+"display_name_enc encrypted" / "no session fallback for webhooks"
+invariants.
+
+Goal: pre-wire identity resolution for the command-channel platform
+so future provider webhooks can resolve `(provider, externalUserId)
+→ owner_id` BEFORE running any owner-scoped logic. P8-B is schema +
+interface + docs only; no runtime repository, no route, no provider
+adapter.
+
+Shipped:
+
+- `db/schema.sql` — new enums `channel_provider`
+  (`whatsapp` / `telegram` / `slack` / `mock`) and
+  `channel_account_status` (`active` / `revoked`). New table
+  `channel_accounts` with `external_user_id` NOT encrypted (lookup
+  key for webhook ingest), `display_name_enc` encrypted (PII), and
+  a `raw_profile` jsonb gated on "non-sensitive metadata only".
+  Three indexes: a partial-by-design `UNIQUE (provider,
+  external_user_id)` (webhook identity), `(owner_id, provider)`
+  (Profile / account management), and a partial `(provider,
+  external_thread_id)` for channel-level events. RLS enabled with
+  the standard `owner_id = current_user_id()` policy — webhook
+  ingest runs under a BYPASSRLS worker role and uses the unique
+  index directly.
+- `lib/repositories/types.ts` — new domain types `ChannelProvider`,
+  `ChannelAccountStatus`, `ChannelAccountId` (branded `ID`),
+  `ChannelAccount` (domain view with `displayName` as decrypted
+  plaintext), and `ChannelAccountLinkInput`. `ChannelProvider` is
+  kept in lock-step with `lib/server/channels/types.ts` (P8-A).
+- `lib/repositories/channel-accounts.ts` — pure-interface design
+  for `ChannelAccountRepository`. Four methods:
+  - `findByProviderUser(provider, externalUserId, tx?)` — webhook
+    ingest path. No `ownerId` arg by design; the row's own
+    `owner_id` is the auth proof. Contract requires
+    implementations to run under BYPASSRLS and to decrypt
+    `display_name_enc` before returning. Callers MUST NOT fall
+    back to session / env on a `null` result.
+  - `listForOwner(ownerId, tx?)` — Profile / account-management
+    UI read path.
+  - `link(ownerId, input, tx?)` — idempotent on
+    `(provider, externalUserId, ownerId)` matches; rebind to a
+    DIFFERENT owner MUST raise a conflict.
+  - `markRevoked(ownerId, accountId, tx?)` — soft-revoke; row
+    survives so UI can render Reconnect.
+- `lib/repositories/index.ts` — barrel re-exports the new
+  interface + domain types as `export type`.
+- `docs/DB_SCHEMA.md` — new §3.9 with the schema block, the
+  indexes-table rows, the encrypted-vs-plaintext column split
+  (explicit callout that `external_user_id` and `raw_profile`
+  remain plaintext, and what `raw_profile` must NOT contain), and
+  the auth note.
+- `docs/CURRENT_ARCHITECTURE.md` — updated the P8-A diagram + prose
+  to thread `ChannelAccountRepository.findByProviderUser` between
+  the provider adapter and `routeCommandEvent`. The "channel
+  identity is not auth" paragraph now spells out the no-fallback
+  rule.
+
+Out of scope (still future slices):
+
+- **No** Postgres implementation of `ChannelAccountRepository`.
+- **No** new route. The mock command route (`POST /api/channels/mock`)
+  still bypasses owner resolution by design.
+- **No** real WhatsApp / Telegram / Slack webhook routes.
+- **No** webhook signature verification (no real webhook yet).
+- **No** command execution against the DB — drafts / deliveries
+  remain web-only execution surfaces.
+- **No** UI for managing linked channels.
+- **No** migration runner or migration file. The schema lives in
+  `db/schema.sql` as a design draft until the DB scripts pick it
+  up.
+- **No** seed data for `channel_accounts`.
 
 ### P8-A. Command Channel Foundation (provider-agnostic)
 

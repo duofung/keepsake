@@ -79,6 +79,11 @@ CREATE TYPE delivery_status AS ENUM (
 );
 CREATE TYPE subscription_status AS ENUM ('free', 'plus', 'churned');
 CREATE TYPE gmail_account_status AS ENUM ('connected', 'expired');
+-- Provider identity for command channels (WhatsApp / Telegram / Slack /
+-- the local mock route). Matches lib/server/channels/types.ts —
+-- when this enum grows, update both at once.
+CREATE TYPE channel_provider     AS ENUM ('whatsapp', 'telegram', 'slack', 'mock');
+CREATE TYPE channel_account_status AS ENUM ('active', 'revoked');
 
 -- TODO: `occasion_kind` will grow (Eid al-Adha, Songkran, Mid-Autumn).
 -- When that begins, migrate the column from ENUM to TEXT + CHECK constraint
@@ -371,7 +376,70 @@ CREATE INDEX deliveries_status_idx
   WHERE status IN ('queued', 'sent');
 
 -- ───────────────────────────────────────────────────────────────────────────
--- 3.9 user_keys  (envelope encryption — design stub)
+-- 3.9 channel_accounts  (P8-B command channel identity links — design draft)
+-- ───────────────────────────────────────────────────────────────────────────
+
+-- Maps a provider-side user identity (WhatsApp `wa_id`, Telegram user id,
+-- Slack `team_id + user_id`, or the local mock) onto a Keepsake `owner_id`
+-- so a webhook payload can resolve "who is this" BEFORE running any
+-- owner-scoped logic. Channel identity is NOT web-session auth: a
+-- webhook with no matching row must NOT fall back on a session cookie
+-- or a `DEV_OWNER_*` env value.
+--
+-- `external_user_id` is intentionally NOT encrypted — webhook ingest
+-- needs to look it up before any owner / DEK is in scope. Treat it like
+-- an OAuth subject id: opaque, but not a secret.
+--
+-- `display_name_enc` IS encrypted; provider profiles often carry
+-- personal names. `raw_profile` is jsonb for non-sensitive provider
+-- metadata only (profile picture URL, locale, …) — adapters MUST NOT
+-- drop message text, OAuth tokens, or anything PII-bearing in there.
+
+CREATE TABLE channel_accounts (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id            uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+  provider            channel_provider NOT NULL,
+  external_user_id    text NOT NULL,            -- provider-side user identity (NOT encrypted)
+  external_thread_id  text,                     -- conversation / chat / channel id, when applicable
+
+  display_name_enc    bytea,                    -- AES-256-GCM(provider-side display name)
+
+  status              channel_account_status NOT NULL DEFAULT 'active',
+
+  raw_profile         jsonb NOT NULL DEFAULT '{}'::jsonb,  -- non-sensitive provider metadata
+
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  last_seen_at        timestamptz                          -- bumped on each inbound event
+);
+
+-- One Keepsake row per (provider, external user). The unique pair is
+-- what webhook ingest looks up to resolve `owner_id`.
+CREATE UNIQUE INDEX channel_accounts_provider_user_idx
+  ON channel_accounts (provider, external_user_id);
+
+-- "Which channels has this owner linked?" — Profile view, future
+-- account-management screens.
+CREATE INDEX channel_accounts_owner_provider_idx
+  ON channel_accounts (owner_id, provider);
+
+-- "Who owns this thread/chat/channel?" — used when an event arrives
+-- without an `external_user_id` (rare, but Slack channel-level
+-- notifications + Telegram channel posts can hit this path).
+CREATE INDEX channel_accounts_provider_thread_idx
+  ON channel_accounts (provider, external_thread_id)
+  WHERE external_thread_id IS NOT NULL;
+
+COMMENT ON COLUMN channel_accounts.external_user_id IS
+  'Provider-side user identity. Lookup key for webhook ingest; NOT encrypted by design.';
+COMMENT ON COLUMN channel_accounts.display_name_enc IS
+  'AES-256-GCM envelope. AAD = owner_id || channel_accounts || display_name_enc.';
+COMMENT ON COLUMN channel_accounts.raw_profile IS
+  'Non-sensitive provider metadata only. NO message text, NO tokens, NO PII secrets.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- 3.10 user_keys  (envelope encryption — design stub)
 -- ───────────────────────────────────────────────────────────────────────────
 
 -- TODO: docs/DB_SCHEMA.md §5 specifies envelope encryption: a per-user random
@@ -402,6 +470,7 @@ ALTER TABLE people          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE occasion_nodes  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE message_drafts  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE deliveries      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE channel_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_keys       ENABLE ROW LEVEL SECURITY;
 
 -- cultures: catalog only, RLS intentionally OFF. See §3.4 TODO.
@@ -436,6 +505,16 @@ CREATE POLICY message_drafts_owner ON message_drafts
   WITH CHECK (owner_id = current_user_id());
 
 CREATE POLICY deliveries_owner ON deliveries
+  USING      (owner_id = current_user_id())
+  WITH CHECK (owner_id = current_user_id());
+
+-- channel_accounts: per-owner identity links. The webhook ingest path
+-- runs under a BYPASSRLS worker role (no session, no current_user_id),
+-- so the policy gates the *user-facing* read path (Profile, account
+-- management UI) only. The webhook path's `findByProviderUser` uses
+-- the unique (provider, external_user_id) index and stays outside this
+-- policy by design.
+CREATE POLICY channel_accounts_owner ON channel_accounts
   USING      (owner_id = current_user_id())
   WITH CHECK (owner_id = current_user_id());
 

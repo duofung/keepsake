@@ -92,6 +92,9 @@ CREATE TYPE delivery_status AS ENUM ('queued','sent','delivered','opened');
 CREATE TYPE subscription_status AS ENUM ('free','plus','churned');
 
 CREATE TYPE gmail_account_status AS ENUM ('connected','expired');
+
+CREATE TYPE channel_provider       AS ENUM ('whatsapp','telegram','slack','mock');
+CREATE TYPE channel_account_status AS ENUM ('active','revoked');
 ```
 
 > Adding a value to a Postgres enum is `ALTER TYPE ... ADD VALUE`; safe but
@@ -403,6 +406,65 @@ CREATE INDEX deliveries_status_idx
 
 ---
 
+### 3.9 `channel_accounts`
+
+Identity-link rows for command channels (WhatsApp / Telegram / Slack /
+the local mock). Each row maps a single provider-side user identity
+onto a Keepsake `owner_id` so a webhook payload can be resolved to
+"who is this" BEFORE running any owner-scoped logic.
+
+```sql
+CREATE TABLE channel_accounts (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id            uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+  provider            channel_provider NOT NULL,
+  external_user_id    text NOT NULL,            -- provider-side user identity (NOT encrypted)
+  external_thread_id  text,                     -- conversation / chat / channel id
+
+  display_name_enc    bytea,                    -- AES-256-GCM(display name)
+
+  status              channel_account_status NOT NULL DEFAULT 'active',
+
+  raw_profile         jsonb NOT NULL DEFAULT '{}'::jsonb,
+
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  last_seen_at        timestamptz
+);
+
+CREATE UNIQUE INDEX channel_accounts_provider_user_idx
+  ON channel_accounts (provider, external_user_id);                   -- webhook identity
+CREATE INDEX        channel_accounts_owner_provider_idx
+  ON channel_accounts (owner_id, provider);                           -- "which channels has this owner linked?"
+CREATE INDEX        channel_accounts_provider_thread_idx
+  ON channel_accounts (provider, external_thread_id)
+  WHERE external_thread_id IS NOT NULL;                               -- channel-level events
+```
+
+**Notes**
+
+- `external_user_id` is **intentionally NOT encrypted.** Webhook ingest
+  needs to find the row before any owner / DEK is in scope. Treat the
+  column like an OAuth subject id — opaque, but not a secret. The
+  unique partial-by-design index `channel_accounts_provider_user_idx`
+  makes the lookup unambiguous (one Keepsake link per provider+user).
+- `display_name_enc` IS encrypted (PII risk — provider profiles often
+  carry real names).
+- `raw_profile` is `jsonb` for **non-sensitive provider metadata only**
+  (locale, time zone, avatar URL). Adapters MUST NOT drop message
+  text, OAuth tokens, or anything PII-bearing in there — anything that
+  needs encryption goes in a typed column instead.
+- **Channel identity is NOT web-session auth.** A webhook with no
+  matching `channel_accounts` row MUST respond with a link-needed
+  acknowledgment; it MUST NOT fall back on a `keepsake_session`
+  cookie, a `DEV_OWNER_*` env value, or the request-path user. The
+  RLS policy on this table gates the *user-facing* read path only
+  (Profile, account management). Webhook ingest runs under the
+  BYPASSRLS worker role.
+
+---
+
 ## 4. Indexes — query-driven justification
 
 | Screen / job | Query shape | Index used |
@@ -419,6 +481,9 @@ CREATE INDEX deliveries_status_idx
 | Send worker | `deliveries` by `status IN ('queued','sent')` | `deliveries_status_idx` (partial) |
 | Send scheduler | `deliveries` by `(owner_id, scheduled_for)` for queued rows | `deliveries_owner_scheduled_idx` |
 | Webhook ingest | `deliveries` by `provider_message_id` | `deliveries_provider_msg_idx` (partial **UNIQUE** — webhook identity is unambiguous) |
+| Channel webhook identity | `channel_accounts` by `(provider, external_user_id)` | `channel_accounts_provider_user_idx` (**UNIQUE** — one Keepsake link per provider+user) |
+| Profile: linked channels | `channel_accounts` by `(owner_id, provider)` | `channel_accounts_owner_provider_idx` |
+| Channel-level events | `channel_accounts` by `(provider, external_thread_id)` for non-null threads | `channel_accounts_provider_thread_idx` (partial) |
 
 ---
 
@@ -433,11 +498,16 @@ CREATE INDEX deliveries_status_idx
 | `occasion_nodes` | `label_enc`, `detail_enc` | Custom labels can disclose health / relationship status |
 | `message_drafts` | `subject_enc`, `paragraphs_enc`, `assistant_note_enc`, `user_instruction_enc` | The actual private writing |
 | `deliveries` | `recipient_name_enc`, `recipient_email_enc`, `recipient_address_enc`, `occasion_label_enc` | The audit trail of who got what |
+| `channel_accounts` | `display_name_enc` | Provider-side display name often equals a real name |
 
 ### What does NOT get encrypted
 
 - Surrogate keys, FK ids, timestamps, booleans, enums.
 - Catalog content (`relationships.*`, `cultures.*`) — not private.
+- `channel_accounts.external_user_id` (provider-side identity — must be
+  greppable by webhook ingest before owner / DEK is in scope).
+- `channel_accounts.raw_profile` (provider metadata only; **adapters
+  must keep it free of message text, tokens, or PII secrets**).
 - Presentation hints on drafts (`attached_card`, `quick_actions`, `tone`,
   `tone_label`) — generic UI metadata.
 - `users.email`, `gmail_accounts.email`, `gmail_accounts.status`, and
