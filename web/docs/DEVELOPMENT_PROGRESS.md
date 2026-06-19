@@ -36,7 +36,7 @@ Rules:
 | Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + sign-out + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start 303s when given `?returnTo=`. `POST /api/auth/signout` clears the cookie and 303s to `/signin` — no DB, no Google revoke, no Gmail disconnect. Profile's "Sign out" row is now a real form POST. `/api/session` shape unchanged. | Retiring the `DEV_OWNER_*` env fallback from the cookie-first seam; Google grant revoke on signout. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
-| Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
+| Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
 | Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -686,6 +686,56 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P7-C. Delivery Ops Runbook + Manual Lifecycle Smoke
+
+Status: done. Guarded by `pnpm test:delivery-runbook` (19 anchor
+assertions over `docs/DELIVERY_RUNBOOK.md` — worker command, webhook
+path, identity field, all three webhook events, the required env
+group, every troubleshooting symptom code, and the four non-goals).
+The smoke is pure file-read; no Next.js, no Docker.
+
+Goal: turn the four-slice P7 chain (worker P5, webhook ingest P7-A,
+History display P7-B) into a manually exercisable loop. Anyone with
+a local Postgres and a Gmail account should be able to walk
+Workspace → enqueue → `pnpm worker:run` → webhook event by curl →
+refresh `/history`, and the runbook tells them which knob to turn
+when each step fails.
+
+Shipped:
+
+- `docs/DELIVERY_RUNBOOK.md` — new doc. Four sections: env vars
+  grouped by concern (app/session, DB, Gmail OAuth+send, webhook);
+  the seven-step lifecycle (seed → start → sign in + connect → queue
+  → drain → webhook curl → refresh History); troubleshooting tables
+  keyed by *where the symptom shows up* (sign in, enqueue,
+  `pnpm worker:run`, webhook, History didn't change); explicit
+  non-goals (no Gmail push subscription, no cron/daemon, no
+  retry/backoff/dead-letter, no live polling/SSE).
+- `scripts/test-delivery-lifecycle-docs.mjs` — anchor smoke. Reads
+  the runbook and asserts the critical strings survive future doc
+  churn: `pnpm worker:run`, `POST /api/webhooks/deliveries`,
+  `providerMessageId`, the three event values, the secret env, the
+  data-source env, each 4xx/5xx webhook code, each enqueue 409 code,
+  and each non-goal phrase.
+- `package.json` — `test:delivery-runbook` script + spliced into the
+  default `pnpm test` chain right after the worker / webhook entries.
+  NOT added to `pnpm test:db`; the runbook smoke needs neither
+  Docker nor Postgres.
+- `docs/CURRENT_ARCHITECTURE.md` — single-line pointer added to the
+  webhook section. No content duplication.
+
+Out of scope (still future slices):
+
+- **No** new API routes; the runbook documents existing ones only.
+- **No** worker behaviour changes.
+- **No** webhook contract changes — `provider:"mock"` events drive
+  the local lifecycle.
+- **No** DB schema changes.
+- **No** UI changes.
+- **No** Gmail push subscription wiring.
+- **No** cron / daemon.
+- **No** retry / backoff / dead-letter.
 
 ### P7-B. Surface Delivery Status in History UI
 

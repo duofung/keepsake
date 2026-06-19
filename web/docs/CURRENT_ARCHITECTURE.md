@@ -790,6 +790,10 @@ revoke OAuth grants. The route is the contract; a future Gmail push
 subscription is its own slice and will land as a new
 `provider: "gmail"` adapter on top of the same ingest.
 
+To exercise the full Workspace → worker → webhook → History loop by
+hand (env groups, curl payloads, and per-step troubleshooting), see
+[docs/DELIVERY_RUNBOOK.md](./DELIVERY_RUNBOOK.md).
+
 P7-A writes the row's terminal status; P7-B (`app/history/page.tsx`)
 reads it back. The History page maps `deliveries.status` to a tone
 trio via `deliveryStatusBadge` in `lib/presentation.ts`:
