@@ -811,58 +811,116 @@ explicit non-goals for this slice.
 
 ---
 
-### Future: command channel platform
+### Command channel platform (P8-A foundation)
 
-WhatsApp, Telegram, Slack, and similar tools should be treated as command
+WhatsApp, Telegram, Slack, and similar tools are treated as command
 channels rather than mobile clients. They let users ask for relationship
 follow-ups, request drafts, revise tone, and receive reminders from the phone,
-while the web app remains the execution workspace for editing, account setup,
-and final send confirmation.
+while the web app remains the **execution + review** surface for editing,
+account setup, and final send confirmation.
+
+P8-A ships the provider-agnostic contract: a normalised `CommandEvent`, a
+pure-logic router, a `CommandResponse` discriminated by status, and one
+mock route so the contract is testable without WhatsApp / Telegram / Slack.
+Real provider webhooks land in later slices; each will normalise its
+payload into the same `CommandEvent` and delegate to the same router.
 
 ```text
 WhatsApp webhook ┐
-Telegram webhook ├─ provider adapter ──> CommandEvent ──> command router
-Slack events     ┘                                             │
-                                                               ├─ people/follow-up query
-                                                               ├─ draft-service intent
-                                                               ├─ reminder intent
-                                                               └─ Workspace deep link
+Telegram webhook ├─ provider adapter ──> CommandEvent ──> routeCommandEvent ──> CommandResponse
+Slack events     ┘   (sig verify,                            (deterministic,         (status,
+mock route       ┘    normalise)                              keyword-based today)   intent,
+                                                                                     suggestedAction)
 ```
 
-The planned normalized event boundary:
+The boundary types live in `lib/server/channels/types.ts`:
 
 ```ts
-type CommandEvent = {
-  provider: "whatsapp" | "telegram" | "slack";
-  externalUserId: string;
-  externalConversationId: string;
-  messageId: string;
-  text: string;
-  receivedAt: string;
-};
+type ChannelProvider = "whatsapp" | "telegram" | "slack" | "mock";
+
+interface CommandEvent {
+  provider:          ChannelProvider;
+  externalUserId:    string | null;   // provider-side user id
+  externalThreadId:  string | null;   // provider-side conversation id
+  text:              string;          // user message body (trimmed)
+  receivedAtISO:     string;          // provider event timestamp
+  raw?:              unknown;         // opaque original payload
+}
+
+type CommandIntent =
+  | "relationship_followup_query"     // "who should I follow up with?"
+  | "compose_request"                 // "send Helen an email — she got promoted"
+  | "unknown";
+
+interface CommandResponse {
+  status:           "ok" | "needs_review" | "unsupported";
+  text:             string;           // reply body the adapter renders back to chat
+  intent:           CommandIntent;
+  suggestedAction?: SuggestedAction;  // open_relationship_followups | open_compose_workspace
+}
 ```
 
-Provider adapters should verify webhook signatures/secrets, normalize payloads,
-dedupe provider message ids, and delegate to a shared command router. The
-router should call owner-explicit server seams such as future
-`getPeoplePayloadForOwner(ownerId)` or `generateDraftForOwner(ownerId, input)`.
-It should not call `app/api/*` over HTTP, `lib/mock.ts`, `draft-generator`
-directly, Gmail OAuth/account repositories, crypto helpers, or worker-only
-delivery methods.
+The status field is load-bearing: even a successful `compose_request`
+returns `needs_review`, never `ok`. The channel layer **never sends mail,
+never enqueues a delivery, never creates a draft**. Adapters render
+`response.text` back into the chat; the user finishes the action in
+Keepsake. The smoke `pnpm test:channels` pins this by asserting that
+replies never contain "sent", "delivered", or "queued".
 
-Channel identity is not auth. A Telegram chat/user id, WhatsApp `wa_id`/phone,
-or Slack user/team/channel id should link to a Keepsake `owner_id` through
-separate channel account tables, not columns on `users`. Webhook routes do not
-have web sessions and must not call `currentUserIdOrThrow()`.
+`lib/server/channels/router.server.ts` exports
+`routeCommandEvent(event)` — pure logic, no DB, no LLM, no provider
+API. P8-A uses keyword classification (中文 "发邮件" / "跟进", English
+"follow up" / "email Helen"); a later slice may add an LLM
+classifier behind the same seam.
 
-WhatsApp is the important long-term command inbox for user tasks and
-notifications, but it has provider policy constraints: inbound user messages
-can be answered as service messages during the customer-service window, while
-proactive reminders outside that window require template-aware notification
-logic. Telegram is easier for early bot UX because deep links, private chat
-ids, inline keyboards, and callback queries are straightforward. Slack can use
-the same command router later through slash commands, app mentions, and
-interactive buttons.
+`POST /api/channels/mock` is the local test endpoint:
+
+```bash
+curl -sS -X POST http://localhost:3000/api/channels/mock \
+  -H 'content-type: application/json' \
+  -d '{"text":"帮我给 Helen 发一个邮件，她今天升职了"}'
+# → 200 { status: "needs_review", intent: "compose_request",
+#         text: "I drafted the request, but you'll review and send it in Keepsake.",
+#         suggestedAction: { kind: "open_compose_workspace", recipientHint: "Helen", … } }
+```
+
+The route is local-only; it accepts `provider: "mock"` (or omitted),
+does NOT authenticate the caller, does NOT verify signatures. Real
+provider webhooks will arrive at their own routes (`/api/channels/whatsapp`,
+etc.) once those adapters land — each will verify provider signatures,
+dedupe by provider message id, and call the same `routeCommandEvent`
+seam.
+
+Provider adapters (future) MUST:
+
+- Verify webhook signatures / shared secrets before calling the router.
+- Dedupe provider message ids.
+- Normalise into `CommandEvent` — the router shouldn't see provider
+  payloads.
+- Delegate intent execution to owner-explicit server seams (future
+  `getPeoplePayloadForOwner(ownerId)`, `generateDraftForOwner(ownerId, …)`,
+  etc.) — NOT to `app/api/*` over HTTP, NOT to `lib/mock.ts`, NOT to
+  `draft-generator` directly, NOT to Gmail OAuth/account repositories,
+  NOT to crypto helpers, NOT to worker-only delivery methods.
+
+Channel identity is **not auth**. A Telegram chat/user id, WhatsApp
+`wa_id`/phone, or Slack user/team/channel id will link to a Keepsake
+`owner_id` through future channel-account link tables — not columns on
+`users`. Webhook routes do not have web sessions and must not call
+`currentUserIdOrThrow()`.
+
+Provider notes (still future):
+
+- **WhatsApp** — the important long-term command inbox for user tasks
+  and notifications, but it has provider policy constraints: inbound
+  user messages can be answered as service messages during the
+  customer-service window, while proactive reminders outside that
+  window require template-aware notification logic.
+- **Telegram** — easier for early bot UX because deep links, private
+  chat ids, inline keyboards, and callback queries are
+  straightforward.
+- **Slack** — slash commands, app mentions, and interactive buttons
+  all delegate to the same router via the same `CommandEvent` shape.
 
 ---
 

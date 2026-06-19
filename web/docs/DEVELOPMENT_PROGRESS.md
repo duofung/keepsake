@@ -37,7 +37,7 @@ Rules:
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
-| Command Channel Platform | Planned | Product/architecture direction: WhatsApp, Telegram, Slack, and similar tools become natural-language command inputs and notification surfaces; Web remains the execution workspace. | Standard command event/response contract, channel identity/linking, adapters, webhook routes, first relationship follow-up intents. |
+| Command Channel Platform | Foundation started (P8-A) | Provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock` test endpoint. Channel layer never sends mail, never enqueues, never creates a draft — successful `compose_request` events return `needs_review`, pointing the user back to Keepsake. | WhatsApp / Telegram / Slack adapters (signature verification, dedupe, normalisation), channel account linking → `owner_id`, owner-explicit server seams (`getPeoplePayloadForOwner`, etc.), notification + reminder outbound, LLM intent classifier behind the same router seam. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
 
@@ -686,6 +686,69 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P8-A. Command Channel Foundation (provider-agnostic)
+
+Status: done. Guarded by `pnpm test:channels` — 28 assertions across
+body validation, both intent paths in 中文 + English, the unknown
+fallback, and a regression check that NO response text contains
+"sent" / "delivered" / "queued" (the channel layer is explicitly NOT
+the execution surface).
+
+Goal: open the door for WhatsApp / Telegram / Slack as input +
+notification channels without committing to any one provider. Real
+provider adapters will normalise into the same `CommandEvent` shape
+and call the same `routeCommandEvent()` seam shipped here. The web
+app stays the execution / review surface.
+
+Shipped:
+
+- `lib/server/channels/types.ts` — pure types.
+  `ChannelProvider = "whatsapp" | "telegram" | "slack" | "mock"`,
+  `CommandEvent` (provider + externalUserId + externalThreadId +
+  text + receivedAtISO + opaque `raw`), `CommandIntent` (3 values:
+  `relationship_followup_query`, `compose_request`, `unknown`), and
+  `CommandResponse` (`status` discriminated union, reply `text`,
+  matched `intent`, optional `suggestedAction` deep-link).
+- `lib/server/channels/router.server.ts` — `routeCommandEvent`. Pure
+  logic, server-only, no DB / OpenAI / queue. Keyword classifier
+  with 中文 + English patterns. Compose intent wins over follow-up
+  when both match. Coarse recipient extraction (中文 "给 X 发/写"
+  and English "to|email|send|for X") seeds `suggestedAction.recipientHint`.
+- `app/api/channels/mock/route.ts` — `POST /api/channels/mock`.
+  Body validation → 400 `invalid_request`, else delegates to the
+  router and returns the `CommandResponse`. Accepts only
+  `provider:"mock"` (other providers will land at their own routes).
+  Does NOT authenticate, does NOT touch DB, does NOT verify
+  signatures (no real provider, no real signature to verify).
+- `scripts/test-channels-mock-route.mjs` — boots Next dev (no
+  Docker), drives the route through every validation + intent path,
+  and pins the "channel layer never claims execution" rule via the
+  no-"sent/delivered/queued" regex.
+- `package.json` — `test:channels` script wired into default `pnpm
+  test` between `test:delivery-runbook` and `test:history`. NOT in
+  `pnpm test:db` (the slice doesn't touch Postgres).
+- `docs/CURRENT_ARCHITECTURE.md` — replaced the previous "Future
+  command channel platform" section with a P8-A foundation
+  description: contract diagrams, the boundary types verbatim, the
+  status-field invariant ("`needs_review` not `ok`"), and the
+  provider notes (WhatsApp / Telegram / Slack) preserved as future
+  guidance.
+
+Out of scope (still future slices):
+
+- **No** WhatsApp Business API integration.
+- **No** Telegram Bot API integration.
+- **No** Slack app integration.
+- **No** real outbound messages — channel adapters don't send mail.
+- **No** DB read/write — the router is pure logic.
+- **No** OpenAI / LLM call — keyword classification only.
+- **No** draft creation — `compose_request` only surfaces a hint.
+- **No** delivery enqueue — `/api/deliveries` stays the only queue
+  boundary.
+- **No** channel-account → `owner_id` linking table.
+- **No** webhook signature verification (no real webhook yet).
+- **No** UI surfacing — Workspace doesn't read `suggestedAction` yet.
 
 ### P7-C. Delivery Ops Runbook + Manual Lifecycle Smoke
 
