@@ -68,12 +68,10 @@ lib/server/
 │   └── current-user.server.ts
 ├── oauth/                    ← current: provider route contracts only
 │   └── gmail.server.ts
-├── channels/                 ← future: WhatsApp/Telegram/Slack command router
+├── channels/                 ← command-channel router + mock provider adapter
 │   ├── types.ts
-│   ├── command-router.server.ts
-│   ├── whatsapp.server.ts
-│   ├── telegram.server.ts
-│   └── slack.server.ts
+│   ├── router.server.ts
+│   └── mock-inbound.server.ts
 ├── db/                       ← current: request-path transaction helper
 │   └── transaction.server.ts
 └── crypto/                   ← current: dev AES-GCM envelope helper
@@ -159,7 +157,8 @@ small on purpose.
 | `draft-generator/index.server.ts` | `draft-service/{mock,db}.server.ts` | `getDraftGenerator()` reads `KEEPSAKE_DRAFT_SOURCE` (default `mock`, opt-in `openai`), caches the constructed generator, and throws `DraftGeneratorError("misconfigured", …)` on unknown values. Independent of `KEEPSAKE_DATA_SOURCE` — all four data×generator combinations are valid. | Add more provider adapters as new files; route signature stays the same. | `pnpm test:draft-generator` |
 | `draft-generator/mock.server.ts` | `draft-generator/index.server.ts` | mock recipe + instruction rewrite to `MessageDraft`; also exports `deterministicRecipe(ctx)` for the LLM adapter to reuse for `attachedCard` + `quickActions`. | Kept as the default + the deterministic recipe source. | `pnpm test:drafts`, `pnpm test:draft-generator` |
 | `draft-generator/openai.server.ts` | `draft-generator/index.server.ts` | OpenAI-compatible chat-completions adapter. Validates `KEEPSAKE_DRAFT_API_KEY` / `KEEPSAKE_DRAFT_API_BASE` / `KEEPSAKE_DRAFT_MODEL` at construction; POSTs `system + user` JSON to `/v1/chat/completions` with `response_format: json_object`; parses + validates tone, subject, paragraphs, assistantNote against the existing union; reuses `deterministicRecipe` for `attachedCard` + `quickActions`. Every failure (misconfigured / unavailable / malformed_response) is normalised to `DraftGeneratorError` so the service catches and the route returns a clean 500. | Swap for a streaming or provider-specific client without touching the route. | `pnpm test:draft-generator` |
-| `channels/*` | Future WhatsApp/Telegram/Slack webhooks | Not implemented. Planned shared command router over provider adapters. | Provider-specific webhook verification + normalized `CommandEvent` + shared command router that calls owner-explicit server seams. Web remains the final execution workspace. | future `pnpm test:channels` |
+| `channels/router.server.ts` | `POST /api/channels/mock`, `channels/mock-inbound.server.ts`, future provider adapters | Pure command router: normalised `CommandEvent` → `CommandResponse`. Keyword classifier today, no DB/LLM/queue, and compose responses return `needs_review` so the channel never claims execution. | Future LLM classifier can sit behind the same function. | `pnpm test:channels` |
+| `channels/mock-inbound.server.ts` | `POST /api/channels/mock/inbound` | DB-backed mock provider-adapter shape. Requires `KEEPSAKE_DATA_SOURCE=db`; validates `externalUserId` + `text`; resolves `(provider="mock", externalUserId)` via `workerTransaction` + `ChannelAccountRepository.findByProviderUser`; returns 200 `needs_link` for missing/revoked links; calls `routeCommandEvent()` only for active links. Does not read current user/session/dev owner and does not create drafts/enqueue/send. Dev-only response echoes `ownerId`; real providers must not. | WhatsApp / Telegram / Slack adapters add provider signature verification, dedupe, and payload normalisation before the same identity lookup + router handoff. | `pnpm test:db:channels-inbound`, `pnpm test:boundaries` |
 
 The `app/` tree should not import `lib/mock.ts` directly. If a page needs
 server data, make the page a server component and call one of these helpers,

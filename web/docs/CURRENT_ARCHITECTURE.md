@@ -823,17 +823,19 @@ P8-A ships the provider-agnostic contract: a normalised `CommandEvent`, a
 pure-logic router, a `CommandResponse` discriminated by status, and one
 mock route so the contract is testable without WhatsApp / Telegram / Slack.
 P8-B adds the identity-link schema (`channel_accounts`) and the repository
-interface (`ChannelAccountRepository`) so a future provider webhook can
-resolve `(provider, externalUserId) → owner_id` BEFORE running any
-owner-scoped logic. Real provider webhooks land in later slices; each
-will normalise its payload into the same `CommandEvent` and delegate to
-the same router.
+interface (`ChannelAccountRepository`). P8-C adds the Postgres runtime.
+P8-D adds a DB-backed **mock inbound** route that proves provider
+identity resolution end-to-end: `(provider, externalUserId) → owner_id`
+through `channel_accounts`, then the same router. Real provider webhooks
+land in later slices; each will verify its provider signature, normalise
+its payload into the same `CommandEvent`, and delegate to the same
+router.
 
 ```text
 WhatsApp webhook ┐                                    ┌─ ChannelAccountRepository
 Telegram webhook ├─ provider adapter ──> CommandEvent ┤  .findByProviderUser(provider,
 Slack events     ┘   (sig verify,                     │   externalUserId)            ──> owner_id
-mock route       ┘    normalise)                      │                              ──> null (link-needed)
+mock inbound      ┘    normalise)                     │                              ──> null (link-needed)
                                                       │
                                                       └─ routeCommandEvent ──> CommandResponse
                                                          (deterministic,         (status, intent,
@@ -898,6 +900,16 @@ etc.) once those adapters land — each will verify provider signatures,
 dedupe by provider message id, and call the same `routeCommandEvent`
 seam.
 
+`POST /api/channels/mock/inbound` is the DB-backed mock provider-adapter
+shape. It exists only for local/dev proof of the provider identity chain:
+malformed body → 400, non-DB data source → 501 `not_configured`,
+unlinked or revoked `(provider="mock", externalUserId)` → 200
+`needs_link`, and active links → `routeCommandEvent()` response plus a
+dev-only `ownerId` echo so the DB smoke can prove which owner was
+resolved. It never reads `currentUser*`, `keepsake_session`, or
+`DEV_OWNER_*`; the smoke sets `DEV_OWNER_ID` to a different user and
+asserts an unlinked external id still gets `needs_link`.
+
 Provider adapters (future) MUST:
 
 - Verify webhook signatures / shared secrets before calling the router.
@@ -940,7 +952,7 @@ Provider notes (still future):
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
 | Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts`, autosaves subject + card toggle through `PATCH /api/drafts`, and POSTs the send buttons to `/api/deliveries` for queue-boundary enqueue (after first flushing any pending edits); History calls the delivery-history dispatcher. | yes (Workspace draft fetches + autosave PATCH + delivery enqueue) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts`, `app/api/webhooks/deliveries/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail; `/api/webhooks/deliveries` is the provider-agnostic delivery-status callback (shared-secret gate, never reads current user). | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only, delivery status updates from webhook in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
+| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts`, `app/api/webhooks/deliveries/route.ts`, `app/api/channels/mock/route.ts`, `app/api/channels/mock/inbound/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail; `/api/webhooks/deliveries` is the provider-agnostic delivery-status callback (shared-secret gate, never reads current user); `/api/channels/mock` exercises the pure router; `/api/channels/mock/inbound` exercises DB-backed provider identity resolution and returns a review pointer only. | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only, delivery status updates from webhook in DB mode only, channel-account lookup for mock inbound in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock,generator-errors}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/draft-generator/{index,mock,openai}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts` | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; `draft-generator/index.server.ts` dispatches `mock` vs `openai` behind `KEEPSAKE_DRAFT_SOURCE` so the route contract stays unchanged; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
@@ -1094,6 +1106,7 @@ These seams are the only places that move when the back end goes real.
 | `lib/server/delivery-send/mock.server.ts` | Shared `validateRequest` (UUIDs + channel) and `enqueueMockDelivery` that returns a synthetic `QueuedDelivery`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/delivery-send/db.server.ts` | `enqueueDbDelivery` resolves the owner, opens one transaction, reuses `resolveDbDraftContextInTx` for person/occasion ownership, enforces the email sender precondition via `GmailAccountRepository.getPrimary`, looks up the latest draft, and calls `DeliveryRepository.enqueue`. No Gmail call; row inserted with `status='queued'` and `sent_at=NULL`. | Same orchestration with real auth; a future Gmail worker drains queued rows and updates status. |
 | `lib/server/delivery-webhook/ingest.server.ts` | `ingestDeliveryWebhookEvent(input)` validates the provider-agnostic event (provider ∈ {gmail, mock}; event ∈ {delivered, opened, failed}) and dispatches by `KEEPSAKE_DATA_SOURCE`. Identity = `providerMessageId`; never reads current user. | A future Gmail push subscription wires `provider: "gmail"` directly into this seam; no route signature change. |
+| `lib/server/channels/mock-inbound.server.ts` | DB-backed mock provider adapter. Validates `externalUserId` + `text`, requires `KEEPSAKE_DATA_SOURCE=db`, resolves the active `channel_accounts` row with `workerTransaction` + `ChannelAccountRepository.findByProviderUser("mock", externalUserId)`, returns `needs_link` for missing/revoked accounts, and calls `routeCommandEvent()` only after owner resolution. Dev-only response echoes `ownerId`; real provider routes must not. | WhatsApp / Telegram / Slack routes add provider signature verification + dedupe, then normalise into the same service/router pattern. |
 | `lib/server/delivery-webhook/mock.server.ts` | Mock dispatch — no `deliveries` rows exist, so every well-formed event resolves to `delivery_not_found`. Keeps the contract exercisable without Postgres. | Deleted when DB is the only source. |
 | `lib/server/delivery-webhook/db.server.ts` | `ingestWebhookEventDb` runs under `workerTransaction` (BYPASSRLS), looks up the row via `DeliveryRepository.findByProviderMessageId(providerMessageId)`, maps the event to a target `DeliveryStatus`, and calls `DeliveryRepository.markStatus({ deliveryId, status, providerStatus?, deliveredAtISO?, openedAtISO?, failureReason? })`. `opened` events also pass `deliveredAtISO` so the row picks up a delivered timestamp even when the provider skipped the delivered event. | Future per-provider HMAC verification + retry queue layer on top; the seam contract stays. |
 

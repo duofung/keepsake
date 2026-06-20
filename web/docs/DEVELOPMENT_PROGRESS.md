@@ -37,7 +37,7 @@ Rules:
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
-| Command Channel Platform | Foundation + identity-link schema + repository runtime (P8-A, P8-B, P8-C) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner` (owner-scoped), `link` (idempotent same-owner re-link, atomic cross-owner conflict via elevated `ON CONFLICT … DO UPDATE … WHERE owner_id = $caller`), `markRevoked` (owner-scoped, throws not-found on unknown / cross-owner). `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. NO provider adapters wired in yet. | WhatsApp / Telegram / Slack adapters (signature verification, dedupe, normalisation), owner-explicit server seams (`getPeoplePayloadForOwner`, etc.), notification + reminder outbound, LLM intent classifier behind the same router seam, Profile UI for managing linked channels. |
+| Command Channel Platform | Foundation + identity-link schema + repository runtime + DB-backed mock inbound route (P8-A → P8-D) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner`, `link`, `markRevoked`; `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. P8-D: `POST /api/channels/mock/inbound` runs DB-only mock provider identity resolution (`externalUserId → owner_id`) through a worker transaction, returns `needs_link` for missing/revoked links, and only then calls the shared router. Still no real WhatsApp / Telegram / Slack adapter and no execution side effects. | WhatsApp / Telegram / Slack adapters (signature verification, dedupe, normalisation), owner-explicit server seams (`getPeoplePayloadForOwner`, etc.), notification + reminder outbound, LLM intent classifier behind the same router seam, Profile UI for managing linked channels. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
 
@@ -686,6 +686,53 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P8-D. DB-Backed Mock Inbound Command Route
+
+Status: done. Guarded by `pnpm test:db:channels-inbound` — Docker
+Postgres + Next smoke. The test links one active mock channel account
+and one revoked account through `ChannelAccountRepository.link`, then
+drives `POST /api/channels/mock/inbound` in `KEEPSAKE_DATA_SOURCE=db`
+mode. Assertions cover body validation, unlinked identity →
+`needs_link`, revoked identity → `needs_link`, active follow-up →
+`relationship_followup_query`, active compose → `compose_request` +
+`needs_review`, and a regression check that the response never claims
+the command was sent / delivered / queued.
+
+Goal: prove the real provider-adapter shape without integrating a real
+provider. Incoming platform identity is the auth input:
+`externalUserId` resolves through `channel_accounts` under a
+worker/BYPASSRLS transaction. There is NO web-session fallback and NO
+`DEV_OWNER_*` fallback.
+
+Shipped:
+
+- `lib/server/channels/mock-inbound.server.ts` — server-only service.
+  Validates `{ externalUserId, externalThreadId?, text, raw? }`;
+  returns 501 `not_configured` unless `KEEPSAKE_DATA_SOURCE=db`; runs
+  `workerTransaction` + `ChannelAccountRepository.findByProviderUser(
+  "mock", externalUserId, tx)`; returns 200 `needs_link` when the row is
+  missing or revoked; calls `routeCommandEvent()` only for active
+  links. The mock/dev response echoes `ownerId` so the smoke can prove
+  which owner was resolved; real provider routes must not echo owner ids.
+- `app/api/channels/mock/inbound/route.ts` — thin POST route:
+  malformed JSON → 400, otherwise delegate to the server seam. It does
+  not import repositories and does not read current user/session.
+- `scripts/test-channels-mock-inbound-db-route.mjs` — DB route smoke.
+  It deliberately starts Next with `DEV_OWNER_ID` set to a different
+  user and verifies an unlinked `externalUserId` still returns
+  `needs_link`, proving there is no env/session fallback.
+- `package.json` — `test:db:channels-inbound`, inserted into
+  `pnpm test:db` after `test:db:channel-accounts`. Not part of default
+  `pnpm test` because it boots Docker.
+
+Out of scope:
+
+- **No** WhatsApp / Telegram / Slack route.
+- **No** provider signature verification or dedupe.
+- **No** command execution against drafts / deliveries / workers.
+- **No** DB schema change.
+- **No** UI for linking or managing channel accounts.
 
 ### P8-C. ChannelAccountRepository Runtime
 
