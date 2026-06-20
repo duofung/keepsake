@@ -198,6 +198,38 @@ function decryptRefreshToken({ ownerId, blob, keyBase64 }) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
 }
 
+async function mintDevSession(base) {
+  // POST /api/auth/dev-session/start mints a real `keepsake_session`
+  // cookie for the DEV_OWNER_* identity. P6-C made /profile cookie-
+  // only, so every page fetch in this smoke must carry it. The route
+  // is gated behind ENABLE_DEV_SESSION_ROUTES=1 (set in the next-dev
+  // env below).
+  const res = await fetch(`${base}/api/auth/dev-session/start`, {
+    method: "POST",
+  });
+  if (res.status !== 200) {
+    throw new Error(`dev-session/start failed: status=${res.status}`);
+  }
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  const cookie = setCookie.match(/keepsake_session=([^;]+)/)?.[1] ?? "";
+  if (!cookie) {
+    throw new Error("dev-session/start did not return a keepsake_session cookie");
+  }
+  return cookie;
+}
+
+function normalizeHtml(html) {
+  // React stitches text around interpolated values with `<!-- -->`
+  // sentinels and encodes apostrophes in attributes. Normalise both
+  // so substring assertions match what a reader of the page sees.
+  return html
+    .replace(/<!--\s*-->/g, "")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 function extractStateCookie(setCookie) {
   if (!setCookie) return null;
   const match = setCookie.match(/keepsake_gmail_oauth_state=([^;]*)/);
@@ -296,6 +328,13 @@ try {
       GOOGLE_REDIRECT_URI: "__ORIGIN__/api/oauth/gmail/callback",
       GOOGLE_TOKEN_ENDPOINT: fakeToken.url,
       OAUTH_STATE_SIGNING_SECRET: signingSecret,
+      // P6-C: /profile is cookie-only now. We mint a real session
+      // below via /api/auth/dev-session/start (gated behind
+      // ENABLE_DEV_SESSION_ROUTES=1) and thread the cookie through
+      // every page + OAuth fetch in this smoke.
+      APP_SESSION_SIGNING_SECRET:
+        "test-gmail-oauth-callback-db-app-session-secret-min-32-chars",
+      ENABLE_DEV_SESSION_ROUTES: "1",
     },
   });
 
@@ -304,10 +343,14 @@ try {
 
   process.stdout.write(`booting next dev on :${port}...\n`);
   await waitForNext(base);
+  const sessionCookie = await mintDevSession(base);
   process.stdout.write("server ready, running assertions:\n");
 
   // 1. start → capture cookie + state
-  const start = await fetch(`${base}/api/oauth/gmail/start?returnTo=/profile`, { redirect: "manual" });
+  const start = await fetch(`${base}/api/oauth/gmail/start?returnTo=/profile`, {
+    redirect: "manual",
+    headers: { cookie: `keepsake_session=${sessionCookie}` },
+  });
   check("start -> 307", start.status === 307, `status=${start.status}`);
   const startCookie = extractStateCookie(start.headers.get("set-cookie"));
   const stateParam = new URL(start.headers.get("location") ?? "").searchParams.get("state");
@@ -319,7 +362,9 @@ try {
     `${base}/api/oauth/gmail/callback?code=cb-1&state=${stateParam}`,
     {
       redirect: "manual",
-      headers: { cookie: `keepsake_gmail_oauth_state=${startCookie}` },
+      headers: {
+        cookie: `keepsake_session=${sessionCookie}; keepsake_gmail_oauth_state=${startCookie}`,
+      },
     },
   );
   check("successful callback -> 307", success.status === 307, `status=${success.status}`);
@@ -358,7 +403,9 @@ try {
   check("refresh_token_enc decrypts to fake server's refresh token", decrypted === "refresh-cb-1");
 
   // 4. /api/session sees the connected sendingAccount
-  const sessionRes = await fetch(`${base}/api/session`);
+  const sessionRes = await fetch(`${base}/api/session`, {
+    headers: { cookie: `keepsake_session=${sessionCookie}` },
+  });
   const sessionBody = await sessionRes.json();
   check("/api/session -> 200", sessionRes.status === 200, `status=${sessionRes.status}`);
   check(
@@ -376,8 +423,10 @@ try {
   );
 
   // 5. Profile renders sender email (proves UI consumer sees DB row)
-  const profileRes = await fetch(`${base}/profile`);
-  const profileBody = await profileRes.text();
+  const profileRes = await fetch(`${base}/profile`, {
+    headers: { cookie: `keepsake_session=${sessionCookie}` },
+  });
+  const profileBody = normalizeHtml(await profileRes.text());
   check("/profile -> 200", profileRes.status === 200);
   check("/profile renders sender email", profileBody.includes(`Emails send from ${senderEmail}`));
   check("/profile renders Connected", profileBody.includes("Connected"));
@@ -387,7 +436,9 @@ try {
     `${base}/api/oauth/gmail/callback?code=cb-1&state=${stateParam}`,
     {
       redirect: "manual",
-      headers: { cookie: `keepsake_gmail_oauth_state=${startCookie}` },
+      headers: {
+        cookie: `keepsake_session=${sessionCookie}; keepsake_gmail_oauth_state=${startCookie}`,
+      },
     },
   );
   const replayBody = replay.headers.get("content-type")?.includes("json") ? await replay.json() : null;
@@ -408,7 +459,10 @@ try {
   //    - same email so ON CONFLICT path runs
   //    - refresh_token_enc rotates to the new ciphertext
   //    - row count stays at one
-  const start2 = await fetch(`${base}/api/oauth/gmail/start?returnTo=/profile`, { redirect: "manual" });
+  const start2 = await fetch(`${base}/api/oauth/gmail/start?returnTo=/profile`, {
+    redirect: "manual",
+    headers: { cookie: `keepsake_session=${sessionCookie}` },
+  });
   const cookie2 = extractStateCookie(start2.headers.get("set-cookie"));
   const state2 = new URL(start2.headers.get("location") ?? "").searchParams.get("state");
 
@@ -416,7 +470,9 @@ try {
     `${base}/api/oauth/gmail/callback?code=cb-2&state=${state2}`,
     {
       redirect: "manual",
-      headers: { cookie: `keepsake_gmail_oauth_state=${cookie2}` },
+      headers: {
+        cookie: `keepsake_session=${sessionCookie}; keepsake_gmail_oauth_state=${cookie2}`,
+      },
     },
   );
   check("reconnect callback -> 307", success2.status === 307, `status=${success2.status}`);

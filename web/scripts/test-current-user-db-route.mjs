@@ -171,10 +171,31 @@ async function fetchJson(base, path) {
   return { status: res.status, body };
 }
 
-async function fetchHtml(base, path) {
-  const res = await fetch(`${base}${path}`);
+async function fetchHtml(base, path, sessionCookie) {
+  // P6-C made product pages cookie-only (no DEV_OWNER_* env fallback).
+  // Page calls must carry a real `keepsake_session`; routes (/api/*)
+  // still work via env fallback so the JSON helpers below don't need it.
+  const headers = sessionCookie
+    ? { cookie: `keepsake_session=${sessionCookie}` }
+    : {};
+  const res = await fetch(`${base}${path}`, { headers });
   const body = normalizeHtml(await res.text());
   return { status: res.status, body };
+}
+
+async function mintDevSession(base) {
+  const res = await fetch(`${base}/api/auth/dev-session/start`, {
+    method: "POST",
+  });
+  if (res.status !== 200) {
+    throw new Error(`dev-session/start failed: status=${res.status}`);
+  }
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  const cookie = setCookie.match(/keepsake_session=([^;]+)/)?.[1] ?? "";
+  if (!cookie) {
+    throw new Error("dev-session/start did not return a keepsake_session cookie");
+  }
+  return cookie;
 }
 
 async function waitForNext(base) {
@@ -247,6 +268,12 @@ async function withNextForOwner({
       DEV_OWNER_NAME: ownerName,
       KEEPSAKE_DATA_SOURCE: "db",
       NEXT_TELEMETRY_DISABLED: "1",
+      // P6-C: /profile and /workspace are cookie-only now. We mint a
+      // real session below via /api/auth/dev-session/start and forward
+      // it on every page fetch in this phase.
+      APP_SESSION_SIGNING_SECRET:
+        "test-current-user-db-app-session-secret-min-32-chars",
+      ENABLE_DEV_SESSION_ROUTES: "1",
     },
   });
 
@@ -258,7 +285,8 @@ async function withNextForOwner({
   try {
     process.stdout.write(`booting next dev on :${port} for ${ownerEmail}...\n`);
     await waitForNext(base);
-    await fn(base);
+    const sessionCookie = await mintDevSession(base);
+    await fn(base, sessionCookie);
   } catch (error) {
     if (serverError) process.stdout.write(`\nnext stderr:\n${serverError}\n`);
     throw error;
@@ -381,7 +409,7 @@ try {
     port: basePort,
     appUrl,
     encryptionKey,
-  }, async (base) => {
+  }, async (base, sessionCookie) => {
     const session = await fetchJson(base, "/api/session");
     check("connected /api/session -> 200", session.status === 200, `status=${session.status}`);
     check(
@@ -392,7 +420,7 @@ try {
       JSON.stringify(session.body),
     );
 
-    const profile = await fetchHtml(base, "/profile");
+    const profile = await fetchHtml(base, "/profile", sessionCookie);
     check("connected /profile -> 200", profile.status === 200, `status=${profile.status}`);
     check("profile renders sender email", profile.body.includes(`Emails send from ${connectedOwner.sender}`));
     check("profile renders Connected", profile.body.includes("Connected"));
@@ -407,7 +435,7 @@ try {
     const people = await fetchJson(base, "/api/people");
     const lin = people.body?.people?.find((person) => person.name === "Lin");
     check("connected owner has Lin fixture", !!lin);
-    const workspace = await fetchHtml(base, `/workspace?person=${lin?.id ?? ""}`);
+    const workspace = await fetchHtml(base, `/workspace?person=${lin?.id ?? ""}`, sessionCookie);
     check("connected /workspace -> 200", workspace.status === 200, `status=${workspace.status}`);
     check("workspace renders sender email", workspace.body.includes(connectedOwner.sender));
     check("workspace does not render missing sender copy", !workspace.body.includes("no sender configured"));
@@ -421,7 +449,7 @@ try {
     port: basePort + 1,
     appUrl,
     encryptionKey,
-  }, async (base) => {
+  }, async (base, sessionCookie) => {
     const session = await fetchJson(base, "/api/session");
     check("expired /api/session -> 200", session.status === 200, `status=${session.status}`);
     check(
@@ -431,7 +459,7 @@ try {
       JSON.stringify(session.body),
     );
 
-    const profile = await fetchHtml(base, "/profile");
+    const profile = await fetchHtml(base, "/profile", sessionCookie);
     check("expired /profile -> 200", profile.status === 200, `status=${profile.status}`);
     check("profile renders expired sender email", profile.body.includes(`Emails send from ${expiredOwner.sender}`));
     check("profile renders Expired", profile.body.includes("Expired"));
@@ -451,12 +479,12 @@ try {
     port: basePort + 2,
     appUrl,
     encryptionKey,
-  }, async (base) => {
+  }, async (base, sessionCookie) => {
     const session = await fetchJson(base, "/api/session");
     check("empty /api/session -> 200", session.status === 200, `status=${session.status}`);
     check("session sendingAccount null", session.body?.user?.sendingAccount === null, JSON.stringify(session.body));
 
-    const profile = await fetchHtml(base, "/profile");
+    const profile = await fetchHtml(base, "/profile", sessionCookie);
     check("empty /profile -> 200", profile.status === 200, `status=${profile.status}`);
     check("profile renders Not connected", profile.body.includes("Not connected"));
     check("empty profile renders Connect Gmail CTA", profile.body.includes(">Connect Gmail</a>"));
@@ -475,7 +503,7 @@ try {
     port: basePort + 3,
     appUrl,
     encryptionKey,
-  }, async (base) => {
+  }, async (base, sessionCookie) => {
     const disconnect = await fetch(`${base}/api/gmail/disconnect`, {
       method: "POST",
       redirect: "manual",
@@ -494,7 +522,7 @@ try {
       JSON.stringify(session.body),
     );
 
-    const profile = await fetchHtml(base, "/profile");
+    const profile = await fetchHtml(base, "/profile", sessionCookie);
     check("profile shows Not connected after disconnect", profile.body.includes("Not connected"));
     check("profile shows Connect Gmail after disconnect", profile.body.includes(">Connect Gmail</a>"));
     check("profile no longer shows Disconnect button", !profile.body.includes(">Disconnect</button>"));

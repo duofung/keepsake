@@ -37,7 +37,7 @@ Rules:
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
-| Command Channel Platform | Foundation + identity-link schema designed (P8-A, P8-B) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design (`findByProviderUser` / `listForOwner` / `link` / `markRevoked`) wires provider-side identity onto `owner_id`. NO runtime implementation, NO provider adapters yet. | WhatsApp / Telegram / Slack adapters (signature verification, dedupe, normalisation), `ChannelAccountRepository` Postgres implementation, owner-explicit server seams (`getPeoplePayloadForOwner`, etc.), notification + reminder outbound, LLM intent classifier behind the same router seam. |
+| Command Channel Platform | Foundation + identity-link schema + repository runtime (P8-A, P8-B, P8-C) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner` (owner-scoped), `link` (idempotent same-owner re-link, atomic cross-owner conflict via elevated `ON CONFLICT … DO UPDATE … WHERE owner_id = $caller`), `markRevoked` (owner-scoped, throws not-found on unknown / cross-owner). `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. NO provider adapters wired in yet. | WhatsApp / Telegram / Slack adapters (signature verification, dedupe, normalisation), owner-explicit server seams (`getPeoplePayloadForOwner`, etc.), notification + reminder outbound, LLM intent classifier behind the same router seam, Profile UI for managing linked channels. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
 
@@ -686,6 +686,77 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P8-C. ChannelAccountRepository Runtime
+
+Status: done. Guarded by `pnpm test:db:channel-accounts` — Docker
+Postgres smoke, 42 assertions: link/list/find/revoke happy paths in
+both 中文 + English fixture text aren't relevant here (this slice is
+DB plumbing), same-owner idempotent re-link, displayName-null clears
+the encrypted column, raw `display_name_enc` bytes never contain the
+plaintext name, decryption round-trips through the
+`owner_id ‖ channel_accounts ‖ display_name_enc` AAD,
+`external_user_id` and `raw_profile` stay plaintext (lookup key +
+non-sensitive metadata), markRevoked surfaces as not-found on
+unknown / cross-owner, cross-owner link attempts throw a
+`cross_owner_conflict`-tagged error WITHOUT poisoning the original
+row's `display_name_enc` or rebinding `owner_id`.
+
+Goal: turn the P8-B interface design into a working Postgres
+implementation so a future provider webhook can call
+`ChannelAccountRepository.findByProviderUser` and resolve the owner
+without going through the web session. The slice is pure plumbing —
+no new routes, no provider adapters, no command execution.
+
+Shipped:
+
+- `lib/repositories/channel-accounts.server.ts` — new
+  `PgChannelAccountRepository` + `createChannelAccountRepository()`.
+  Method behaviour:
+  - `findByProviderUser(provider, externalUserId, tx)` —
+    throws when called without a tx (matches the
+    deliveries.markStatus convention). Looks up
+    `(provider, external_user_id)`, decrypts `display_name_enc`
+    before returning. Worker/webhook-only.
+  - `listForOwner(ownerId, tx?)` — owner-scoped under RLS.
+    Returns both active and revoked rows sorted by
+    `(provider, created_at, id)` so the UI can render Reconnect
+    next to revoked entries.
+  - `link(ownerId, input, tx?)` — elevates to `workerTransaction`
+    when no tx is passed so the cross-owner detection is
+    atomic. SQL is `INSERT … ON CONFLICT (provider,
+    external_user_id) DO UPDATE … WHERE channel_accounts.owner_id
+    = $caller`: same-owner re-link succeeds (idempotent on id;
+    refreshes externalThreadId / displayName / rawProfile,
+    flips status back to `active`, bumps `last_seen_at` +
+    `updated_at`). Different-owner conflict produces zero
+    `RETURNING` rows; the impl throws a stable
+    `cross_owner_conflict`-tagged error and the existing row's
+    encrypted columns stay untouched.
+  - `markRevoked(ownerId, accountId, tx?)` — owner-scoped.
+    Throws `target was not found` on unknown id or
+    cross-owner attempt (RLS hides the row under the
+    user-scoped tx; the explicit `WHERE owner_id = $caller`
+    keeps the elevated-tx path honest).
+- `lib/repositories/README.md` — implementation row added,
+  explicitly noting `findByProviderUser`'s tx requirement and
+  the elevated `workerTransaction` link strategy.
+- `package.json` — `test:db:channel-accounts` script + spliced
+  into `pnpm test:db` between `test:db:gmail-accounts` and
+  `test:db:gmail-callback`. **NOT** added to default `pnpm test`
+  (Docker required).
+
+Out of scope (still future slices):
+
+- **No** new API route. The P8-A mock command route still
+  bypasses owner resolution by design — pre-link is a separate
+  product flow.
+- **No** real WhatsApp / Telegram / Slack webhook routes.
+- **No** webhook signature verification (no real provider yet).
+- **No** command execution against the DB.
+- **No** Profile UI for managing linked channels.
+- **No** seed-data row for `channel_accounts`.
+- **No** schema changes — the P8-B draft was sufficient.
 
 ### P8-B. Channel Account Linking Schema + Repository Interface
 

@@ -25,6 +25,8 @@ methods will follow the same pattern as they land.
 | [`deliveries.server.ts`](./deliveries.server.ts) | `PgDeliveryRepository` — read-only runtime implementation for sent delivery history, including encrypted recipient/occasion labels. Send/webhook/worker methods intentionally throw for now. |
 | [`gmail-accounts.ts`](./gmail-accounts.ts) | `GmailAccountRepository` — contract for Gmail sender account metadata + encrypted refresh token storage. |
 | [`gmail-accounts.server.ts`](./gmail-accounts.server.ts) | `PgGmailAccountRepository` — runtime implementation for Gmail account metadata + encrypted refresh token storage. Not wired into auth/OAuth yet. |
+| [`channel-accounts.ts`](./channel-accounts.ts) | `ChannelAccountRepository` — contract for mapping a provider-side identity (WhatsApp / Telegram / Slack / mock) onto a Keepsake `owner_id`. |
+| [`channel-accounts.server.ts`](./channel-accounts.server.ts) | `PgChannelAccountRepository` — runtime implementation for `channel_accounts`. `findByProviderUser` is worker/webhook-only (requires an explicit BYPASSRLS tx; throws when none is passed); `link` elevates to `workerTransaction` internally to atomically detect cross-owner conflicts and enforces ownership in SQL via `ON CONFLICT … DO UPDATE … WHERE channel_accounts.owner_id = $caller`. `listForOwner` and `markRevoked` are owner-scoped under RLS. `display_name_enc` is encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. No provider adapter wired in yet. |
 
 ### Implementation file naming
 
