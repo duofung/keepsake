@@ -1,8 +1,9 @@
 import "server-only";
 
+import type { OwnerId } from "@/lib/repositories";
 import { createChannelAccountRepository } from "@/lib/repositories/channel-accounts.server";
 import { workerTransaction } from "@/lib/server/db/transaction.server";
-import { routeCommandEvent } from "./router.server";
+import { handleOwnerCommand } from "./command-service.server";
 import type { CommandEvent, CommandResponse } from "./types";
 
 type MockInboundBody = Record<string, unknown>;
@@ -97,7 +98,11 @@ export async function handleMockInboundCommand(
     raw: body.raw ?? input,
   };
 
-  const response = await routeCommandEvent(event);
+  // P8-E: hand off to the owner-scoped command service. It still calls
+  // routeCommandEvent() for intent classification, then (for follow-up
+  // queries) enriches the response with real owner-scoped people +
+  // upcoming occasions read under `transaction(ownerId, …)`.
+  const response = await handleOwnerCommand(account.ownerId as OwnerId, event);
   return {
     status: 200,
     body: {

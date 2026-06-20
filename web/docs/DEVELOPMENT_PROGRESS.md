@@ -37,7 +37,7 @@ Rules:
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
-| Command Channel Platform | Foundation + identity-link schema + repository runtime + DB-backed mock inbound route (P8-A → P8-D) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner`, `link`, `markRevoked`; `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. P8-D: `POST /api/channels/mock/inbound` runs DB-only mock provider identity resolution (`externalUserId → owner_id`) through a worker transaction, returns `needs_link` for missing/revoked links, and only then calls the shared router. Still no real WhatsApp / Telegram / Slack adapter and no execution side effects. | WhatsApp / Telegram / Slack adapters (signature verification, dedupe, normalisation), owner-explicit server seams (`getPeoplePayloadForOwner`, etc.), notification + reminder outbound, LLM intent classifier behind the same router seam, Profile UI for managing linked channels. |
+| Command Channel Platform | Foundation + identity-link schema + repository runtime + DB-backed mock inbound route + owner-scoped read path (P8-A → P8-E) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner`, `link`, `markRevoked`; `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. P8-D: `POST /api/channels/mock/inbound` runs DB-only mock provider identity resolution (`externalUserId → owner_id`) through a worker transaction, returns `needs_link` for missing/revoked links, and only then calls the shared router. P8-E: `handleOwnerCommand(ownerId, event)` opens `transaction(ownerId, …)` and enriches a follow-up reply with that owner's real people + upcoming occasions (≤30 days, top 3 by daysUntil) via `PeopleRepository.listWithRelations`. Still no real WhatsApp / Telegram / Slack adapter; still no draft creation, no enqueue, no Gmail send. | WhatsApp / Telegram / Slack adapters (signature verification, dedupe, normalisation), notification + reminder outbound, LLM intent classifier behind the same router seam, Profile UI for managing linked channels. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
 
@@ -686,6 +686,66 @@ Explicit out of scope for P6-B:
 - Sign-in callback REQUIRES `KEEPSAKE_DATA_SOURCE=db` — mock mode
   returns 501 `not_configured` because there's no DB to persist
   users into.
+
+### P8-E. Owner-Scoped Channel Command Read Path
+
+Status: done. Guarded by `pnpm test:db:channels-inbound` (31
+assertions — 9 new on top of P8-D's set): ownerA follow-up reply
+names a real seeded fixture person + occasion label, points the user
+back to Keepsake, never claims execution ("sent / delivered /
+queued"); a separately-linked ownerB with NO seeded fixtures sees
+the empty-window response and never leaks ownerA's fixture names
+through cross-talk. Unlinked / revoked / compose paths from P8-D
+stay unchanged.
+
+Goal: with provider identity already resolved by P8-D, the channel
+should answer "anyone I should follow up with?" with specifics —
+names + days-until — instead of the generic acknowledgment the
+keyword router emits. The web app stays the place where the user
+drafts and sends; the channel only points back.
+
+Shipped:
+
+- `lib/server/channels/command-service.server.ts` — new
+  `handleOwnerCommand(ownerId, event)`. Calls `routeCommandEvent`
+  for intent classification. For `relationship_followup_query`,
+  opens `transaction(ownerId, …)`, reads
+  `PeopleRepository.listWithRelations(ownerId, tx)`, filters
+  occasions to `daysUntil >= 0 && <= 30`, sorts ascending, takes
+  the top 3, and renders a structured reply (`• <Name> —
+  <Occasion> in <N> days … Open Keepsake to draft and send when
+  you're ready`). Empty window resolves to "Nothing in the next 30
+  days needs your attention right now. Open Keepsake when you want
+  to look ahead further." All other intents pass through
+  untouched, so `compose_request` still returns `needs_review` +
+  `recipientHint` from the keyword classifier.
+- `lib/server/channels/mock-inbound.server.ts` — the active-account
+  branch now calls `handleOwnerCommand(account.ownerId, event)`
+  instead of `routeCommandEvent(event)` directly. The dev-only
+  `ownerId` echo is preserved; the unlinked / revoked paths still
+  return `needs_link` without ever touching owner data.
+- `scripts/test-channels-mock-inbound-db-route.mjs` — seeds the
+  standard dev fixtures (people + occasions, encrypted) for
+  ownerA; links a second mock channel `mock-user-b → ownerB`
+  with no fixtures; loads `db/seed_catalog.sql`; grants the app
+  role read access to `people`, `occasion_nodes`, `relationships`,
+  `cultures` + the enum types `listWithRelations` touches; adds
+  the four ownerA-positive assertions (name / label / "Open
+  Keepsake" / no execution claim) and the three ownerB-isolation
+  assertions (ownerId=B, no ownerA names, empty-window text).
+
+Out of scope (still future slices, unchanged from P8-D):
+
+- **No** real WhatsApp / Telegram / Slack adapter.
+- **No** webhook signature verification.
+- **No** draft creation. `compose_request` still surfaces a hint
+  only.
+- **No** delivery enqueue. `/api/deliveries` stays the only queue
+  boundary.
+- **No** Gmail send.
+- **No** Profile UI for managing linked channels.
+- **No** LLM intent classifier — keyword router unchanged.
+- **No** DB schema changes.
 
 ### P8-D. DB-Backed Mock Inbound Command Route
 

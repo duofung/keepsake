@@ -224,15 +224,32 @@ try {
   await waitForPostgres(adminUrl);
   process.stdout.write("  ✓ postgres is accepting connections\n");
 
-  process.stdout.write("loading schema:\n");
+  process.stdout.write("loading schema + catalog seed:\n");
   await runSqlFile(adminUrl, "db/schema.sql");
+  await runSqlFile(adminUrl, "db/seed_catalog.sql");
 
   await withClient(adminUrl, async (client) => {
     await client.query(`CREATE ROLE ${appRole} LOGIN PASSWORD '${appPassword}' NOBYPASSRLS`);
     await client.query(`GRANT CONNECT ON DATABASE keepsake TO ${appRole}`);
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
-    await client.query(`GRANT USAGE ON TYPE channel_provider, channel_account_status TO ${appRole}`);
+    // Enums referenced by the queries P8-E touches (channel_accounts,
+    // people, occasion_nodes, relationships).
+    await client.query(`
+      GRANT USAGE ON TYPE
+        channel_provider,
+        channel_account_status,
+        relationship_kind,
+        relationship_group,
+        occasion_kind,
+        tone,
+        channel
+      TO ${appRole}
+    `);
     await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON channel_accounts TO ${appRole}`);
+    // P8-E read path: handleOwnerCommand opens a transaction(ownerId, …)
+    // and calls PeopleRepository.listWithRelations, which selects from
+    // people + occasion_nodes + relationships + cultures.
+    await client.query(`GRANT SELECT ON people, occasion_nodes, relationships, cultures TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 
@@ -253,6 +270,22 @@ try {
   process.env.KEEPSAKE_WORKER_DATABASE_URL = adminUrl;
   process.env.DEV_ENCRYPTION_KEY_BASE64 = encryptionKey;
 
+  // P8-E seeds: give ownerA the standard dev fixtures (people +
+  // occasions, encrypted) via the project's seed script. ownerB stays
+  // empty so cross-owner isolation can be asserted by emptiness.
+  process.stdout.write("seeding dev fixtures for ownerA:\n");
+  await command("node", ["scripts/seed-dev-fixtures.mjs"], {
+    env: {
+      ...process.env,
+      DATABASE_URL: adminUrl,
+      DEV_ENCRYPTION_KEY_BASE64: encryptionKey,
+      DEV_OWNER_ID: ownerA,
+      DEV_OWNER_EMAIL: "channel-owner-a@example.test",
+      DEV_OWNER_NAME: "Channel Owner A",
+    },
+  });
+  process.stdout.write("  ✓ ownerA fixtures seeded\n");
+
   const repo = await loadChannelAccountRepository();
   await repo.link(ownerA, {
     provider: "mock",
@@ -260,6 +293,16 @@ try {
     externalThreadId: "thread-active",
     displayName: "Mock Active",
     rawProfile: { source: "test" },
+  });
+  // mock-user-b → ownerB. ownerB has NO seeded people/occasions, so a
+  // follow-up query through this channel must come back with the
+  // empty-window response and must not mention any of ownerA's
+  // fixture names.
+  await repo.link(ownerB, {
+    provider: "mock",
+    externalUserId: "mock-user-b",
+    externalThreadId: "thread-b",
+    displayName: "Mock Owner B",
   });
   const revoked = await repo.link(ownerA, {
     provider: "mock",
@@ -334,6 +377,12 @@ try {
       JSON.stringify(res.body));
   }
 
+  // P8-E happy path: ownerA's follow-up reply must reflect that owner's
+  // seeded people/occasions — name + occasion label of someone in the
+  // 30-day window.
+  const ownerAFixtureNames = ["Lin", "Mom", "Aisha", "Dad", "Kira"];
+  const ownerAOccasionLabels = ["Anniversary", "Birthday", "Hari Raya"];
+  let ownerAFollowUpText = "";
   {
     const res = await postInbound({
       externalUserId: "mock-user-1",
@@ -353,6 +402,67 @@ try {
     check("active follow-up echoes ownerId for mock smoke only",
       res.body?.ownerId === ownerA,
       JSON.stringify(res.body));
+
+    ownerAFollowUpText = typeof res.body?.text === "string" ? res.body.text : "";
+    const namesHit = ownerAFixtureNames.filter((name) =>
+      ownerAFollowUpText.includes(name),
+    );
+    check(
+      "active follow-up text names at least one real fixture person",
+      namesHit.length >= 1,
+      `text=${ownerAFollowUpText}`,
+    );
+    const labelHit = ownerAOccasionLabels.some((label) =>
+      ownerAFollowUpText.includes(label),
+    );
+    check(
+      "active follow-up text mentions a real occasion label",
+      labelHit, `text=${ownerAFollowUpText}`,
+    );
+    check(
+      "active follow-up text still points the user back to Keepsake to act",
+      /open\s+keepsake/i.test(ownerAFollowUpText),
+      `text=${ownerAFollowUpText}`,
+    );
+    check(
+      "active follow-up text does NOT claim execution",
+      !/\b(sent|delivered|queued)\b/i.test(ownerAFollowUpText),
+      `text=${ownerAFollowUpText}`,
+    );
+  }
+
+  // P8-E cross-owner isolation: a different linked owner with no
+  // seeded people/occasions must see the empty-window message and
+  // MUST NOT see any of ownerA's fixture names.
+  {
+    const res = await postInbound({
+      externalUserId: "mock-user-b",
+      text: "最近有什么需要跟进的关系吗？",
+    });
+    check("ownerB follow-up -> 200", res.status === 200);
+    check("ownerB follow-up status=ok",
+      res.body?.status === "ok", JSON.stringify(res.body));
+    check("ownerB follow-up intent",
+      res.body?.intent === "relationship_followup_query",
+      JSON.stringify(res.body));
+    check("ownerB follow-up echoes ownerId=B (NOT ownerA)",
+      res.body?.ownerId === ownerB && res.body?.ownerId !== ownerA,
+      JSON.stringify(res.body));
+
+    const ownerBText = typeof res.body?.text === "string" ? res.body.text : "";
+    const leakedName = ownerAFixtureNames.find((name) =>
+      ownerBText.includes(name),
+    );
+    check(
+      "ownerB follow-up text does NOT leak ownerA fixture names",
+      leakedName === undefined,
+      `leaked=${leakedName ?? ""} text=${ownerBText}`,
+    );
+    check(
+      "ownerB follow-up text uses the empty-window response",
+      /nothing\s+in\s+the\s+next/i.test(ownerBText),
+      `text=${ownerBText}`,
+    );
   }
 
   {

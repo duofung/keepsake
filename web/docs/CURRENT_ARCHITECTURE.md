@@ -826,10 +826,16 @@ P8-B adds the identity-link schema (`channel_accounts`) and the repository
 interface (`ChannelAccountRepository`). P8-C adds the Postgres runtime.
 P8-D adds a DB-backed **mock inbound** route that proves provider
 identity resolution end-to-end: `(provider, externalUserId) → owner_id`
-through `channel_accounts`, then the same router. Real provider webhooks
-land in later slices; each will verify its provider signature, normalise
-its payload into the same `CommandEvent`, and delegate to the same
-router.
+through `channel_accounts`, then the same router. P8-E adds an
+**owner-scoped read path**: once identity is resolved, a
+`relationship_followup_query` is answered with that owner's actual
+people + upcoming occasions (read-only, top 3 within 30 days), so
+the channel reply names real names instead of returning a generic
+acknowledgment. The web app stays the place where the user actually
+drafts and sends — the channel only points back. Real provider
+webhooks land in later slices; each will verify its provider
+signature, normalise its payload into the same `CommandEvent`, and
+delegate to the same router / owner-command path.
 
 ```text
 WhatsApp webhook ┐                                    ┌─ ChannelAccountRepository
@@ -1106,7 +1112,8 @@ These seams are the only places that move when the back end goes real.
 | `lib/server/delivery-send/mock.server.ts` | Shared `validateRequest` (UUIDs + channel) and `enqueueMockDelivery` that returns a synthetic `QueuedDelivery`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/delivery-send/db.server.ts` | `enqueueDbDelivery` resolves the owner, opens one transaction, reuses `resolveDbDraftContextInTx` for person/occasion ownership, enforces the email sender precondition via `GmailAccountRepository.getPrimary`, looks up the latest draft, and calls `DeliveryRepository.enqueue`. No Gmail call; row inserted with `status='queued'` and `sent_at=NULL`. | Same orchestration with real auth; a future Gmail worker drains queued rows and updates status. |
 | `lib/server/delivery-webhook/ingest.server.ts` | `ingestDeliveryWebhookEvent(input)` validates the provider-agnostic event (provider ∈ {gmail, mock}; event ∈ {delivered, opened, failed}) and dispatches by `KEEPSAKE_DATA_SOURCE`. Identity = `providerMessageId`; never reads current user. | A future Gmail push subscription wires `provider: "gmail"` directly into this seam; no route signature change. |
-| `lib/server/channels/mock-inbound.server.ts` | DB-backed mock provider adapter. Validates `externalUserId` + `text`, requires `KEEPSAKE_DATA_SOURCE=db`, resolves the active `channel_accounts` row with `workerTransaction` + `ChannelAccountRepository.findByProviderUser("mock", externalUserId)`, returns `needs_link` for missing/revoked accounts, and calls `routeCommandEvent()` only after owner resolution. Dev-only response echoes `ownerId`; real provider routes must not. | WhatsApp / Telegram / Slack routes add provider signature verification + dedupe, then normalise into the same service/router pattern. |
+| `lib/server/channels/mock-inbound.server.ts` | DB-backed mock provider adapter. Validates `externalUserId` + `text`, requires `KEEPSAKE_DATA_SOURCE=db`, resolves the active `channel_accounts` row with `workerTransaction` + `ChannelAccountRepository.findByProviderUser("mock", externalUserId)`, returns `needs_link` for missing/revoked accounts, and (after owner resolution) hands off to `handleOwnerCommand(ownerId, event)` for the actual reply. Dev-only response echoes `ownerId`; real provider routes must not. | WhatsApp / Telegram / Slack routes add provider signature verification + dedupe, then normalise into the same service/router pattern. |
+| `lib/server/channels/command-service.server.ts` | Owner-scoped channel read path (P8-E). `handleOwnerCommand(ownerId, event)` calls `routeCommandEvent` for intent classification; for `relationship_followup_query` it opens `transaction(ownerId, …)`, calls `PeopleRepository.listWithRelations`, filters upcoming occasions (`daysUntil >= 0 && <= 30`, top 3 ascending), and renders a real-name reply. All other intents pass through untouched. Read-only on owner data; **never** creates a draft, enqueues a delivery, calls Gmail, or talks to a real provider. | Future LLM intent classifier slots in behind `routeCommandEvent`; future reminder outbound calls a parallel `handleOwnerReminder(ownerId, …)` that shares the same `transaction(ownerId, …)` shape. |
 | `lib/server/delivery-webhook/mock.server.ts` | Mock dispatch — no `deliveries` rows exist, so every well-formed event resolves to `delivery_not_found`. Keeps the contract exercisable without Postgres. | Deleted when DB is the only source. |
 | `lib/server/delivery-webhook/db.server.ts` | `ingestWebhookEventDb` runs under `workerTransaction` (BYPASSRLS), looks up the row via `DeliveryRepository.findByProviderMessageId(providerMessageId)`, maps the event to a target `DeliveryStatus`, and calls `DeliveryRepository.markStatus({ deliveryId, status, providerStatus?, deliveredAtISO?, openedAtISO?, failureReason? })`. `opened` events also pass `deliveredAtISO` so the row picks up a delivered timestamp even when the provider skipped the delivered event. | Future per-provider HMAC verification + retry queue layer on top; the seam contract stays. |
 
