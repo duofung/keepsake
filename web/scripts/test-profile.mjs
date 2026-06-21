@@ -135,6 +135,24 @@ try {
   check("keeps Sending section", body.includes("SENDING"));
   check("keeps Preferences section", body.includes("PREFERENCES"));
   check("keeps Account section", body.includes("ACCOUNT"));
+
+  // P8-F: Command channels section is always rendered. In mock mode
+  // (this smoke) it shows only the "DB mode required" placeholder —
+  // no fake linked accounts, no link/revoke action buttons.
+  check("renders COMMAND CHANNELS section header",
+    body.includes("COMMAND CHANNELS"));
+  check("renders mock-mode channels placeholder",
+    body.includes('data-channel-data-source="mock"')
+      && body.includes('data-testid="profile-channels-placeholder"'),
+  );
+  check("mock-mode channels copy points to DB mode",
+    body.includes("Command channels are available in DB mode"));
+  check("mock-mode does NOT render any linked channel row",
+    !body.includes('data-testid="profile-channels-row"'));
+  check("mock-mode does NOT render a link form",
+    !body.includes('data-testid="profile-channels-link-form"'));
+  check("mock-mode does NOT render a revoke form",
+    !body.includes('data-testid="profile-channels-revoke-form"'));
 } catch (error) {
   process.stdout.write(`harness error: ${error?.message ?? error}\n`);
   if (serverError) {

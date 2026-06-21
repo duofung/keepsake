@@ -285,8 +285,12 @@ try {
     await client.query(`CREATE ROLE ${appRole} LOGIN PASSWORD '${appPassword}' NOBYPASSRLS`);
     await client.query(`GRANT CONNECT ON DATABASE keepsake TO ${appRole}`);
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
-    await client.query(`GRANT USAGE ON TYPE gmail_account_status TO ${appRole}`);
+    await client.query(`GRANT USAGE ON TYPE gmail_account_status, channel_provider, channel_account_status TO ${appRole}`);
     await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON gmail_accounts TO ${appRole}`);
+    // P8-F: /profile reads channel_accounts in DB mode for the new
+    // "Command channels" section. Even with zero linked rows, the
+    // SELECT must be permitted or the page 500s.
+    await client.query(`GRANT SELECT ON channel_accounts TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 

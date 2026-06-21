@@ -4,9 +4,10 @@
 // Run via: pnpm test:auth
 
 import { spawn } from "node:child_process";
+import { rmSync } from "node:fs";
 import { setTimeout as wait } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -24,6 +25,13 @@ const AUTH_ENV_KEYS = [
 
 const VALID_SECRET = "test-app-session-secret-that-is-at-least-32-chars";
 const nextBin = resolve(projectRoot, "node_modules/.bin/next");
+
+function cleanNextDir() {
+  // This smoke starts several Next dev servers back-to-back. Next 15's dev
+  // cache can be left half-written after a fast SIGTERM, so every isolated
+  // phase starts from a fresh .next directory.
+  rmSync(join(projectRoot, ".next"), { recursive: true, force: true });
+}
 
 const cases = [
   {
@@ -115,21 +123,36 @@ async function waitForReady(baseUrl, timeoutMs = 60_000) {
 async function stopServer(child) {
   if (child.exitCode !== null || child.signalCode !== null) return;
 
-  child.kill("SIGTERM");
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    child.kill("SIGTERM");
+  }
   const exited = await Promise.race([
     new Promise((resolve) => child.once("exit", () => resolve(true))),
     wait(3_000).then(() => false),
   ]);
 
   if (!exited && child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGKILL");
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
   }
+
+  // Give Next's dev file writers a beat to release .next before the next
+  // phase removes/recreates it. Without this, rapid sequential phases can
+  // observe missing manifests from a half-torn-down dev server.
+  await wait(750);
 }
 
 async function runCase(testCase) {
   const baseUrl = `http://localhost:${testCase.port}`;
+  cleanNextDir();
   const child = spawn(nextBin, ["dev", "--port", String(testCase.port)], {
     cwd: projectRoot,
+    detached: true,
     stdio: ["ignore", "pipe", "pipe"],
     env: childEnv(testCase.env),
   });
@@ -161,8 +184,10 @@ async function runCase(testCase) {
 
 async function runCookieFlow({ port, env, assertions }) {
   const baseUrl = `http://localhost:${port}`;
+  cleanNextDir();
   const child = spawn(nextBin, ["dev", "--port", String(port)], {
     cwd: projectRoot,
+    detached: true,
     stdio: ["ignore", "pipe", "pipe"],
     env: childEnv(env),
   });

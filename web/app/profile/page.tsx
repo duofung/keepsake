@@ -1,14 +1,29 @@
 import Icon from "@/components/Icon";
 import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
+import {
+  getProfileChannelAccounts,
+  type ProfileChannelAccount,
+  type ProfileChannelAccountsView,
+} from "@/lib/server/channel-accounts/profile.server";
 
 export const dynamic = "force-dynamic";
 
 const CONNECT_HREF = "/api/oauth/gmail/start?returnTo=/profile";
 const DISCONNECT_ACTION = "/api/gmail/disconnect";
 const SIGNOUT_ACTION = "/api/auth/signout";
+const CHANNEL_LINK_ACTION = "/api/channels/mock/link";
+const CHANNEL_REVOKE_ACTION = "/api/channels/mock/revoke";
+
+const channelProviderLabel: Record<string, string> = {
+  mock: "Mock",
+  whatsapp: "WhatsApp",
+  telegram: "Telegram",
+  slack: "Slack",
+};
 
 export default async function ProfilePage() {
   const user = await requireSessionUserOrRedirect("/profile");
+  const channels = await getProfileChannelAccounts();
 
   return (
     <div className="ks-page">
@@ -43,6 +58,8 @@ export default async function ProfilePage() {
         />
         <Row icon="i-truck" title="Mailing address book" desc="Where printed cards get sent from" right={<Chev />} last />
       </Section>
+
+      <CommandChannelsSection channels={channels} />
 
       <Section label="PREFERENCES">
         <Row icon="i-bell" title="Reminders" desc="How far ahead Keepsake nudges you" right={<><Val>7 days before</Val><Chev /></>} />
@@ -159,6 +176,245 @@ function ConnectLink({ label }: { label: string }) {
     >
       {label}
     </a>
+  );
+}
+
+function CommandChannelsSection({ channels }: { channels: ProfileChannelAccountsView }) {
+  if (channels.dataSource !== "db") {
+    return (
+      <div data-testid="profile-channels-section" data-channel-data-source="mock">
+        <p style={{
+          fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
+          letterSpacing: "0.04em", marginBottom: 12,
+        }}>
+          COMMAND CHANNELS
+        </p>
+        <div style={{
+          background: "#fff", border: "0.5px solid var(--line)", borderRadius: 14,
+          overflow: "hidden", marginBottom: 18,
+        }}>
+          <div
+            data-testid="profile-channels-placeholder"
+            style={{
+              display: "flex", alignItems: "center", gap: 13, padding: "14px 16px",
+            }}
+          >
+            <div style={{
+              width: 34, height: 34, borderRadius: 10, background: "var(--soft)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "var(--gray-1)", fontSize: 17, flexShrink: 0,
+            }}>
+              <Icon name="i-bulb" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>
+                Command channels are available in DB mode
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
+                Set <code>KEEPSAKE_DATA_SOURCE=db</code> to link WhatsApp / Telegram / Slack stand-ins.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const accounts = channels.accounts;
+  return (
+    <div data-testid="profile-channels-section" data-channel-data-source="db">
+      <p style={{
+        fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
+        letterSpacing: "0.04em", marginBottom: 12,
+      }}>
+        COMMAND CHANNELS
+      </p>
+      <div style={{
+        background: "#fff", border: "0.5px solid var(--line)", borderRadius: 14,
+        overflow: "hidden", marginBottom: 18,
+      }}>
+        {accounts.length === 0 ? (
+          <div
+            data-testid="profile-channels-empty"
+            style={{
+              display: "flex", alignItems: "center", gap: 13, padding: "14px 16px",
+              borderBottom: "0.5px solid var(--line)",
+            }}
+          >
+            <div style={{
+              width: 34, height: 34, borderRadius: 10, background: "var(--soft)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "var(--gray-1)", fontSize: 17, flexShrink: 0,
+            }}>
+              <Icon name="i-bulb" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>
+                No channels linked yet
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
+                Link a mock identity below to drive the inbound webhook end-to-end.
+              </div>
+            </div>
+          </div>
+        ) : (
+          accounts.map((account, idx) => (
+            <ChannelRow
+              key={account.id}
+              account={account}
+              last={false /* link form always follows */}
+              dividerTop={idx > 0}
+            />
+          ))
+        )}
+        <ChannelLinkForm />
+      </div>
+    </div>
+  );
+}
+
+function ChannelRow({
+  account,
+  last,
+  dividerTop,
+}: {
+  account: ProfileChannelAccount;
+  last: boolean;
+  dividerTop: boolean;
+}) {
+  const providerLabel = channelProviderLabel[account.provider] ?? account.provider;
+  const isRevoked = account.status === "revoked";
+  return (
+    <div
+      data-testid="profile-channels-row"
+      data-channel-account-id={account.id}
+      data-channel-status={account.status}
+      data-channel-provider={account.provider}
+      style={{
+        display: "flex", alignItems: "center", gap: 13, padding: "14px 16px",
+        borderTop: dividerTop ? "0.5px solid var(--line)" : "none",
+        borderBottom: last ? "none" : "0.5px solid var(--line)",
+        opacity: isRevoked ? 0.55 : 1,
+      }}
+    >
+      <div style={{
+        width: 34, height: 34, borderRadius: 10, background: "var(--soft)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: "var(--gray-1)", fontSize: 17, flexShrink: 0,
+      }}>
+        <Icon name="i-send" />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13.5, fontWeight: 500, color: "var(--ink)",
+          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+        }}>
+          <span>{account.displayName ?? `${providerLabel} channel`}</span>
+          <span style={{
+            fontSize: 10, fontWeight: 500, padding: "2px 7px", borderRadius: 6,
+            background: "var(--soft)", color: "var(--gray-1)",
+          }}>
+            {providerLabel}
+          </span>
+          <span
+            style={{
+              fontSize: 10, fontWeight: 500, padding: "2px 7px", borderRadius: 6,
+              background: isRevoked ? "#FBEAE8" : "#E5F2EB",
+              color: isRevoked ? "#B83A30" : "#2F7A56",
+            }}
+          >
+            {isRevoked ? "Revoked" : "Active"}
+          </span>
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 2 }}>
+          <span data-testid="profile-channels-row-external-id">{account.externalUserId}</span>
+        </div>
+      </div>
+      {!isRevoked && (
+        <form
+          method="post"
+          action={CHANNEL_REVOKE_ACTION}
+          style={{ margin: 0 }}
+          data-testid="profile-channels-revoke-form"
+        >
+          <input type="hidden" name="accountId" value={account.id} />
+          <button
+            type="submit"
+            data-testid="profile-channels-revoke-button"
+            style={{
+              fontSize: 11, fontWeight: 500, color: "var(--gray-1)",
+              background: "transparent", padding: "5px 11px", borderRadius: 10,
+              border: "0.5px solid var(--line)", cursor: "pointer",
+              fontFamily: "inherit", whiteSpace: "nowrap",
+            }}
+          >
+            Revoke
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function ChannelLinkForm() {
+  return (
+    <form
+      method="post"
+      action={CHANNEL_LINK_ACTION}
+      style={{
+        display: "flex", flexDirection: "column", gap: 9,
+        padding: "14px 16px", margin: 0,
+        borderTop: "0.5px solid var(--line)", background: "#FAFBFD",
+      }}
+      data-testid="profile-channels-link-form"
+    >
+      <div style={{
+        fontSize: 12, fontWeight: 500, color: "var(--ink)",
+      }}>
+        Link a mock channel identity
+      </div>
+      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <span style={{ fontSize: 11, color: "var(--gray-2)" }}>External user id</span>
+        <input
+          type="text"
+          name="externalUserId"
+          required
+          placeholder="e.g. wa-1234"
+          data-testid="profile-channels-link-external-id"
+          style={{
+            fontSize: 12.5, padding: "7px 10px", borderRadius: 8,
+            border: "0.5px solid var(--line)", background: "#fff",
+            fontFamily: "inherit",
+          }}
+        />
+      </label>
+      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <span style={{ fontSize: 11, color: "var(--gray-2)" }}>Display name (optional)</span>
+        <input
+          type="text"
+          name="displayName"
+          placeholder="What to call this identity"
+          data-testid="profile-channels-link-display-name"
+          style={{
+            fontSize: 12.5, padding: "7px 10px", borderRadius: 8,
+            border: "0.5px solid var(--line)", background: "#fff",
+            fontFamily: "inherit",
+          }}
+        />
+      </label>
+      <button
+        type="submit"
+        data-testid="profile-channels-link-submit"
+        style={{
+          alignSelf: "flex-start",
+          fontSize: 12, fontWeight: 500, color: "#fff",
+          background: "var(--blue)", padding: "7px 14px", borderRadius: 10,
+          border: "none", cursor: "pointer", fontFamily: "inherit",
+        }}
+      >
+        Link mock channel
+      </button>
+    </form>
   );
 }
 

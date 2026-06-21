@@ -12,7 +12,8 @@
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
+import { rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
@@ -30,6 +31,8 @@ const AUTH_ENV_KEYS = [
   "GOOGLE_TOKEN_ENDPOINT",
   "OAUTH_STATE_SIGNING_SECRET",
   "KEEPSAKE_DATA_SOURCE",
+  "APP_SESSION_SIGNING_SECRET",
+  "ENABLE_DEV_SESSION_ROUTES",
 ];
 
 const validAuth = {
@@ -39,6 +42,12 @@ const validAuth = {
 };
 
 const failures = [];
+function cleanNextDir() {
+  // This smoke boots many isolated Next dev servers in one process. Start each
+  // phase from a fresh cache so a fast shutdown cannot poison the next phase.
+  rmSync(join(projectRoot, ".next"), { recursive: true, force: true });
+}
+
 function check(name, condition, detail = "") {
   if (condition) {
     process.stdout.write(`  ✓ ${name}\n`);
@@ -80,15 +89,27 @@ async function waitForReady(baseUrl, timeoutMs = 60_000) {
 async function stopServer(child) {
   if (child.exitCode !== null || child.signalCode !== null) return;
 
-  child.kill("SIGTERM");
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    child.kill("SIGTERM");
+  }
   const exited = await Promise.race([
     new Promise((resolve) => child.once("exit", () => resolve(true))),
     wait(3_000).then(() => false),
   ]);
 
   if (!exited && child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGKILL");
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
   }
+
+  // Let Next's dev compiler finish closing file handles before the next
+  // isolated phase deletes/rebuilds .next.
+  await wait(750);
 }
 
 async function fetchJson(baseUrl, path, init = {}) {
@@ -180,8 +201,10 @@ function startFakeTokenServer({ accountEmail }) {
 
 async function runServer({ name, port, authEnv, assertions }) {
   const baseUrl = `http://localhost:${port}`;
+  cleanNextDir();
   const child = spawn(nextBin, ["dev", "--port", String(port)], {
     cwd: projectRoot,
+    detached: true,
     stdio: ["ignore", "pipe", "pipe"],
     env: childEnv(authEnv),
   });

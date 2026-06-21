@@ -13,6 +13,8 @@ import type { SendBoundaryResult } from "./types";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MOCK_PERSON_ID_RE = /^p-[a-z0-9-]+$/i;
+const MOCK_OCCASION_ID_RE = /^occ-[a-z0-9-]+$/i;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_EMAIL_LENGTH = 254;
@@ -52,13 +54,19 @@ export function validateRequest(input: DeliveryRequest): SendBoundaryResult | nu
     return invalid(`Missing fields: ${missing.join(", ")}`);
   }
 
-  if (typeof input.personId !== "string" || !UUID_RE.test(input.personId)) {
-    return invalid("personId must be a UUID.");
+  if (
+    typeof input.personId !== "string" ||
+    (!UUID_RE.test(input.personId) && !MOCK_PERSON_ID_RE.test(input.personId))
+  ) {
+    return invalid("personId must be a UUID or mock person id.");
   }
 
   if (input.occasionId !== null && input.occasionId !== undefined) {
-    if (typeof input.occasionId !== "string" || !UUID_RE.test(input.occasionId)) {
-      return invalid("occasionId must be a UUID or null.");
+    if (
+      typeof input.occasionId !== "string" ||
+      (!UUID_RE.test(input.occasionId) && !MOCK_OCCASION_ID_RE.test(input.occasionId))
+    ) {
+      return invalid("occasionId must be a UUID, mock occasion id, or null.");
     }
   }
 

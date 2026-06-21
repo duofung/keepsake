@@ -35,6 +35,8 @@ const validAuth = {
 
 const personId = "11111111-1111-4111-8111-111111111111";
 const occasionId = "22222222-2222-4222-8222-222222222222";
+const mockPersonId = "p-lin";
+const mockOccasionId = "occ-lin-anniv";
 
 const failures = [];
 function check(name, cond, detail = "") {
@@ -190,6 +192,20 @@ await runServer({
     // server-side queued row only.
     check("mock email does NOT echo recipientEmail",
       !("recipientEmail" in (emailQueue.body ?? {})));
+
+    // ── mock happy path: fixture-style ids used by local UI ───────────
+    const fixtureIdQueue = await postDeliveries(baseUrl, {
+      personId: mockPersonId,
+      occasionId: mockOccasionId,
+      channel: "email",
+      recipientEmail: "lin@example.test",
+    });
+    check("mock email accepts fixture-style person/occasion ids -> 202",
+      fixtureIdQueue.status === 202, `status=${fixtureIdQueue.status}`);
+    check("mock fixture-id email echoes personId",
+      fixtureIdQueue.body?.personId === mockPersonId);
+    check("mock fixture-id email echoes occasionId",
+      fixtureIdQueue.body?.occasionId === mockOccasionId);
 
     // ── mock happy path: post (no recipientEmail required) ────────────
     const postQueue = await postDeliveries(baseUrl, { personId, occasionId: null, channel: "post" });

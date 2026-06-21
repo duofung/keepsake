@@ -6,8 +6,8 @@ import Icon from "./Icon";
 
 const nav = [
   { href: "/", key: "home", icon: "i-home", title: "Home" },
-  { href: "/people", key: "people", icon: "i-users", title: "People" },
   { href: "/workspace", key: "workspace", icon: "i-edit", title: "Workspace" },
+  { href: "/people", key: "people", icon: "i-users", title: "People" },
   { href: "/history", key: "history", icon: "i-history", title: "History" },
 ];
 
