@@ -25,23 +25,54 @@ Rules:
 
 | Workstream | Status | What Is Stable | Remaining Work |
 |---|---|---|---|
-| App shell + core UI | Stable | Full-screen desktop shell, Home, People, Workspace, History, Profile, smoke tests. | Mobile pass, deeper visual polish, interaction polish. |
+| App shell + core UI | MVP demo-ready desktop | Full-screen desktop shell, Home, People, Workspace, History, Profile, preview-safe icon fallback, page smoke tests, and an end-to-end `pnpm test:mvp-demo` flow. | Mobile pass, deeper visual polish, interaction polish. |
 | Domain model | Stable | `domain.ts`, presentation mapping, mock data, API contracts. | Add fields only when a real product flow needs them. |
 | Mock seams | Stable | People payload, draft context, draft service, delivery history dispatchers default to mock. | Delete mock fallback only after DB mode is default and production-ready. |
 | DB schema/RLS | Stable | Postgres schema, catalog seed, local dev fixtures, RLS, transaction helper. | Future migrations for real auth/session, reminders, send queue details. |
 | Crypto | Stable | AES-256-GCM envelope helper, AAD conventions, tests. | KMS/DEK wrapping hardening for production. |
 | People data | Stable read path | DB-backed people payload and repository reads. | People CRUD UI/API, imports, merge/archive semantics. |
 | Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence + user-edit versioning | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. `PATCH /api/drafts` persists Workspace subject + card edits as new canonical versions with `prompt_input_hash = NULL`. | Paragraph / tone editing, prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
-| Delivery history | Stable read path | DB-backed history page and deliveries read repository. | Send/enqueue/webhook/worker write paths. |
+| Delivery history | Stable read path + status surface | DB-backed history page, deliveries read repository, and status badges for delivered/opened/failed rows. | Pagination, filters, live status refresh. |
 | Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + sign-out + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start 303s when given `?returnTo=`. `POST /api/auth/signout` clears the cookie and 303s to `/signin` — no DB, no Google revoke, no Gmail disconnect. Profile's "Sign out" row is now a real form POST. `/api/session` shape unchanged. | Retiring the `DEV_OWNER_*` env fallback from the cookie-first seam; Google grant revoke on signout. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
 | Command Channel Platform | Foundation + identity-link schema + repository runtime + DB-backed mock inbound + owner-scoped read path + Profile mock/Telegram link UI + review URLs + first Telegram adapter + Telegram start-link binding (P8-A → P8-J) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner`, `link`, `markRevoked`; `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. P8-D: `POST /api/channels/mock/inbound` runs DB-only mock provider identity resolution (`externalUserId → owner_id`) through a worker transaction, returns `needs_link` for missing/revoked links, and only then calls the shared router. P8-E: `handleOwnerCommand(ownerId, event)` opens `transaction(ownerId, …)` and enriches a follow-up reply with that owner's real people + upcoming occasions (≤30 days, top 3 by daysUntil). P8-F: Profile gains a "Command channels" section with `POST /api/channels/mock/{link,revoke}` form actions; DB mode shows real linked rows + a link form, mock mode shows a DB-mode-required placeholder. P8-G: `CommandResponse.reviewUrl` gives adapters a relative Keepsake review link (`/people`, `/workspace?...`, `/profile#command-channels`) while preserving the no-execution invariant. P8-H: `POST /api/channels/telegram` verifies Telegram's webhook secret, normalises private text messages, resolves Telegram user ids through `channel_accounts`, and replies through Telegram Bot API. P8-I: Profile DB mode can manually link/revoke Telegram user ids. P8-J: Profile renders a signed `https://t.me/<bot>?start=<token>` link; Telegram `/start <token>` verifies the stateless token and links that Telegram user to the owner. Still no WhatsApp/Slack adapter; still no draft creation, no enqueue, no Gmail send. | WhatsApp / Slack adapters, dedupe/persistence of provider update ids, one-time nonce table if needed, notification + reminder outbound, LLM intent classifier behind the same router seam. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
-| Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
+| MVP demo / release readiness | Frozen for demo | `docs/MVP_DEMO_RUNBOOK.md`, `pnpm test:mvp-demo`, `pnpm test`, `pnpm build`, and `git diff --check` define the close-out gate. | Bugfix-only unless the MVP scope is explicitly reopened. |
+| Deployment/ops | Local only | Local env guard/init, Docker DB tests, delivery lifecycle runbook, and MVP demo runbook. | Production env, CI, hosting, logs, secrets, migrations. |
 
-## Immediate Execution Queue
+## Execution Log
+
+### P9-B. MVP Demo Closure
+
+Status: done. Guarded by `pnpm test:mvp-demo`, the full default
+`pnpm test`, and `pnpm build`.
+
+Goal: stop the project from feeling endless by defining one concrete demo path
+and one close-out gate.
+
+Shipped:
+
+- `scripts/test-mvp-demo-flow.mjs` boots the mock-mode app, signs in through
+  the dev session route, visits Home / People / Workspace / History / Profile,
+  checks the Workspace icon fallback, creates a draft, queues a delivery,
+  exercises the mock command-channel review pointer, signs out, and verifies a
+  guarded page redirects back to `/signin`.
+- `pnpm test:mvp-demo` is part of the default `pnpm test` chain so regressions
+  in the demo path are caught with the ordinary smoke suite.
+- `docs/MVP_DEMO_RUNBOOK.md` documents how to preview, demo, and freeze the
+  MVP. Payments/subscriptions, mobile, WhatsApp/Slack, reminders, production
+  deploy, and live status updates are named as deferred work.
+
+Out of scope:
+
+- No new product feature.
+- No DB schema change.
+- No real provider integration.
+- No UI redesign.
+
+From here, MVP work is bugfix-only unless the user explicitly reopens scope.
 
 ### P0. Hydrate `CurrentUser.sendingAccount` From DB
 

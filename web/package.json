@@ -21,6 +21,7 @@
     "test:delivery-runbook": "node scripts/test-delivery-lifecycle-docs.mjs",
     "test:channels": "node scripts/test-channels-mock-route.mjs",
     "test:channel-accounts": "node scripts/test-channel-account-schema.mjs",
+    "test:mvp-demo": "node scripts/test-mvp-demo-flow.mjs",
     "worker:run": "node scripts/run-delivery-worker.mjs",
     "test:crypto": "node scripts/test-crypto-envelope.mjs",
     "test:dev-env": "node scripts/test-dev-env.mjs",
@@ -53,7 +54,7 @@
     "test:history": "node scripts/test-history.mjs",
     "test:profile": "node scripts/test-profile.mjs",
     "test:workspace": "node scripts/test-workspace.mjs",
-    "test": "pnpm test:boundaries && pnpm test:dev-env && pnpm test:env-init && pnpm test:auth && pnpm test:oauth && pnpm test:gmail-disconnect && pnpm test:home && pnpm test:people && pnpm test:drafts && pnpm test:draft-autosave && pnpm test:draft-generator && pnpm test:deliveries && pnpm test:delivery-worker && pnpm test:webhook-deliveries && pnpm test:delivery-runbook && pnpm test:channels && pnpm test:channel-accounts && pnpm test:history && pnpm test:profile && pnpm test:workspace"
+    "test": "pnpm test:boundaries && pnpm test:dev-env && pnpm test:env-init && pnpm test:auth && pnpm test:oauth && pnpm test:gmail-disconnect && pnpm test:home && pnpm test:people && pnpm test:drafts && pnpm test:draft-autosave && pnpm test:draft-generator && pnpm test:deliveries && pnpm test:delivery-worker && pnpm test:webhook-deliveries && pnpm test:delivery-runbook && pnpm test:channels && pnpm test:channel-accounts && pnpm test:history && pnpm test:profile && pnpm test:workspace && pnpm test:mvp-demo"
   },
   "dependencies": {
     "next": "^15.0.3",
