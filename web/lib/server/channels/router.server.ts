@@ -66,6 +66,7 @@ export async function routeCommandEvent(
       intent,
       text: FOLLOWUP_REPLY,
       suggestedAction: { kind: "open_relationship_followups" },
+      reviewUrl: "/people",
     };
   }
 
@@ -82,6 +83,7 @@ export async function routeCommandEvent(
       intent,
       text: COMPOSE_REPLY,
       suggestedAction,
+      reviewUrl: buildComposeReviewUrl(suggestedAction),
     };
   }
 
@@ -90,6 +92,17 @@ export async function routeCommandEvent(
     intent: "unknown",
     text: UNKNOWN_REPLY,
   };
+}
+
+function buildComposeReviewUrl(action: SuggestedAction): string {
+  if (action.kind !== "open_compose_workspace") return "/workspace";
+
+  const params = new URLSearchParams();
+  params.set("source", "channel");
+  if (action.recipientHint) params.set("recipientHint", action.recipientHint);
+  if (action.contextHint) params.set("contextHint", action.contextHint);
+
+  return `/workspace?${params.toString()}`;
 }
 
 function classify(text: string): CommandIntent {

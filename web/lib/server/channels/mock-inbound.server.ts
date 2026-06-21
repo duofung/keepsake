@@ -27,6 +27,7 @@ export type MockInboundResponse =
       readonly intent: "unknown";
       readonly text: string;
       readonly code: "needs_link";
+      readonly reviewUrl: string;
     }
   | (CommandResponse & {
       /**
@@ -84,6 +85,7 @@ export async function handleMockInboundCommand(
         intent: "unknown",
         code: "needs_link",
         text: LINK_NEEDED_TEXT,
+        reviewUrl: "/profile#command-channels",
       },
     };
   }

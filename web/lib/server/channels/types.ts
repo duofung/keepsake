@@ -62,4 +62,11 @@ export interface CommandResponse {
   readonly text: string;
   readonly intent: CommandIntent;
   readonly suggestedAction?: SuggestedAction;
+  /**
+   * Relative Keepsake URL the provider adapter can render as a review link.
+   * This is the bridge between command channels as input surfaces and the web
+   * app as the only execution surface. Real provider adapters may prepend the
+   * deployment origin, but the channel layer itself keeps the URL relative.
+   */
+  readonly reviewUrl?: string;
 }

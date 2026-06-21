@@ -372,6 +372,9 @@ try {
     check("unlinked has no suggestedAction",
       res.body?.suggestedAction === undefined,
       JSON.stringify(res.body));
+    check("unlinked reviewUrl points to Profile command channels",
+      res.body?.reviewUrl === "/profile#command-channels",
+      JSON.stringify(res.body));
     check("unlinked did NOT fall back to DEV_OWNER",
       res.body?.ownerId === undefined && res.body?.intent === "unknown",
       JSON.stringify(res.body));
@@ -398,6 +401,9 @@ try {
       JSON.stringify(res.body));
     check("active follow-up suggestedAction",
       res.body?.suggestedAction?.kind === "open_relationship_followups",
+      JSON.stringify(res.body));
+    check("active follow-up reviewUrl -> /people",
+      res.body?.reviewUrl === "/people",
       JSON.stringify(res.body));
     check("active follow-up echoes ownerId for mock smoke only",
       res.body?.ownerId === ownerA,
@@ -445,6 +451,9 @@ try {
     check("ownerB follow-up intent",
       res.body?.intent === "relationship_followup_query",
       JSON.stringify(res.body));
+    check("ownerB follow-up reviewUrl -> /people",
+      res.body?.reviewUrl === "/people",
+      JSON.stringify(res.body));
     check("ownerB follow-up echoes ownerId=B (NOT ownerA)",
       res.body?.ownerId === ownerB && res.body?.ownerId !== ownerA,
       JSON.stringify(res.body));
@@ -483,6 +492,17 @@ try {
     check("active compose recipientHint=Helen",
       res.body?.suggestedAction?.recipientHint === "Helen",
       JSON.stringify(res.body));
+    check("active compose reviewUrl opens Workspace",
+      typeof res.body?.reviewUrl === "string"
+        && res.body.reviewUrl.startsWith("/workspace?"),
+      JSON.stringify(res.body));
+    check("active compose reviewUrl carries recipientHint",
+      res.body?.reviewUrl?.includes("recipientHint=Helen"),
+      JSON.stringify(res.body));
+    check("active compose reviewUrl carries encoded contextHint",
+      res.body?.reviewUrl?.includes("contextHint=")
+        && decodeURIComponent(res.body.reviewUrl).includes("今天升职了"),
+      JSON.stringify(res.body));
     const bodyText = JSON.stringify(res.body).toLowerCase();
     check("active compose response does NOT claim execution",
       !/\b(sent|delivered|queued)\b/.test(bodyText),
@@ -501,6 +521,9 @@ try {
       JSON.stringify(res.body));
     check("revoked has no suggestedAction",
       res.body?.suggestedAction === undefined,
+      JSON.stringify(res.body));
+    check("revoked reviewUrl points to Profile command channels",
+      res.body?.reviewUrl === "/profile#command-channels",
       JSON.stringify(res.body));
   }
 } catch (error) {

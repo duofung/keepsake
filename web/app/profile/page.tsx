@@ -182,7 +182,11 @@ function ConnectLink({ label }: { label: string }) {
 function CommandChannelsSection({ channels }: { channels: ProfileChannelAccountsView }) {
   if (channels.dataSource !== "db") {
     return (
-      <div data-testid="profile-channels-section" data-channel-data-source="mock">
+      <div
+        id="command-channels"
+        data-testid="profile-channels-section"
+        data-channel-data-source="mock"
+      >
         <p style={{
           fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
           letterSpacing: "0.04em", marginBottom: 12,
@@ -222,7 +226,11 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
 
   const accounts = channels.accounts;
   return (
-    <div data-testid="profile-channels-section" data-channel-data-source="db">
+    <div
+      id="command-channels"
+      data-testid="profile-channels-section"
+      data-channel-data-source="db"
+    >
       <p style={{
         fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
         letterSpacing: "0.04em", marginBottom: 12,

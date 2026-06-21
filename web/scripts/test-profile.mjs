@@ -141,6 +141,8 @@ try {
   // no fake linked accounts, no link/revoke action buttons.
   check("renders COMMAND CHANNELS section header",
     body.includes("COMMAND CHANNELS"));
+  check("renders command channels deep-link anchor",
+    body.includes('id="command-channels"'));
   check("renders mock-mode channels placeholder",
     body.includes('data-channel-data-source="mock"')
       && body.includes('data-testid="profile-channels-placeholder"'),

@@ -122,6 +122,9 @@ try {
       res.body?.status === "ok", `status=${res.body?.status}`);
     check("中文 follow-up suggestedAction.kind",
       res.body?.suggestedAction?.kind === "open_relationship_followups");
+    check("中文 follow-up reviewUrl -> /people",
+      res.body?.reviewUrl === "/people",
+      `reviewUrl=${res.body?.reviewUrl}`);
     check("中文 follow-up reply points to Keepsake",
       typeof res.body?.text === "string"
         && res.body.text.includes("Keepsake"));
@@ -157,6 +160,17 @@ try {
     check("中文 compose suggestedAction.recipientHint = Helen",
       res.body?.suggestedAction?.recipientHint === "Helen",
       `recipientHint=${res.body?.suggestedAction?.recipientHint}`);
+    check("中文 compose reviewUrl opens Workspace",
+      typeof res.body?.reviewUrl === "string"
+        && res.body.reviewUrl.startsWith("/workspace?"),
+      `reviewUrl=${res.body?.reviewUrl}`);
+    check("中文 compose reviewUrl carries recipientHint",
+      res.body?.reviewUrl?.includes("recipientHint=Helen"),
+      `reviewUrl=${res.body?.reviewUrl}`);
+    check("中文 compose reviewUrl carries encoded contextHint",
+      res.body?.reviewUrl?.includes("contextHint=")
+        && decodeURIComponent(res.body.reviewUrl).includes("今天升职了"),
+      `reviewUrl=${res.body?.reviewUrl}`);
     check("中文 compose reply points to Keepsake review",
       res.body?.text?.includes("review") && res.body?.text?.includes("Keepsake"));
   }
@@ -172,6 +186,9 @@ try {
       res.body?.status === "needs_review");
     check("EN compose suggestedAction.recipientHint = Helen",
       res.body?.suggestedAction?.recipientHint === "Helen");
+    check("EN compose reviewUrl carries recipientHint",
+      res.body?.reviewUrl?.includes("recipientHint=Helen"),
+      `reviewUrl=${res.body?.reviewUrl}`);
   }
 
   // ── unknown / unsupported ─────────────────────────────────────────
@@ -182,6 +199,9 @@ try {
       res.body?.intent === "unknown");
     check("unknown status = unsupported",
       res.body?.status === "unsupported");
+    check("unknown has no reviewUrl",
+      res.body?.reviewUrl === undefined,
+      `reviewUrl=${res.body?.reviewUrl}`);
     check("unknown reply explains what we DO support",
       res.body?.text?.includes("follow-up")
         || res.body?.text?.includes("drafting"));

@@ -836,6 +836,11 @@ drafts and sends — the channel only points back. Real provider
 webhooks land in later slices; each will verify its provider
 signature, normalise its payload into the same `CommandEvent`, and
 delegate to the same router / owner-command path.
+P8-G adds a concrete `reviewUrl` to channel responses: follow-up
+queries point to `/people`, compose requests point to `/workspace`
+with encoded recipient/context hints, and link-needed responses point
+to `/profile#command-channels`. The URL is still a review pointer, not
+an execution claim.
 
 ```text
 WhatsApp webhook ┐                                    ┌─ ChannelAccountRepository
@@ -872,6 +877,7 @@ interface CommandResponse {
   text:             string;           // reply body the adapter renders back to chat
   intent:           CommandIntent;
   suggestedAction?: SuggestedAction;  // open_relationship_followups | open_compose_workspace
+  reviewUrl?:       string;           // relative Keepsake URL for review/action
 }
 ```
 
@@ -879,8 +885,11 @@ The status field is load-bearing: even a successful `compose_request`
 returns `needs_review`, never `ok`. The channel layer **never sends mail,
 never enqueues a delivery, never creates a draft**. Adapters render
 `response.text` back into the chat; the user finishes the action in
-Keepsake. The smoke `pnpm test:channels` pins this by asserting that
-replies never contain "sent", "delivered", or "queued".
+Keepsake. The `reviewUrl` is a relative URL that adapters may render
+as a button or prepend with the deployment origin. It never means the
+channel executed the command. The smoke `pnpm test:channels` pins this
+by asserting that replies never contain "sent", "delivered", or
+"queued".
 
 `lib/server/channels/router.server.ts` exports
 `routeCommandEvent(event)` — pure logic, no DB, no LLM, no provider
@@ -896,7 +905,8 @@ curl -sS -X POST http://localhost:3000/api/channels/mock \
   -d '{"text":"帮我给 Helen 发一个邮件，她今天升职了"}'
 # → 200 { status: "needs_review", intent: "compose_request",
 #         text: "I drafted the request, but you'll review and send it in Keepsake.",
-#         suggestedAction: { kind: "open_compose_workspace", recipientHint: "Helen", … } }
+#         suggestedAction: { kind: "open_compose_workspace", recipientHint: "Helen", … },
+#         reviewUrl: "/workspace?source=channel&recipientHint=Helen&contextHint=..." }
 ```
 
 The route is local-only; it accepts `provider: "mock"` (or omitted),
@@ -915,6 +925,8 @@ dev-only `ownerId` echo so the DB smoke can prove which owner was
 resolved. It never reads `currentUser*`, `keepsake_session`, or
 `DEV_OWNER_*`; the smoke sets `DEV_OWNER_ID` to a different user and
 asserts an unlinked external id still gets `needs_link`.
+Missing or revoked links include `reviewUrl: "/profile#command-channels"`;
+real provider adapters should render that as the account-link CTA.
 
 Provider adapters (future) MUST:
 
@@ -1112,7 +1124,7 @@ These seams are the only places that move when the back end goes real.
 | `lib/server/delivery-send/mock.server.ts` | Shared `validateRequest` (UUIDs + channel) and `enqueueMockDelivery` that returns a synthetic `QueuedDelivery`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/delivery-send/db.server.ts` | `enqueueDbDelivery` resolves the owner, opens one transaction, reuses `resolveDbDraftContextInTx` for person/occasion ownership, enforces the email sender precondition via `GmailAccountRepository.getPrimary`, looks up the latest draft, and calls `DeliveryRepository.enqueue`. No Gmail call; row inserted with `status='queued'` and `sent_at=NULL`. | Same orchestration with real auth; a future Gmail worker drains queued rows and updates status. |
 | `lib/server/delivery-webhook/ingest.server.ts` | `ingestDeliveryWebhookEvent(input)` validates the provider-agnostic event (provider ∈ {gmail, mock}; event ∈ {delivered, opened, failed}) and dispatches by `KEEPSAKE_DATA_SOURCE`. Identity = `providerMessageId`; never reads current user. | A future Gmail push subscription wires `provider: "gmail"` directly into this seam; no route signature change. |
-| `lib/server/channels/mock-inbound.server.ts` | DB-backed mock provider adapter. Validates `externalUserId` + `text`, requires `KEEPSAKE_DATA_SOURCE=db`, resolves the active `channel_accounts` row with `workerTransaction` + `ChannelAccountRepository.findByProviderUser("mock", externalUserId)`, returns `needs_link` for missing/revoked accounts, and (after owner resolution) hands off to `handleOwnerCommand(ownerId, event)` for the actual reply. Dev-only response echoes `ownerId`; real provider routes must not. | WhatsApp / Telegram / Slack routes add provider signature verification + dedupe, then normalise into the same service/router pattern. |
+| `lib/server/channels/mock-inbound.server.ts` | DB-backed mock provider adapter. Validates `externalUserId` + `text`, requires `KEEPSAKE_DATA_SOURCE=db`, resolves the active `channel_accounts` row with `workerTransaction` + `ChannelAccountRepository.findByProviderUser("mock", externalUserId)`, returns `needs_link` + `reviewUrl: "/profile#command-channels"` for missing/revoked accounts, and (after owner resolution) hands off to `handleOwnerCommand(ownerId, event)` for the actual reply. Dev-only response echoes `ownerId`; real provider routes must not. | WhatsApp / Telegram / Slack routes add provider signature verification + dedupe, then normalise into the same service/router pattern and render `reviewUrl` as the web execution link. |
 | `lib/server/channels/command-service.server.ts` | Owner-scoped channel read path (P8-E). `handleOwnerCommand(ownerId, event)` calls `routeCommandEvent` for intent classification; for `relationship_followup_query` it opens `transaction(ownerId, …)`, calls `PeopleRepository.listWithRelations`, filters upcoming occasions (`daysUntil >= 0 && <= 30`, top 3 ascending), and renders a real-name reply. All other intents pass through untouched. Read-only on owner data; **never** creates a draft, enqueues a delivery, calls Gmail, or talks to a real provider. | Future LLM intent classifier slots in behind `routeCommandEvent`; future reminder outbound calls a parallel `handleOwnerReminder(ownerId, …)` that shares the same `transaction(ownerId, …)` shape. |
 | `lib/server/channel-accounts/profile.server.ts` | Profile-facing read + dev/mock mutation seam for `channel_accounts` (P8-F). `getProfileChannelAccounts()` returns `{ dataSource: "mock"|"db", accounts }` — mock mode is an empty list so the UI renders a placeholder rather than fabricating rows. `linkMockChannelAccount({ externalUserId, externalThreadId?, displayName? })` and `revokeChannelAccount({ accountId })` are DB-mode only (mock → 501 `not_configured`) and resolve the caller with `currentUserIdOrThrow()` BEFORE any DB call (no sessionless mutation). Transaction model: `getProfileChannelAccounts` + `revokeChannelAccount` use `transaction(ownerId, …)` (request-path pool under RLS, with explicit `WHERE owner_id` in SQL as defence in depth); `linkMockChannelAccount` delegates to `ChannelAccountRepository.link`, whose runtime elevates to `workerTransaction` (BYPASSRLS) so the cross-owner conflict on the unique `(provider, external_user_id)` index can be detected atomically — owner_id is enforced in SQL via `ON CONFLICT … DO UPDATE … WHERE owner_id = $caller`. Maps repo `cross_owner_conflict` → 409, unknown / cross-owner revoke → 404, unexpected errors → 500 with a generic detail (raw causes go to `console.error`). Read/write on metadata only — never creates a draft, enqueues a delivery, calls Gmail, or talks to a real provider. | Real WhatsApp / Telegram / Slack link flows will land their own seams + provider OAuth handshakes; this dev/mock seam stays as the local test surface. |
 | `lib/server/delivery-webhook/mock.server.ts` | Mock dispatch — no `deliveries` rows exist, so every well-formed event resolves to `delivery_not_found`. Keeps the contract exercisable without Postgres. | Deleted when DB is the only source. |
