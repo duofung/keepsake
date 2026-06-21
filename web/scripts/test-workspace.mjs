@@ -125,6 +125,13 @@ try {
   check("keeps send footer", body.includes("Send now, or schedule for the day"));
   check("renders Send email button", body.includes("Send email"));
   check("renders Mail as card button", body.includes("Mail as card"));
+  // P9-A: icons must have inline SVG fallbacks, not only CSS classes.
+  // Without these, a dev-cache/CSS load failure turns the sprite paths into
+  // huge black default SVGs in the visible app.
+  check("icons carry inline width/height fallback",
+    body.includes('width="1em"') && body.includes('height="1em"'));
+  check("icons carry inline stroke/fill fallback",
+    body.includes('fill="none"') && body.includes('stroke="currentColor"'));
   // P5-preA: the To row now carries an email input. The label "To" and the
   // person name must still render alongside the new field.
   check("renders recipient email input", body.includes('data-testid="recipient-email-input"'));

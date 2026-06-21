@@ -164,23 +164,23 @@ try {
   // Slice the HTML around the `failed` row and verify it uses the warn
   // tone class + alert icon, never the green success markers used by
   // delivered/opened.
-  const failedMatch = body.match(
-    /data-delivery-status="failed"[\s\S]{0,400}?<\/div>/,
-  );
+  const failedIndex = body.indexOf('data-delivery-status="failed"');
+  const failedBlock = failedIndex >= 0
+    ? body.slice(failedIndex, failedIndex + 1600)
+    : null;
   check("failed status block is present in HTML",
-    failedMatch !== null, "no failed status block found");
-  if (failedMatch) {
-    const block = failedMatch[0];
+    failedBlock !== null, "no failed status block found");
+  if (failedBlock) {
     check("failed block carries ks-delivery-status--warn class",
-      block.includes("ks-delivery-status--warn"));
+      failedBlock.includes("ks-delivery-status--warn"));
     check("failed block does NOT carry ks-delivery-status--success class",
-      !block.includes("ks-delivery-status--success"));
+      !failedBlock.includes("ks-delivery-status--success"));
     check("failed block uses i-alert icon",
-      block.includes("#i-alert"));
+      failedBlock.includes("#i-alert"));
     check("failed block does NOT use i-check-plain icon",
-      !block.includes("#i-check-plain"));
+      !failedBlock.includes("#i-check-plain"));
     check("failed block does NOT use the success green (#3F9E78)",
-      !block.includes("#3F9E78"));
+      !failedBlock.includes("#3F9E78"));
   }
 } catch (err) {
   process.stdout.write(`harness error: ${err?.message ?? err}\n`);
