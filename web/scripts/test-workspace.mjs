@@ -125,12 +125,13 @@ try {
   check("keeps send footer", body.includes("Send now, or schedule for the day"));
   check("renders Send email button", body.includes("Send email"));
   check("renders Mail as card button", body.includes("Mail as card"));
-  check("renders message edit button", body.includes("Edit body"));
-  check("renders message preview", body.includes('data-testid="message-body-preview"'));
-  check("renders card as its own section", body.includes("KEEPSAKE CARD"));
+  check("renders direct message editor", body.includes('data-testid="message-body-editor"'));
+  check("message editor is not hidden behind an edit mode", !body.includes('data-testid="message-body-edit-toggle"'));
+  check("message editor is not preview-only", !body.includes('data-testid="message-body-preview"'));
+  check("renders card as its own content format", body.includes("CARD VERSION"));
   check("card is no longer labelled as an attachment", !body.includes("ATTACHED TO THIS EMAIL"));
-  check("renders attachments section", body.includes("ATTACHMENTS"));
-  check("attachments empty state is explicit", body.includes("No files attached"));
+  check("does not render fake attachments section", !body.includes("ATTACHMENTS"));
+  check("does not render fake attachments empty state", !body.includes("No files attached"));
   // P9-A: icons must have inline SVG fallbacks, not only CSS classes.
   // Without these, a dev-cache/CSS load failure turns the sprite paths into
   // huge black default SVGs in the visible app.

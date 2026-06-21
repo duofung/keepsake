@@ -55,7 +55,6 @@ export default function WorkspaceClient({
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [subject, setSubject] = useState("");
   const [bodyText, setBodyText] = useState("");
-  const [isBodyEditing, setIsBodyEditing] = useState(false);
   const [hasCard, setHasCard] = useState(true);
   // Send-time recipient email. Local-only — never persisted on the draft
   // (the canonical draft does not carry recipient identity) and never
@@ -134,7 +133,6 @@ export default function WorkspaceClient({
     setSelectedVersionId(next.id);
     setSubject(next.subject);
     setBodyText(paragraphsToBodyText(next.paragraphs));
-    setIsBodyEditing(false);
     setHasCard(!!next.attachedCard);
     autosaveRef.current?.setBaseline(next, initialDraftKeyRef.current);
     setLog((prev) => {
@@ -209,7 +207,6 @@ export default function WorkspaceClient({
     setSelectedVersionId(null);
     setSubject("");
     setBodyText("");
-    setIsBodyEditing(false);
     setHasCard(true);
     setLog([]);
     // Send-time recipient identity is per-person; never carry over to a new
@@ -394,7 +391,6 @@ export default function WorkspaceClient({
     setSelectedVersionId(version.id);
     setSubject(version.subject);
     setBodyText(paragraphsToBodyText(version.paragraphs));
-    setIsBodyEditing(false);
     setHasCard(!!version.attachedCard);
     autosaveRef.current?.setBaseline(version, initialDraftKeyRef.current);
     setLog((prev) => [...prev, { who: "ai", text: "Restored that version." }]);
@@ -677,59 +673,28 @@ export default function WorkspaceClient({
           <div style={{ flex: 1, overflowY: "auto", padding: "22px 30px" }}>
             <div className="ks-mail-body">
               <section>
-                <div style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  gap: 12, marginBottom: 9,
-                }}>
-                  <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 600, letterSpacing: "0.03em" }}>
-                    MESSAGE
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsBodyEditing((value) => !value)}
-                    data-testid="message-body-edit-toggle"
-                    style={{
-                      height: 28, padding: "0 10px", borderRadius: 9,
-                      border: "0.5px solid #E1E6EB", background: "#fff",
-                      color: "var(--blue-deep)", fontSize: 11.5, fontWeight: 600,
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <Icon name={isBodyEditing ? "i-check-plain" : "i-pencil"} />
-                    {isBodyEditing ? "Preview" : "Edit body"}
-                  </button>
+                <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 600, letterSpacing: "0.03em", marginBottom: 9 }}>
+                  EMAIL BODY
                 </div>
-                {isBodyEditing ? (
-                  <textarea
-                    value={bodyText}
-                    onChange={(e) => setBodyText(e.target.value)}
-                    data-testid="message-body-editor"
-                    aria-label="Email body"
-                    style={{
-                      width: "100%", minHeight: 220, resize: "vertical",
-                      border: "0.5px solid #DDE5ED", borderRadius: 12,
-                      background: "#fff", color: "var(--ink)", outline: "none",
-                      fontSize: 14.5, lineHeight: 1.75, padding: "13px 14px",
-                      fontFamily: "inherit",
-                    }}
-                  />
-                ) : (
-                  <div
-                    className="mail-text"
-                    data-testid="message-body-preview"
-                    style={{ fontSize: 14.5, lineHeight: 1.85, color: "var(--ink)" }}
-                  >
-                    {bodyTextToParagraphs(bodyText).map((p, i) => (
-                      <p key={i}>{renderParagraph(p)}</p>
-                    ))}
-                  </div>
-                )}
+                <textarea
+                  value={bodyText}
+                  onChange={(e) => setBodyText(e.target.value)}
+                  data-testid="message-body-editor"
+                  aria-label="Email body"
+                  placeholder="Write the email body..."
+                  style={{
+                    width: "100%", minHeight: 250, resize: "vertical",
+                    border: "none", borderRadius: 0, background: "transparent",
+                    color: "var(--ink)", outline: "none",
+                    fontSize: 14.5, lineHeight: 1.85, padding: 0,
+                    fontFamily: "inherit",
+                  }}
+                />
               </section>
 
             <section style={{ marginTop: 18, borderTop: "0.5px solid var(--line)", paddingTop: 14 }}>
               <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 600, marginBottom: 9, letterSpacing: "0.03em" }}>
-                KEEPSAKE CARD · OPTIONAL
+                CARD VERSION
               </div>
               {hasCard && draft?.attachedCard ? (
                 <div style={{
@@ -750,9 +715,6 @@ export default function WorkspaceClient({
                     </div>
                     <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 2 }}>
                       {draft.attachedCard.description}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--gray-3)", marginTop: 5 }}>
-                      Used when you choose Mail as card.
                     </div>
                   </div>
                   <button
@@ -799,37 +761,9 @@ export default function WorkspaceClient({
                   }}>
                     <Icon name="i-cards" />
                   </span>
-                  <span>
-                    <span style={{ fontSize: 12.5, fontWeight: 500, display: "block" }}>Add card design</span>
-                    <span style={{ fontSize: 11, color: "var(--gray-3)" }}>Used for the Mail as card option</span>
-                  </span>
+                  <span style={{ fontSize: 12.5, fontWeight: 500, display: "block" }}>Add card version</span>
                 </button>
               )}
-            </section>
-
-            <section style={{ marginTop: 16, borderTop: "0.5px solid var(--line)", paddingTop: 14 }}>
-              <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 600, marginBottom: 9, letterSpacing: "0.03em" }}>
-                ATTACHMENTS · OPTIONAL
-              </div>
-              <div
-                data-testid="attachments-empty-state"
-                style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "11px 12px", border: "0.5px dashed #D4DBE2",
-                  borderRadius: 12, color: "var(--gray-2)", background: "#fff",
-                }}
-              >
-                <span style={{
-                  width: 30, height: 30, borderRadius: 8, background: "var(--soft)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 15, flexShrink: 0,
-                }}>
-                  <Icon name="i-plus" />
-                </span>
-                <span>
-                  <span style={{ fontSize: 12.5, fontWeight: 500, display: "block" }}>No files attached</span>
-                </span>
-              </div>
             </section>
             </div>
           </div>
@@ -877,30 +811,30 @@ export default function WorkspaceClient({
             </div>
           </div>
         </div>
-      </div>
 
-      {toast && (
-        <div
-          role={toast.tone === "error" ? "alert" : "status"}
-          style={{
-            position: "absolute", left: "50%", bottom: 24,
-            transform: "translateX(-50%)", background: "var(--ink)", color: "#fff",
-            padding: "13px 22px", borderRadius: 13, fontSize: 13,
-            display: "flex", alignItems: "center", gap: 9, zIndex: 50,
-            maxWidth: 460,
-          }}
-        >
-          <span
+        {toast && (
+          <div
+            role={toast.tone === "error" ? "alert" : "status"}
             style={{
-              fontSize: 17,
-              color: toast.tone === "error" ? "#F08D8D" : "#7FD99F",
+              position: "absolute", left: "50%", bottom: 24,
+              transform: "translateX(-50%)", background: "var(--ink)", color: "#fff",
+              padding: "13px 22px", borderRadius: 13, fontSize: 13,
+              display: "flex", alignItems: "center", gap: 9, zIndex: 50,
+              maxWidth: 460,
             }}
           >
-            <Icon name={toast.tone === "error" ? "i-alert" : "i-check"} />
-          </span>
-          <span>{toast.text}</span>
-        </div>
-      )}
+            <span
+              style={{
+                fontSize: 17,
+                color: toast.tone === "error" ? "#F08D8D" : "#7FD99F",
+              }}
+            >
+              <Icon name={toast.tone === "error" ? "i-alert" : "i-check"} />
+            </span>
+            <span>{toast.text}</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -920,26 +854,6 @@ function bodyTextToParagraphs(text: string): DraftParagraph[] {
 
 function sameParagraphText(a: DraftParagraph[], b: DraftParagraph[]): boolean {
   return paragraphsToBodyText(a) === paragraphsToBodyText(b);
-}
-
-function renderParagraph({ text, highlights = [] }: DraftParagraph): React.ReactNode {
-  if (!highlights.length) return text;
-  let parts: React.ReactNode[] = [text];
-  for (const h of highlights) {
-    const next: React.ReactNode[] = [];
-    let key = 0;
-    for (const p of parts) {
-      if (typeof p !== "string") { next.push(p); continue; }
-      const idx = p.indexOf(h);
-      if (idx === -1) { next.push(p); continue; }
-      if (idx > 0) next.push(p.slice(0, idx));
-      next.push(<span key={`hl-${key++}`} className="hl">{h}</span>);
-      const rest = p.slice(idx + h.length);
-      if (rest) next.push(rest);
-    }
-    parts = next;
-  }
-  return <>{parts.map((node, i) => <span key={i}>{node}</span>)}</>;
 }
 
 function saveStatusLabel(status: "idle" | "saving" | "saved" | "error"): string {
