@@ -11,8 +11,8 @@ export const dynamic = "force-dynamic";
 const CONNECT_HREF = "/api/oauth/gmail/start?returnTo=/profile";
 const DISCONNECT_ACTION = "/api/gmail/disconnect";
 const SIGNOUT_ACTION = "/api/auth/signout";
-const CHANNEL_LINK_ACTION = "/api/channels/mock/link";
-const CHANNEL_REVOKE_ACTION = "/api/channels/mock/revoke";
+const MOCK_CHANNEL_LINK_ACTION = "/api/channels/mock/link";
+const TELEGRAM_CHANNEL_LINK_ACTION = "/api/channels/telegram/link";
 
 const channelProviderLabel: Record<string, string> = {
   mock: "Mock",
@@ -20,6 +20,12 @@ const channelProviderLabel: Record<string, string> = {
   telegram: "Telegram",
   slack: "Slack",
 };
+
+function channelRevokeAction(provider: string) {
+  return provider === "telegram"
+    ? "/api/channels/telegram/revoke"
+    : "/api/channels/mock/revoke";
+}
 
 export default async function ProfilePage() {
   const user = await requireSessionUserOrRedirect("/profile");
@@ -261,7 +267,7 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
                 No channels linked yet
               </div>
               <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
-                Link a mock identity below to drive the inbound webhook end-to-end.
+                Link a Telegram or mock identity below to drive the inbound webhook end-to-end.
               </div>
             </div>
           </div>
@@ -275,7 +281,25 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
             />
           ))
         )}
-        <ChannelLinkForm />
+        <ChannelLinkForm
+          provider="telegram"
+          title="Link Telegram user"
+          action={TELEGRAM_CHANNEL_LINK_ACTION}
+          externalUserPlaceholder="e.g. 123456789"
+          displayNamePlaceholder="Telegram display name"
+          submitLabel="Link Telegram"
+          description="Paste the numeric Telegram user id. A /start token handshake comes later."
+          testIdPrefix="profile-channels-telegram-link"
+        />
+        <ChannelLinkForm
+          provider="mock"
+          title="Link a mock channel identity"
+          action={MOCK_CHANNEL_LINK_ACTION}
+          externalUserPlaceholder="e.g. mock-user-1"
+          displayNamePlaceholder="What to call this identity"
+          submitLabel="Link mock channel"
+          testIdPrefix="profile-channels-link"
+        />
       </div>
     </div>
   );
@@ -341,7 +365,7 @@ function ChannelRow({
       {!isRevoked && (
         <form
           method="post"
-          action={CHANNEL_REVOKE_ACTION}
+          action={channelRevokeAction(account.provider)}
           style={{ margin: 0 }}
           data-testid="profile-channels-revoke-form"
         >
@@ -364,31 +388,55 @@ function ChannelRow({
   );
 }
 
-function ChannelLinkForm() {
+function ChannelLinkForm({
+  provider,
+  title,
+  action,
+  externalUserPlaceholder,
+  displayNamePlaceholder,
+  submitLabel,
+  description,
+  testIdPrefix,
+}: {
+  provider: "mock" | "telegram";
+  title: string;
+  action: string;
+  externalUserPlaceholder: string;
+  displayNamePlaceholder: string;
+  submitLabel: string;
+  description?: string;
+  testIdPrefix: string;
+}) {
   return (
     <form
       method="post"
-      action={CHANNEL_LINK_ACTION}
+      action={action}
       style={{
         display: "flex", flexDirection: "column", gap: 9,
         padding: "14px 16px", margin: 0,
         borderTop: "0.5px solid var(--line)", background: "#FAFBFD",
       }}
-      data-testid="profile-channels-link-form"
+      data-testid={`${testIdPrefix}-form`}
+      data-channel-link-provider={provider}
     >
       <div style={{
         fontSize: 12, fontWeight: 500, color: "var(--ink)",
       }}>
-        Link a mock channel identity
+        {title}
       </div>
+      {description && (
+        <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: -4 }}>
+          {description}
+        </div>
+      )}
       <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <span style={{ fontSize: 11, color: "var(--gray-2)" }}>External user id</span>
         <input
           type="text"
           name="externalUserId"
           required
-          placeholder="e.g. wa-1234"
-          data-testid="profile-channels-link-external-id"
+          placeholder={externalUserPlaceholder}
+          data-testid={`${testIdPrefix}-external-id`}
           style={{
             fontSize: 12.5, padding: "7px 10px", borderRadius: 8,
             border: "0.5px solid var(--line)", background: "#fff",
@@ -401,8 +449,8 @@ function ChannelLinkForm() {
         <input
           type="text"
           name="displayName"
-          placeholder="What to call this identity"
-          data-testid="profile-channels-link-display-name"
+          placeholder={displayNamePlaceholder}
+          data-testid={`${testIdPrefix}-display-name`}
           style={{
             fontSize: 12.5, padding: "7px 10px", borderRadius: 8,
             border: "0.5px solid var(--line)", background: "#fff",
@@ -412,7 +460,7 @@ function ChannelLinkForm() {
       </label>
       <button
         type="submit"
-        data-testid="profile-channels-link-submit"
+        data-testid={`${testIdPrefix}-submit`}
         style={{
           alignSelf: "flex-start",
           fontSize: 12, fontWeight: 500, color: "#fff",
@@ -420,7 +468,7 @@ function ChannelLinkForm() {
           border: "none", cursor: "pointer", fontFamily: "inherit",
         }}
       >
-        Link mock channel
+        {submitLabel}
       </button>
     </form>
   );

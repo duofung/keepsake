@@ -3,9 +3,11 @@ import "server-only";
 // Profile-facing read + mutation seam for `channel_accounts` (P8-F).
 //
 // The Profile page reads `getProfileChannelAccounts()` to render the
-// owner's linked command channels. The two POST routes
-// `/api/channels/mock/link` and `/api/channels/mock/revoke` delegate
-// to `linkMockChannelAccount()` / `revokeChannelAccount()` here. The
+// owner's linked command channels. The POST routes
+// `/api/channels/{mock,telegram}/link` and
+// `/api/channels/{mock,telegram}/revoke` delegate to
+// `linkMockChannelAccount()` / `linkTelegramChannelAccount()` /
+// `revokeChannelAccount()` here. The
 // seam:
 //
 //   - gates everything on `KEEPSAKE_DATA_SOURCE=db` (mock mode short-
@@ -28,7 +30,7 @@ import "server-only";
 //   - `revokeChannelAccount`              → `transaction(ownerId, …)`,
 //     same shape. RLS hides cross-owner rows; `markRevoked` also
 //     explicitly enforces `owner_id = $caller` in the UPDATE.
-//   - `linkMockChannelAccount`            → does NOT open its own
+//   - `link{Provider}ChannelAccount`      → does NOT open its own
 //     transaction. It delegates to `ChannelAccountRepository.link`
 //     whose runtime intentionally elevates to `workerTransaction`
 //     (BYPASSRLS) so it can detect cross-owner conflicts on the
@@ -114,13 +116,31 @@ export type ProfileChannelLinkResult =
     };
 
 /**
- * Link a mock `(provider="mock", externalUserId)` to the caller's
- * owner_id. The repo's `link()` upserts on `(provider, external_user_id)`
- * so a re-link from the same owner is idempotent — it just flips a
- * previously revoked row back to `active` and refreshes the optional
- * fields.
+ * Link a mock `(provider="mock", externalUserId)` to the caller's owner_id.
+ * The repo's `link()` upserts on `(provider, external_user_id)` so a re-link
+ * from the same owner is idempotent — it just flips a previously revoked row
+ * back to `active` and refreshes the optional fields.
  */
 export async function linkMockChannelAccount(
+  input: ProfileChannelLinkInput,
+): Promise<ProfileChannelLinkResult> {
+  return linkProfileChannelAccount("mock", input);
+}
+
+/**
+ * Link a Telegram `(provider="telegram", externalUserId)` to the caller's
+ * owner_id. This is still a manual/operator UX: the user pastes their
+ * Telegram numeric user id. A later `/start <token>` handshake can land next
+ * to this without changing the Profile read shape or inbound adapter.
+ */
+export async function linkTelegramChannelAccount(
+  input: ProfileChannelLinkInput,
+): Promise<ProfileChannelLinkResult> {
+  return linkProfileChannelAccount("telegram", input);
+}
+
+async function linkProfileChannelAccount(
+  provider: Extract<ChannelProvider, "mock" | "telegram">,
   input: ProfileChannelLinkInput,
 ): Promise<ProfileChannelLinkResult> {
   if (dataSource() !== "db") {
@@ -148,7 +168,7 @@ export async function linkMockChannelAccount(
 
   try {
     const account = await channelAccountRepository.link(ownerId, {
-      provider: "mock",
+      provider,
       externalUserId,
       externalThreadId: externalThreadId ?? undefined,
       displayName: displayName ?? null,
@@ -168,17 +188,17 @@ export async function linkMockChannelAccount(
         status: 409,
         code: "cross_owner_conflict",
         detail:
-          "That mock identity is already linked to a different Keepsake account.",
+          `That ${provider} identity is already linked to a different Keepsake account.`,
       };
     }
     // Unexpected branch. Log the raw cause for operators but do NOT
     // leak it through the route — clients get a generic detail.
-    console.error("linkMockChannelAccount unexpected failure:", error);
+    console.error("linkProfileChannelAccount unexpected failure:", error);
     return {
       ok: false,
       status: 500,
       code: "link_failed",
-      detail: "Could not link mock channel account.",
+      detail: `Could not link ${provider} channel account.`,
     };
   }
 }

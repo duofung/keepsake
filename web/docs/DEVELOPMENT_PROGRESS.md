@@ -37,7 +37,7 @@ Rules:
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
-| Command Channel Platform | Foundation + identity-link schema + repository runtime + DB-backed mock inbound + owner-scoped read path + Profile mock link/unlink UI + review URLs + first Telegram adapter (P8-A → P8-H) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner`, `link`, `markRevoked`; `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. P8-D: `POST /api/channels/mock/inbound` runs DB-only mock provider identity resolution (`externalUserId → owner_id`) through a worker transaction, returns `needs_link` for missing/revoked links, and only then calls the shared router. P8-E: `handleOwnerCommand(ownerId, event)` opens `transaction(ownerId, …)` and enriches a follow-up reply with that owner's real people + upcoming occasions (≤30 days, top 3 by daysUntil). P8-F: Profile gains a "Command channels" section with `POST /api/channels/mock/{link,revoke}` form actions; DB mode shows real linked rows + a link form, mock mode shows a DB-mode-required placeholder. P8-G: `CommandResponse.reviewUrl` gives adapters a relative Keepsake review link (`/people`, `/workspace?...`, `/profile#command-channels`) while preserving the no-execution invariant. P8-H: `POST /api/channels/telegram` verifies Telegram's `X-Telegram-Bot-Api-Secret-Token`, normalises private text messages into `CommandEvent`, resolves `(provider="telegram", externalUserId)` via `channel_accounts`, and replies through Telegram Bot API `sendMessage` with the review URL. Still no WhatsApp/Slack adapter; still no draft creation, no enqueue, no Gmail send. | WhatsApp / Slack adapters, Telegram provider-link UX beyond manual DB links, dedupe/persistence of provider update ids, notification + reminder outbound, LLM intent classifier behind the same router seam. |
+| Command Channel Platform | Foundation + identity-link schema + repository runtime + DB-backed mock inbound + owner-scoped read path + Profile mock/Telegram link UI + review URLs + first Telegram adapter (P8-A → P8-I) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner`, `link`, `markRevoked`; `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. P8-D: `POST /api/channels/mock/inbound` runs DB-only mock provider identity resolution (`externalUserId → owner_id`) through a worker transaction, returns `needs_link` for missing/revoked links, and only then calls the shared router. P8-E: `handleOwnerCommand(ownerId, event)` opens `transaction(ownerId, …)` and enriches a follow-up reply with that owner's real people + upcoming occasions (≤30 days, top 3 by daysUntil). P8-F: Profile gains a "Command channels" section with `POST /api/channels/mock/{link,revoke}` form actions; DB mode shows real linked rows + a link form, mock mode shows a DB-mode-required placeholder. P8-G: `CommandResponse.reviewUrl` gives adapters a relative Keepsake review link (`/people`, `/workspace?...`, `/profile#command-channels`) while preserving the no-execution invariant. P8-H: `POST /api/channels/telegram` verifies Telegram's `X-Telegram-Bot-Api-Secret-Token`, normalises private text messages into `CommandEvent`, resolves `(provider="telegram", externalUserId)` via `channel_accounts`, and replies through Telegram Bot API `sendMessage` with the review URL. P8-I: Profile DB mode can manually link/revoke Telegram user ids through `/api/channels/telegram/{link,revoke}`. Still no WhatsApp/Slack adapter; still no draft creation, no enqueue, no Gmail send. | WhatsApp / Slack adapters, Telegram `/start <token>` automatic linking, dedupe/persistence of provider update ids, notification + reminder outbound, LLM intent classifier behind the same router seam. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | Deployment/ops | Not started | Local env guard/init and Docker DB tests. | Production env, CI, hosting, logs, secrets, migrations. |
 
@@ -722,6 +722,45 @@ Still explicitly out of scope:
 - **No** absolute deployment URL / app origin config yet. Real
   provider adapters may prepend their deployment origin when they land.
 
+### P8-I. Profile Telegram Link / Revoke UI
+
+Status: done. Guarded by `pnpm test:db:channel-profile`.
+
+Goal: make the first Telegram adapter usable without direct DB seeding.
+This is a manual DB-mode provisioning surface, not the final
+Telegram `/start <token>` account-link handshake.
+
+Shipped:
+
+- `lib/server/channel-accounts/profile.server.ts` adds
+  `linkTelegramChannelAccount(input)` next to the existing mock
+  link path. Both provider link paths share the same validation,
+  `currentUserIdOrThrow()` auth gate, and
+  `ChannelAccountRepository.link` cross-owner conflict protection.
+- `app/api/channels/telegram/link/route.ts` and
+  `app/api/channels/telegram/revoke/route.ts` are thin POST routes
+  for the Profile form. They accept JSON or form bodies, return 303
+  to `/profile#command-channels` on success, and map auth/body
+  failures to the same JSON code shape as the mock routes.
+- `app/profile/page.tsx` now renders two DB-mode link forms:
+  "Link Telegram user" (manual numeric Telegram user id) and the
+  existing mock form. Rows revoke through provider-specific actions,
+  so Telegram rows POST to `/api/channels/telegram/revoke`.
+- `scripts/test-channel-accounts-profile-db-route.mjs` extends the
+  existing Docker Profile channel smoke: Profile renders the Telegram
+  form, Telegram link → row render → provider-specific revoke →
+  revoked row, plus body validation and no-session 401 coverage for
+  Telegram link/revoke. Existing mock link/revoke/inbound assertions
+  remain.
+
+Still out of scope:
+
+- **No** Telegram `/start <token>` handshake.
+- **No** Telegram OAuth-style provider flow.
+- **No** draft creation, delivery enqueue, Gmail send, or worker call
+  from Profile or Telegram.
+- **No** WhatsApp / Slack link UI.
+
 ### P8-H. Telegram Command Adapter
 
 Status: done. Guarded by `pnpm test:db:channels-telegram`.
@@ -761,9 +800,8 @@ Still explicitly out of scope:
 - **No** enqueue/send/Gmail worker handoff from Telegram.
 - **No** Telegram update-id dedupe table yet; current handler is
   stateless beyond `channel_accounts`.
-- **No** Telegram link UX in Profile. For now, tests seed Telegram
-  `channel_accounts` directly; Profile still only has the dev/mock link
-  form.
+- **No** automatic Telegram `/start <token>` link UX. P8-I adds a
+  manual Profile link/revoke form for Telegram user ids.
 - **No** WhatsApp or Slack adapter.
 
 ### P8-F. Profile Mock Channel Link / Revoke UI

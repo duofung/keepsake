@@ -8,16 +8,19 @@
 // and drives the round-trip:
 //
 //   1. Profile renders the channels section in DB mode + empty state.
-//   2. POST /api/channels/mock/link links a new mock identity → 303.
-//   3. Profile renders the linked row + accountId, no fake "Sending"
+//   2. POST /api/channels/telegram/link links a Telegram identity → 303.
+//   3. Profile renders the Telegram row + provider-specific revoke form.
+//   4. POST /api/channels/telegram/revoke revokes that identity → 303.
+//   5. POST /api/channels/mock/link links a new mock identity → 303.
+//   6. Profile renders the linked row + accountId, no fake "Sending"
 //      regressions.
-//   4. POST /api/channels/mock/inbound with the linked externalUserId
+//   7. POST /api/channels/mock/inbound with the linked externalUserId
 //      resolves owner_id and returns the owner-scoped follow-up text.
-//   5. POST /api/channels/mock/revoke (cross-owner) → 404 not_found.
-//   6. POST /api/channels/mock/revoke (owner) → 303.
-//   7. Profile now shows the row as Revoked.
-//   8. POST inbound with the now-revoked externalUserId → needs_link.
-//   9. Body-shape errors: empty externalUserId → 400; bogus accountId
+//   8. POST /api/channels/mock/revoke (cross-owner) → 404 not_found.
+//   9. POST /api/channels/mock/revoke (owner) → 303.
+//   10. Profile now shows the row as Revoked.
+//   11. POST inbound with the now-revoked externalUserId → needs_link.
+//   12. Body-shape errors: empty externalUserId → 400; bogus accountId
 //      → 400; unauthenticated revoke → 401.
 
 import { spawn } from "node:child_process";
@@ -364,6 +367,12 @@ try {
       body.includes('data-testid="profile-channels-link-form"'));
     check("link form posts to /api/channels/mock/link",
       body.includes('action="/api/channels/mock/link"'));
+    check("renders the Telegram link form",
+      body.includes('data-testid="profile-channels-telegram-link-form"'));
+    check("Telegram form posts to /api/channels/telegram/link",
+      body.includes('action="/api/channels/telegram/link"'));
+    check("Telegram form is marked with provider hook",
+      body.includes('data-channel-link-provider="telegram"'));
     check("does NOT render any linked row yet",
       !body.includes('data-testid="profile-channels-row"'));
     check("does NOT leak ownerB id into the page",
@@ -371,7 +380,63 @@ try {
       "ownerB id appeared in /profile HTML");
   }
 
-  // 2. POST link → 303
+  // 2. POST Telegram link → 303
+  let telegramAccountId = "";
+  {
+    const res = await postForm("/api/channels/telegram/link", {
+      externalUserId: "1001",
+      displayName: "OwnerA Telegram",
+    });
+    check("POST Telegram link -> 303", res.status === 303, `status=${res.status}`);
+    check("POST Telegram link redirects to /profile#command-channels",
+      (res.location ?? "").endsWith("/profile#command-channels"),
+      `location=${res.location}`);
+  }
+
+  // 3. /profile now shows the Telegram row + provider-specific revoke
+  {
+    const { body } = await getProfile();
+    check("renders the Telegram row",
+      /data-channel-provider="telegram"/.test(body));
+    check("renders the Telegram displayName",
+      body.includes("OwnerA Telegram"));
+    check("renders the Telegram externalUserId",
+      body.includes("1001"));
+    check("Telegram row posts revoke to /api/channels/telegram/revoke",
+      /data-channel-provider="telegram"[\s\S]{0,2400}?action="\/api\/channels\/telegram\/revoke"/
+        .test(body));
+    const idMatch = body.match(
+      /data-channel-provider="telegram"[\s\S]{0,2400}?name="accountId"\s+value="([0-9a-f-]{36})"/i,
+    );
+    telegramAccountId = idMatch?.[1] ?? "";
+    check("can extract Telegram accountId from the rendered revoke form",
+      /^[0-9a-f-]{36}$/i.test(telegramAccountId),
+      `accountId=${telegramAccountId}`);
+  }
+
+  // 4. Same-owner Telegram revoke → 303
+  {
+    const res = await postForm("/api/channels/telegram/revoke", {
+      accountId: telegramAccountId,
+    });
+    check("same-owner Telegram revoke -> 303", res.status === 303,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("Telegram revoke redirects to /profile#command-channels",
+      (res.location ?? "").endsWith("/profile#command-channels"));
+  }
+
+  // 5. /profile now shows the Telegram row as revoked
+  {
+    const { body } = await getProfile();
+    check("revoked Telegram row still present in /profile",
+      body.includes(`data-channel-account-id="${telegramAccountId}"`));
+    check("revoked Telegram row status pill = revoked",
+      new RegExp(`data-channel-account-id="${telegramAccountId}"[^>]*data-channel-status="revoked"`)
+        .test(body),
+      "Telegram row did not flip to revoked");
+  }
+
+  // 6. POST mock link → 303
   {
     const res = await postForm("/api/channels/mock/link", {
       externalUserId: "mock-a-1",
@@ -383,7 +448,7 @@ try {
       `location=${res.location}`);
   }
 
-  // 3. /profile now shows the linked row
+  // 7. /profile now shows the linked mock row
   let linkedAccountId = "";
   {
     const { body } = await getProfile();
@@ -495,10 +560,26 @@ try {
       `status=${res.status} body=${JSON.stringify(res.body)}`);
   }
   {
+    const res = await postForm("/api/channels/telegram/link", {
+      externalUserId: "   ",
+    });
+    check("Telegram link with empty externalUserId -> 400",
+      res.status === 400 && res.body?.code === "invalid_request",
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+  }
+  {
     const res = await postForm("/api/channels/mock/revoke", {
       accountId: "not-a-uuid",
     });
     check("revoke with non-uuid accountId -> 400",
+      res.status === 400 && res.body?.code === "invalid_request",
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+  }
+  {
+    const res = await postForm("/api/channels/telegram/revoke", {
+      accountId: "not-a-uuid",
+    });
+    check("Telegram revoke with non-uuid accountId -> 400",
       res.status === 400 && res.body?.code === "invalid_request",
       `status=${res.status} body=${JSON.stringify(res.body)}`);
   }
@@ -580,6 +661,18 @@ try {
       JSON.stringify(res.body));
   }
   {
+    const res = await postNoSession("/api/channels/telegram/link", {
+      externalUserId: "would-not-matter",
+      displayName: "ignored",
+    });
+    check("no-session POST /telegram/link -> 401",
+      res.status === 401,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("no-session POST /telegram/link code=unauthenticated",
+      res.body?.code === "unauthenticated",
+      JSON.stringify(res.body));
+  }
+  {
     const res = await postNoSession("/api/channels/mock/revoke", {
       // Valid uuid so the body validator passes — the route must
       // still 401 BEFORE doing any DB lookup.
@@ -589,6 +682,17 @@ try {
       res.status === 401,
       `status=${res.status} body=${JSON.stringify(res.body)}`);
     check("no-session POST /revoke code=unauthenticated",
+      res.body?.code === "unauthenticated",
+      JSON.stringify(res.body));
+  }
+  {
+    const res = await postNoSession("/api/channels/telegram/revoke", {
+      accountId: "00000000-0000-4000-8000-000000000000",
+    });
+    check("no-session POST /telegram/revoke -> 401",
+      res.status === 401,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("no-session POST /telegram/revoke code=unauthenticated",
       res.body?.code === "unauthenticated",
       JSON.stringify(res.body));
   }
