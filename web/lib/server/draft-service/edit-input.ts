@@ -3,10 +3,10 @@
 //
 // Owner-scoped lookups happen separately in each data-source path. This file
 // only catches shape failures — missing fields, wrong types, malformed
-// attachedCard — and produces the route's stable `{ ok: false, status, error }`
-// shape.
+// attachedCard, and paragraphs — and produces the route's stable
+// `{ ok: false, status, error }` shape.
 
-import type { AttachedCard } from "@/lib/domain";
+import type { AttachedCard, DraftParagraph } from "@/lib/domain";
 import type { DraftEditInput, DraftEditResult } from "./types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -21,6 +21,13 @@ export function isAttachedCardShape(value: unknown): value is AttachedCard {
     && typeof value.paletteHint === "string"
     && typeof value.iconHint === "string"
   );
+}
+
+function isDraftParagraphShape(value: unknown): value is DraftParagraph {
+  if (!isRecord(value) || typeof value.text !== "string") return false;
+  if (value.highlights === undefined) return true;
+  return Array.isArray(value.highlights)
+    && value.highlights.every((highlight) => typeof highlight === "string");
 }
 
 /**
@@ -39,6 +46,9 @@ export function validateDraftEditInput(
   }
   if (typeof input.subject !== "string") {
     missing.push("subject");
+  }
+  if (!Array.isArray(input.paragraphs) || !input.paragraphs.every(isDraftParagraphShape)) {
+    missing.push("paragraphs");
   }
   // `attachedCard` is either `null` or an object that matches `AttachedCard`.
   // `undefined` is rejected because the route's contract is explicit-or-null.
@@ -66,6 +76,13 @@ function normaliseCard(card: AttachedCard | null): string {
   });
 }
 
+function normaliseParagraphs(paragraphs: DraftParagraph[]): string {
+  return JSON.stringify(paragraphs.map((paragraph) => ({
+    text: paragraph.text,
+    highlights: Array.isArray(paragraph.highlights) ? paragraph.highlights : [],
+  })));
+}
+
 /**
  * True when the user-edited fields exactly match the base draft's
  * already-persisted values. Used by both data-source paths to suppress
@@ -73,10 +90,11 @@ function normaliseCard(card: AttachedCard | null): string {
  */
 export function editMatchesBase(
   input: DraftEditInput,
-  base: { subject: string; attachedCard: AttachedCard | null },
+  base: { subject: string; paragraphs: DraftParagraph[]; attachedCard: AttachedCard | null },
 ): boolean {
   return (
     input.subject === base.subject
+    && normaliseParagraphs(input.paragraphs) === normaliseParagraphs(base.paragraphs)
     && normaliseCard(input.attachedCard) === normaliseCard(base.attachedCard)
   );
 }

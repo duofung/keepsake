@@ -106,6 +106,7 @@ export async function saveMockDraftEdit(
     ...base,
     id: `draft-${Date.now()}`,
     subject: input.subject,
+    paragraphs: input.paragraphs,
     attachedCard: input.attachedCard,
   };
   // Inherit provenance from the base entry so mock parity with the DB

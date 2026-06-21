@@ -44,7 +44,7 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  // Save user-edited subject / attachedCard onto a base draft as a new
+  // Save user-edited subject / body / card design onto a base draft as a new
   // canonical version. The route stays thin: parse → delegate → JSON. All
   // ownership and validation live in `draft-service`.
   let body: DraftEditInput;

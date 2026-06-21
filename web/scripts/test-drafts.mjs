@@ -214,6 +214,7 @@ try {
       const { status } = await patchDraft({
         draftId: "draft-anything",
         subject: 42,
+        paragraphs: [{ text: "ok" }],
         attachedCard: null,
       });
       check("PATCH non-string subject -> 400", status === 400, `status=${status}`);
@@ -222,6 +223,16 @@ try {
       const { status } = await patchDraft({
         draftId: "draft-anything",
         subject: "ok",
+        paragraphs: [{ nope: "missing text" }],
+        attachedCard: null,
+      });
+      check("PATCH malformed paragraphs -> 400", status === 400, `status=${status}`);
+    }
+    {
+      const { status } = await patchDraft({
+        draftId: "draft-anything",
+        subject: "ok",
+        paragraphs: [{ text: "ok" }],
         attachedCard: { styleLabel: "x" /* missing the rest */ },
       });
       check("PATCH malformed attachedCard -> 400", status === 400, `status=${status}`);
@@ -232,6 +243,7 @@ try {
       const { status, body } = await patchDraft({
         draftId: "draft-does-not-exist-zzz",
         subject: "Updated subject",
+        paragraphs: [{ text: "Updated body" }],
         attachedCard: null,
       });
       check("PATCH unknown draftId -> 404", status === 404, `status=${status}`);
@@ -247,6 +259,7 @@ try {
     check("seed Kira base draft -> 200", typeof base?.id === "string" && base.id.length > 0);
     const baseId = base.id;
     const baseSubject = base.subject;
+    const baseParagraphs = base.paragraphs;
     const baseCard = base.attachedCard;
 
     // 6d. No-op PATCH (same subject + same card) returns base — no new version.
@@ -254,6 +267,7 @@ try {
       const { status, body } = await patchDraft({
         draftId: baseId,
         subject: baseSubject,
+        paragraphs: baseParagraphs,
         attachedCard: baseCard,
       });
       check("PATCH no-op -> 200", status === 200);
@@ -268,6 +282,7 @@ try {
       const { status, body } = await patchDraft({
         draftId: baseId,
         subject: editedSubject,
+        paragraphs: baseParagraphs,
         attachedCard: baseCard,
       });
       check("PATCH new subject -> 200", status === 200);
@@ -278,6 +293,26 @@ try {
       check("PATCH new subject preserves tone", body?.tone === base.tone);
       check("PATCH new subject preserves quickActions",
         Array.isArray(body?.quickActions) && body.quickActions.length === base.quickActions.length);
+      editedId = body?.id;
+    }
+
+    // 6e2. PATCH edited body creates a new canonical version too.
+    const editedParagraphs = [
+      { text: "I changed the email body directly in Workspace." },
+      { text: "This should be saved before delivery queueing." },
+    ];
+    {
+      const { status, body } = await patchDraft({
+        draftId: editedId,
+        subject: editedSubject,
+        paragraphs: editedParagraphs,
+        attachedCard: baseCard,
+      });
+      check("PATCH edited body -> 200", status === 200);
+      check("PATCH edited body changes id", body?.id && body.id !== editedId);
+      check("PATCH edited body persists paragraphs",
+        body?.paragraphs?.[0]?.text === editedParagraphs[0].text
+        && body?.paragraphs?.[1]?.text === editedParagraphs[1].text);
       editedId = body?.id;
     }
 
@@ -308,6 +343,7 @@ try {
       const { status, body } = await patchDraft({
         draftId: editedId,
         subject: editedSubject,
+        paragraphs: editedParagraphs,
         attachedCard: null,
       });
       check("PATCH null attachedCard -> 200", status === 200);
@@ -323,6 +359,7 @@ try {
       const { body } = await patchDraft({
         draftId: baseId,
         subject: `${baseSubject} (shape check)`,
+        paragraphs: baseParagraphs,
         attachedCard: baseCard,
       });
       check("PATCH preserves toneLabel", typeof body?.toneLabel === "string" && body.toneLabel.length > 0);

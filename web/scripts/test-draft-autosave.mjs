@@ -60,7 +60,7 @@ async function loadController() {
   };
 }
 
-function makeDraft(id, subject = "Hi", card = null) {
+function makeDraft(id, subject = "Hi", card = null, paragraphs = [{ text: "p" }]) {
   return {
     id,
     personId: "p1",
@@ -69,7 +69,7 @@ function makeDraft(id, subject = "Hi", card = null) {
     toneLabel: "Tender",
     alternativeTones: [],
     subject,
-    paragraphs: [{ text: "p" }],
+    paragraphs,
     attachedCard: card,
     quickActions: [],
     assistantNote: "n",
@@ -100,7 +100,7 @@ function makeRig({ debounceMs = 5 } = {}) {
         // Default: succeed and echo back a new draft id.
         return {
           status: 200,
-          draft: makeDraft(`v-${calls.length}`, body.subject, body.attachedCard),
+          draft: makeDraft(`v-${calls.length}`, body.subject, body.attachedCard, body.paragraphs),
         };
       }
       return consumer;
@@ -134,15 +134,16 @@ try {
     ctrl.setBaseline(makeDraft("base-1", "hello"), "kA");
     check("baseline starts idle", rig.statusLog.pop() === "idle");
 
-    ctrl.schedule({ subject: "hello", attachedCard: null }, true);
+    ctrl.schedule({ subject: "hello", paragraphs: [{ text: "p" }], attachedCard: null }, true);
     await wait(20);
     check("no-op did not fetch", rig.calls.length === 0, `calls=${rig.calls.length}`);
     check("no-op marked saved", rig.statusLog.includes("saved"));
 
     rig.statusLog.length = 0;
-    ctrl.schedule({ subject: "edited", attachedCard: null }, true);
+    ctrl.schedule({ subject: "edited", paragraphs: [{ text: "body edited" }], attachedCard: null }, true);
     await wait(20);
     check("real edit fired PATCH", rig.calls.length === 1);
+    check("real body edit sent to PATCH", rig.calls[0]?.body.paragraphs?.[0]?.text === "body edited");
     check("real edit applied to UI", rig.applied.includes("v-1"));
     check("real edit ended in saved", rig.statusLog.at(-1) === "saved");
     check("real edit cleared pending", ctrl.__peekPending() === null);
@@ -157,7 +158,7 @@ try {
     ctrl.setBaseline(makeDraft("base-2", "hello"), "kA");
 
     rig.setNextResponse({ status: 500, draft: null });
-    ctrl.schedule({ subject: "edit-fails", attachedCard: null }, true);
+    ctrl.schedule({ subject: "edit-fails", paragraphs: [{ text: "retry me" }], attachedCard: null }, true);
     await wait(20);
     check("first PATCH fired", rig.calls.length === 1);
     check("status reached error", rig.statusLog.at(-1) === "error");
@@ -173,7 +174,8 @@ try {
       secondFlushResult === false, `got=${secondFlushResult}`);
     check("flush after failure re-fired the PATCH", rig.calls.length === 2);
     check("flush after failure sent the same pending edits",
-      rig.calls[1].body.subject === "edit-fails");
+      rig.calls[1].body.subject === "edit-fails"
+      && rig.calls[1].body.paragraphs?.[0]?.text === "retry me");
     check("pending still survived second failure", ctrl.__peekPending() !== null);
 
     // Now the network recovers. The same flush should succeed and clear
@@ -201,7 +203,7 @@ try {
     }));
     let lastSent = null;
 
-    ctrl.schedule({ subject: "edit-on-A", attachedCard: null }, true);
+    ctrl.schedule({ subject: "edit-on-A", paragraphs: [{ text: "body A" }], attachedCard: null }, true);
     await wait(5);
     check("PATCH for draftA is in flight",
       rig.calls.length === 1 && typeof resolveInFlight === "function");
@@ -218,7 +220,7 @@ try {
     // the UI because the user has moved on.
     resolveInFlight({
       status: 200,
-      draft: makeDraft("vA-stale", "edit-on-A"),
+      draft: makeDraft("vA-stale", "edit-on-A", null, [{ text: "body A" }]),
     });
     await wait(20);
     check("stale response did NOT call applyServerVersion",
@@ -230,11 +232,11 @@ try {
     // Also verify the same protection on a person/key switch.
     let resolveSecond;
     rig.setNextResponse(() => new Promise((r) => { resolveSecond = r; }));
-    ctrl.schedule({ subject: "edit-on-B", attachedCard: null }, true);
+    ctrl.schedule({ subject: "edit-on-B", paragraphs: [{ text: "body B" }], attachedCard: null }, true);
     await wait(5);
     rig.setActiveKey("kB");  // user navigated to a different person
     const appliedBeforeKeySwitch = [...rig.applied];
-    resolveSecond({ status: 200, draft: makeDraft("vB-stale", "edit-on-B") });
+    resolveSecond({ status: 200, draft: makeDraft("vB-stale", "edit-on-B", null, [{ text: "body B" }]) });
     await wait(20);
     check("response after person-switch did NOT apply to UI",
       rig.applied.length === appliedBeforeKeySwitch.length);
@@ -249,19 +251,21 @@ try {
 
     let resolveFirst;
     rig.setNextResponse(() => new Promise((r) => { resolveFirst = r; }));
-    ctrl.schedule({ subject: "edit-1", attachedCard: null }, true);
+    ctrl.schedule({ subject: "edit-1", paragraphs: [{ text: "body 1" }], attachedCard: null }, true);
     await wait(5);
 
     // User keeps typing while PATCH is in flight.
-    ctrl.schedule({ subject: "edit-2", attachedCard: null }, false);
+    ctrl.schedule({ subject: "edit-2", paragraphs: [{ text: "body 2" }], attachedCard: null }, false);
     // Now click Send.
     const flushPromise = ctrl.flush();
     // Resolve first fetch successfully.
-    resolveFirst({ status: 200, draft: makeDraft("v-after-1", "edit-1") });
+    resolveFirst({ status: 200, draft: makeDraft("v-after-1", "edit-1", null, [{ text: "body 1" }]) });
     const result = await flushPromise;
     check("flush eventually succeeds when both saves succeed", result === true);
     check("second PATCH was sent with newer edits",
-      rig.calls.length === 2 && rig.calls[1].body.subject === "edit-2");
+      rig.calls.length === 2
+      && rig.calls[1].body.subject === "edit-2"
+      && rig.calls[1].body.paragraphs?.[0]?.text === "body 2");
     check("pending cleared once latest edits land",
       ctrl.__peekPending() === null);
   }

@@ -14,7 +14,7 @@
 // The controller has no React dependency. The component injects fetch,
 // status + version setters, and a `getActiveKey` callback.
 
-import type { AttachedCard, MessageDraft } from "@/lib/domain";
+import type { AttachedCard, DraftParagraph, MessageDraft } from "@/lib/domain";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -27,6 +27,7 @@ export interface AutosaveDeps {
   fetchPatch: (body: {
     draftId: string;
     subject: string;
+    paragraphs: DraftParagraph[];
     attachedCard: AttachedCard | null;
   }) => Promise<PatchResult>;
   /**
@@ -44,16 +45,22 @@ export interface AutosaveDeps {
 interface Baseline {
   draftId: string;
   subject: string;
+  paragraphs: DraftParagraph[];
   attachedCard: AttachedCard | null;
   key: string | null;
 }
 
 interface PendingEdits {
   subject: string;
+  paragraphs: DraftParagraph[];
   attachedCard: AttachedCard | null;
 }
 
 function sameCard(a: AttachedCard | null, b: AttachedCard | null): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function sameParagraphs(a: DraftParagraph[], b: DraftParagraph[]): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
@@ -80,6 +87,7 @@ export class DraftAutosaveController {
     this.baseline = {
       draftId: draft.id,
       subject: draft.subject,
+      paragraphs: draft.paragraphs,
       attachedCard: draft.attachedCard,
       key,
     };
@@ -146,6 +154,7 @@ export class DraftAutosaveController {
     // No-op suppression: the edits already match what the server has.
     if (
       pending.subject === baseline.subject
+      && sameParagraphs(pending.paragraphs, baseline.paragraphs)
       && sameCard(pending.attachedCard, baseline.attachedCard)
     ) {
       this.deps.setStatus("saved");
@@ -163,6 +172,7 @@ export class DraftAutosaveController {
         result = await this.deps.fetchPatch({
           draftId: baselineId,
           subject: pending.subject,
+          paragraphs: pending.paragraphs,
           attachedCard: pending.attachedCard,
         });
       } catch {
@@ -185,6 +195,7 @@ export class DraftAutosaveController {
         this.baseline = {
           draftId: next.id,
           subject: next.subject,
+          paragraphs: next.paragraphs,
           attachedCard: next.attachedCard,
           key: baselineKey,
         };

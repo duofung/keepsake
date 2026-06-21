@@ -338,7 +338,7 @@ through to `POST /api/drafts`.
 ```
 client                    server
   │                         │
-  │  PATCH /api/drafts      │   { draftId, subject, attachedCard | null }
+  │  PATCH /api/drafts      │   { draftId, subject, paragraphs, attachedCard | null }
   ├────────────────────────►│
   │                         │  app/api/drafts/route.ts
   │                         │      │  parse JSON → 400 invalid_request on failure
@@ -349,8 +349,8 @@ client                    server
   │                         │      │    ▼
   │                         │      │  validate shape → 400 on miss
   │                         │      │  getMockDraftById(draftId)
-  │                         │      │  no-op: same subject + same card → return base
-  │                         │      │  else: clone base, override subject + attachedCard,
+  │                         │      │  no-op: same subject + body + card → return base
+  │                         │      │  else: clone base, override subject + paragraphs + attachedCard,
   │                         │      │        recordMockDraft(new version) (newest-first)
   │                         │      │
   │                         │      └─ KEEPSAKE_DATA_SOURCE=db
@@ -360,7 +360,7 @@ client                    server
   │                         │         transaction(ownerId)
   │                         │           DraftRepository.getById(ownerId, draftId)
   │                         │             → 404 "Draft not found" (also covers cross-owner)
-  │                         │           no-op: same subject + same card → return base
+  │                         │           no-op: same subject + body + card → return base
   │                         │           DraftRepository.save with prompt_input_hash = NULL,
   │                         │             modelProvider/modelVersion unset
   │                         │           ▼
@@ -368,12 +368,12 @@ client                    server
   │                         │
 ```
 
-The PATCH route exists so the user can persist the two Workspace fields that
-they can edit — `subject` and whether a card is attached — without expanding
+The PATCH route exists so the user can persist Workspace compose edits —
+`subject`, body `paragraphs`, and the optional card design — without expanding
 the client's authorship over the rest of the `MessageDraft`. The route is
-server-authoritative: `personId`, `occasionId`, `tone`, `paragraphs`,
-`quickActions`, `assistantNote` are inherited from the base draft and are not
-accepted from the body. Every successful edit creates a new canonical
+server-authoritative: `personId`, `occasionId`, `tone`, `quickActions`, and
+`assistantNote` are inherited from the base draft and are not accepted from the
+body. Every successful edit creates a new canonical
 `message_drafts` row (or a new mock-store version); no in-place updates of
 the base row. When the edit deep-equals the base, no row is inserted and the
 base draft is returned as-is, so debounced autosaves do not inflate the
@@ -1013,8 +1013,8 @@ Provider notes (still future):
 
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
-| Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts`, autosaves subject + card toggle through `PATCH /api/drafts`, and POSTs the send buttons to `/api/deliveries` for queue-boundary enqueue (after first flushing any pending edits); History calls the delivery-history dispatcher. | yes (Workspace draft fetches + autosave PATCH + delivery enqueue) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts`, `app/api/webhooks/deliveries/route.ts`, `app/api/channels/mock/route.ts`, `app/api/channels/mock/inbound/route.ts`, `app/api/channels/mock/link/route.ts`, `app/api/channels/mock/revoke/route.ts`, `app/api/channels/telegram/route.ts`, `app/api/channels/telegram/link/route.ts`, `app/api/channels/telegram/revoke/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail; `/api/webhooks/deliveries` is the provider-agnostic delivery-status callback (shared-secret gate, never reads current user); `/api/channels/mock` exercises the pure router; `/api/channels/mock/inbound` exercises DB-backed provider identity resolution and returns a review pointer only; `/api/channels/mock/{link,revoke}` and `/api/channels/telegram/{link,revoke}` are owner-scoped Profile mutations that manage `channel_accounts` rows inbound routes then resolve against; `/api/channels/telegram` is the first real provider adapter and now also consumes `/start <token>` link commands: Telegram secret header → optional start-token link → DB identity lookup → owner-scoped command reply → Telegram `sendMessage` with review URL. | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only, delivery status updates from webhook in DB mode only, channel-account lookup for mock/Telegram inbound in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
+| Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts`, autosaves subject + body + card toggle through `PATCH /api/drafts`, and POSTs the send buttons to `/api/deliveries` for queue-boundary enqueue (after first flushing any pending edits); History calls the delivery-history dispatcher. | yes (Workspace draft fetches + autosave PATCH + delivery enqueue) | via server helper when DB mode is enabled | no |
+| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts`, `app/api/webhooks/deliveries/route.ts`, `app/api/channels/mock/route.ts`, `app/api/channels/mock/inbound/route.ts`, `app/api/channels/mock/link/route.ts`, `app/api/channels/mock/revoke/route.ts`, `app/api/channels/telegram/route.ts`, `app/api/channels/telegram/link/route.ts`, `app/api/channels/telegram/revoke/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + body + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail; `/api/webhooks/deliveries` is the provider-agnostic delivery-status callback (shared-secret gate, never reads current user); `/api/channels/mock` exercises the pure router; `/api/channels/mock/inbound` exercises DB-backed provider identity resolution and returns a review pointer only; `/api/channels/mock/{link,revoke}` and `/api/channels/telegram/{link,revoke}` are owner-scoped Profile mutations that manage `channel_accounts` rows inbound routes then resolve against; `/api/channels/telegram` is the first real provider adapter and now also consumes `/start <token>` link commands: Telegram secret header → optional start-token link → DB identity lookup → owner-scoped command reply → Telegram `sendMessage` with review URL. | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only, delivery status updates from webhook in DB mode only, channel-account lookup for mock/Telegram inbound in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock,generator-errors}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/draft-generator/{index,mock,openai}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts` | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; `draft-generator/index.server.ts` dispatches `mock` vs `openai` behind `KEEPSAKE_DRAFT_SOURCE` so the route contract stays unchanged; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
@@ -1099,11 +1099,12 @@ PR/agent prompt before touching.
    (anything POSTed or PATCHed in the current process); DB mode is read-only
    and validates person/occasion ownership before calling
    `DraftRepository.listForPerson`.
-9.5. **`PATCH /api/drafts` request shape** = `{ draftId, subject, attachedCard }`,
-   where `attachedCard` is either `null` or a full `AttachedCard` object
-   (no partials). Nothing else is accepted — `personId`, `occasionId`,
-   `tone`, `paragraphs`, `quickActions`, and `assistantNote` are inherited
-   from the base draft and cannot be overridden from the client. Response
+9.5. **`PATCH /api/drafts` request shape** =
+   `{ draftId, subject, paragraphs, attachedCard }`, where `paragraphs` is
+   a `DraftParagraph[]` and `attachedCard` is either `null` or a full
+   `AttachedCard` object (no partials). Nothing else is accepted —
+   `personId`, `occasionId`, `tone`, `quickActions`, and `assistantNote`
+   are inherited from the base draft and cannot be overridden from the client. Response
    is `MessageDraft` on 200 (a new canonical version, or the unchanged
    base when the edit is a no-op). Errors: 400 invalid JSON or missing /
    malformed fields; 404 `Draft not found` for unknown ids, non-UUID

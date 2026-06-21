@@ -512,6 +512,7 @@ try {
       const { status, body } = await patchDraft({
         draftId: "11111111-1111-4111-8111-111111111111",
         subject: "anything",
+        paragraphs: [{ text: "anything" }],
         attachedCard: null,
       });
       check("PATCH unknown draftId (DB) -> 404", status === 404, `status=${status}`);
@@ -521,6 +522,7 @@ try {
       const { status } = await patchDraft({
         draftId: "not-a-uuid",
         subject: "anything",
+        paragraphs: [{ text: "anything" }],
         attachedCard: null,
       });
       check("PATCH non-uuid draftId (DB) -> 404", status === 404, `status=${status}`);
@@ -536,6 +538,7 @@ try {
       const { status: patchStatus, body: same } = await patchDraft({
         draftId: original.id,
         subject: original.subject,
+        paragraphs: original.paragraphs,
         attachedCard: original.attachedCard,
       });
       check("DB PATCH no-op -> 200", patchStatus === 200);
@@ -548,11 +551,16 @@ try {
       occasionId: lin.nextOccasionId,
     });
     const editedSubject = `${base.subject} (DB edit)`;
+    const editedParagraphs = [
+      { text: "This body was edited in Workspace before queueing." },
+      { text: "DB mode should persist it as a new canonical draft version." },
+    ];
     let editedId;
     {
       const { status, body } = await patchDraft({
         draftId: base.id,
         subject: editedSubject,
+        paragraphs: editedParagraphs,
         attachedCard: null,
       });
       check("DB PATCH new subject -> 200", status === 200, `status=${status}`);
@@ -560,8 +568,9 @@ try {
       check("DB PATCH new subject sets subject", body?.subject === editedSubject);
       check("DB PATCH new subject removes card", body?.attachedCard === null);
       check("DB PATCH new subject preserves tone", body?.tone === base.tone);
-      check("DB PATCH new subject preserves paragraphs",
-        Array.isArray(body?.paragraphs) && body.paragraphs.length === base.paragraphs.length);
+      check("DB PATCH persists edited paragraphs",
+        body?.paragraphs?.[0]?.text === editedParagraphs[0].text
+        && body?.paragraphs?.[1]?.text === editedParagraphs[1].text);
       editedId = body?.id;
     }
     {
@@ -571,6 +580,8 @@ try {
       });
       check("DB latest after edit reflects new id", body?.id === editedId);
       check("DB latest after edit reflects new subject", body?.subject === editedSubject);
+      check("DB latest after edit reflects body",
+        body?.paragraphs?.[0]?.text === editedParagraphs[0].text);
     }
     {
       const { body } = await getDraftVersions({

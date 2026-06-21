@@ -54,6 +54,8 @@ export default function WorkspaceClient({
   const [versions, setVersions] = useState<MessageDraft[]>([]);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [subject, setSubject] = useState("");
+  const [bodyText, setBodyText] = useState("");
+  const [isBodyEditing, setIsBodyEditing] = useState(false);
   const [hasCard, setHasCard] = useState(true);
   // Send-time recipient email. Local-only — never persisted on the draft
   // (the canonical draft does not carry recipient identity) and never
@@ -131,6 +133,8 @@ export default function WorkspaceClient({
     setDraft(next);
     setSelectedVersionId(next.id);
     setSubject(next.subject);
+    setBodyText(paragraphsToBodyText(next.paragraphs));
+    setIsBodyEditing(false);
     setHasCard(!!next.attachedCard);
     autosaveRef.current?.setBaseline(next, initialDraftKeyRef.current);
     setLog((prev) => {
@@ -204,6 +208,8 @@ export default function WorkspaceClient({
     setVersions([]);
     setSelectedVersionId(null);
     setSubject("");
+    setBodyText("");
+    setIsBodyEditing(false);
     setHasCard(true);
     setLog([]);
     // Send-time recipient identity is per-person; never carry over to a new
@@ -279,7 +285,7 @@ export default function WorkspaceClient({
     autosaveRef.current?.dispose();
   }, [clearTimers]);
 
-  // Debounced subject autosave. Card toggles bypass this effect and call
+  // Debounced subject/body autosave. Card toggles bypass this effect and call
   // `schedule(..., immediate=true)` directly from their click handlers so
   // their behaviour is deterministic; re-running this effect when
   // `hasCard` changes would double-fire the save.
@@ -288,11 +294,15 @@ export default function WorkspaceClient({
     if (!controller) return;
     const baseline = controller.getBaseline();
     if (!baseline) return;
-    if (subject === baseline.subject) return;
+    const paragraphs = bodyTextToParagraphs(bodyText);
+    if (
+      subject === baseline.subject
+      && sameParagraphText(paragraphs, baseline.paragraphs)
+    ) return;
     const card = hasCard ? controller.getCardSnapshot() : null;
-    controller.schedule({ subject, attachedCard: card }, false);
+    controller.schedule({ subject, paragraphs, attachedCard: card }, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subject]);
+  }, [subject, bodyText]);
 
   const showToast = useCallback(
     (text: string, tone: "success" | "error", dismissMs: number) => {
@@ -355,8 +365,8 @@ export default function WorkspaceClient({
 
         if (res.status === 202) {
           // Success copy says "queued" — not "sent" or "delivered" — because
-          // the worker is not wired yet and any local subject/card edits in
-          // this view are not persisted into the queued draft.
+          // the worker performs delivery later. Subject/body/card edits are
+          // flushed above before the row is queued.
           const text = channel === "email"
             ? `Queued email for ${recipient}.`
             : `Queued printed card for ${recipient}.`;
@@ -383,6 +393,8 @@ export default function WorkspaceClient({
     setDraft(version);
     setSelectedVersionId(version.id);
     setSubject(version.subject);
+    setBodyText(paragraphsToBodyText(version.paragraphs));
+    setIsBodyEditing(false);
     setHasCard(!!version.attachedCard);
     autosaveRef.current?.setBaseline(version, initialDraftKeyRef.current);
     setLog((prev) => [...prev, { who: "ai", text: "Restored that version." }]);
@@ -664,15 +676,60 @@ export default function WorkspaceClient({
 
           <div style={{ flex: 1, overflowY: "auto", padding: "22px 30px" }}>
             <div className="ks-mail-body">
-            <div className="mail-text" style={{ fontSize: 14.5, lineHeight: 1.85, color: "var(--ink)" }}>
-              {draft?.paragraphs.map((p, i) => (
-                <p key={i}>{renderParagraph(p)}</p>
-              ))}
-            </div>
+              <section>
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  gap: 12, marginBottom: 9,
+                }}>
+                  <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 600, letterSpacing: "0.03em" }}>
+                    MESSAGE
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsBodyEditing((value) => !value)}
+                    data-testid="message-body-edit-toggle"
+                    style={{
+                      height: 28, padding: "0 10px", borderRadius: 9,
+                      border: "0.5px solid #E1E6EB", background: "#fff",
+                      color: "var(--blue-deep)", fontSize: 11.5, fontWeight: 600,
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Icon name={isBodyEditing ? "i-check-plain" : "i-pencil"} />
+                    {isBodyEditing ? "Preview" : "Edit body"}
+                  </button>
+                </div>
+                {isBodyEditing ? (
+                  <textarea
+                    value={bodyText}
+                    onChange={(e) => setBodyText(e.target.value)}
+                    data-testid="message-body-editor"
+                    aria-label="Email body"
+                    style={{
+                      width: "100%", minHeight: 220, resize: "vertical",
+                      border: "0.5px solid #DDE5ED", borderRadius: 12,
+                      background: "#fff", color: "var(--ink)", outline: "none",
+                      fontSize: 14.5, lineHeight: 1.75, padding: "13px 14px",
+                      fontFamily: "inherit",
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="mail-text"
+                    data-testid="message-body-preview"
+                    style={{ fontSize: 14.5, lineHeight: 1.85, color: "var(--ink)" }}
+                  >
+                    {bodyTextToParagraphs(bodyText).map((p, i) => (
+                      <p key={i}>{renderParagraph(p)}</p>
+                    ))}
+                  </div>
+                )}
+              </section>
 
-            <div style={{ marginTop: 16, borderTop: "0.5px solid var(--line)", paddingTop: 14 }}>
-              <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 500, marginBottom: 9, letterSpacing: "0.03em" }}>
-                ATTACHED TO THIS EMAIL · OPTIONAL
+            <section style={{ marginTop: 18, borderTop: "0.5px solid var(--line)", paddingTop: 14 }}>
+              <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 600, marginBottom: 9, letterSpacing: "0.03em" }}>
+                KEEPSAKE CARD · OPTIONAL
               </div>
               {hasCard && draft?.attachedCard ? (
                 <div style={{
@@ -694,12 +751,19 @@ export default function WorkspaceClient({
                     <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 2 }}>
                       {draft.attachedCard.description}
                     </div>
+                    <div style={{ fontSize: 11, color: "var(--gray-3)", marginTop: 5 }}>
+                      Used when you choose Mail as card.
+                    </div>
                   </div>
                   <button
                     onClick={() => {
                       if (draft?.attachedCard) autosaveRef.current?.rememberCard(draft.attachedCard);
                       setHasCard(false);
-                      autosaveRef.current?.schedule({ subject, attachedCard: null }, true);
+                      autosaveRef.current?.schedule({
+                        subject,
+                        paragraphs: bodyTextToParagraphs(bodyText),
+                        attachedCard: null,
+                      }, true);
                     }}
                     style={{
                       width: 24, height: 24, borderRadius: "50%", background: "#fff",
@@ -715,7 +779,13 @@ export default function WorkspaceClient({
                   onClick={() => {
                     setHasCard(true);
                     const restored = autosaveRef.current?.getCardSnapshot() ?? null;
-                    if (restored) autosaveRef.current?.schedule({ subject, attachedCard: restored }, true);
+                    if (restored) {
+                      autosaveRef.current?.schedule({
+                        subject,
+                        paragraphs: bodyTextToParagraphs(bodyText),
+                        attachedCard: restored,
+                      }, true);
+                    }
                   }}
                   style={{
                     display: "flex", alignItems: "center", gap: 9, padding: 11,
@@ -730,12 +800,37 @@ export default function WorkspaceClient({
                     <Icon name="i-cards" />
                   </span>
                   <span>
-                    <span style={{ fontSize: 12.5, fontWeight: 500, display: "block" }}>Add a designed card</span>
-                    <span style={{ fontSize: 11, color: "var(--gray-3)" }}>Make the email feel like a gift</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 500, display: "block" }}>Add card design</span>
+                    <span style={{ fontSize: 11, color: "var(--gray-3)" }}>Used for the Mail as card option</span>
                   </span>
                 </button>
               )}
-            </div>
+            </section>
+
+            <section style={{ marginTop: 16, borderTop: "0.5px solid var(--line)", paddingTop: 14 }}>
+              <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 600, marginBottom: 9, letterSpacing: "0.03em" }}>
+                ATTACHMENTS · OPTIONAL
+              </div>
+              <div
+                data-testid="attachments-empty-state"
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "11px 12px", border: "0.5px dashed #D4DBE2",
+                  borderRadius: 12, color: "var(--gray-2)", background: "#fff",
+                }}
+              >
+                <span style={{
+                  width: 30, height: 30, borderRadius: 8, background: "var(--soft)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 15, flexShrink: 0,
+                }}>
+                  <Icon name="i-plus" />
+                </span>
+                <span>
+                  <span style={{ fontSize: 12.5, fontWeight: 500, display: "block" }}>No files attached</span>
+                </span>
+              </div>
+            </section>
             </div>
           </div>
 
@@ -808,6 +903,23 @@ export default function WorkspaceClient({
       )}
     </div>
   );
+}
+
+function paragraphsToBodyText(paragraphs: DraftParagraph[]): string {
+  return paragraphs.map((paragraph) => paragraph.text).join("\n\n");
+}
+
+function bodyTextToParagraphs(text: string): DraftParagraph[] {
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => ({ text: part }));
+  return paragraphs.length ? paragraphs : [{ text: "" }];
+}
+
+function sameParagraphText(a: DraftParagraph[], b: DraftParagraph[]): boolean {
+  return paragraphsToBodyText(a) === paragraphsToBodyText(b);
 }
 
 function renderParagraph({ text, highlights = [] }: DraftParagraph): React.ReactNode {

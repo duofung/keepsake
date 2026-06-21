@@ -72,7 +72,7 @@ Open [http://localhost:3000/signin](http://localhost:3000/signin) and use
 1. Start at `/signin`; show the guarded-app loop.
 2. Continue as the dev owner and land on Home.
 3. Open People; show relationship groups and the person drawer.
-4. Open Workspace for Lin; generate/revise the draft, edit the subject/card, add
+4. Open Workspace for Lin; generate/revise the draft, edit the subject/body/card, add
    a recipient email, and click **Send email**. The correct success wording is
    "Queued...", not "Sent...".
 5. Open Profile; show Gmail sender state, sign-out, and command-channel link UI.

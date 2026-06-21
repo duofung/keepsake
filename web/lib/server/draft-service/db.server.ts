@@ -273,7 +273,7 @@ export async function saveDbDraftEdit(
           toneLabel: base.toneLabel,
           alternativeTones: base.alternativeTones,
           subject: input.subject,
-          paragraphs: base.paragraphs,
+          paragraphs: input.paragraphs,
           attachedCard: input.attachedCard,
           quickActions: base.quickActions,
           assistantNote: base.assistantNote,
