@@ -445,29 +445,29 @@ export default function WorkspaceClient({
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         {/* assist panel */}
-        <div style={{ width: "36%", minWidth: 360, maxWidth: 440, background: "var(--rail)", display: "flex", flexDirection: "column" }}>
-          <div ref={logRef} style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ width: "31%", minWidth: 318, maxWidth: 370, background: "var(--rail)", display: "flex", flexDirection: "column" }}>
+          <div ref={logRef} style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
             {log.map((m, i) => (
               <div
                 key={i}
                 style={{
-                  display: "flex", gap: 9, alignItems: "flex-start", maxWidth: "92%",
+                  display: "flex", gap: 8, alignItems: "flex-start", maxWidth: "92%",
                   alignSelf: m.who === "me" ? "flex-end" : "flex-start",
                   flexDirection: m.who === "me" ? "row-reverse" : "row",
                 }}
               >
                 {m.who === "ai" && (
                   <div style={{
-                    width: 25, height: 25, borderRadius: 8, background: "var(--blue-wash)",
+                    width: 23, height: 23, borderRadius: 8, background: "var(--blue-wash)",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    flexShrink: 0, color: "var(--blue)", fontSize: 13,
+                    flexShrink: 0, color: "var(--blue)", fontSize: 12,
                   }}>
                     <Icon name="i-sparkles" />
                   </div>
                 )}
                 <div
                   style={{
-                    padding: "10px 12px", fontSize: 12.5, lineHeight: 1.6,
+                    padding: "9px 11px", fontSize: 12, lineHeight: 1.55,
                     background: m.who === "ai" ? "#fff" : "var(--blue)",
                     color: m.who === "ai" ? "var(--ink)" : "#fff",
                     borderRadius: m.who === "ai" ? "5px 14px 14px 14px" : "14px 5px 14px 14px",
@@ -478,28 +478,28 @@ export default function WorkspaceClient({
               </div>
             ))}
             {loading && (
-              <div style={{ display: "flex", gap: 9, opacity: 0.6 }}>
+              <div style={{ display: "flex", gap: 8, opacity: 0.6 }}>
                 <div style={{
-                  width: 25, height: 25, borderRadius: 8, background: "var(--blue-wash)",
+                  width: 23, height: 23, borderRadius: 8, background: "var(--blue-wash)",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  color: "var(--blue)", fontSize: 13,
+                  color: "var(--blue)", fontSize: 12,
                 }}>
                   <Icon name="i-sparkles" />
                 </div>
                 <div style={{
-                  padding: "10px 12px", fontSize: 12.5, background: "#fff",
+                  padding: "9px 11px", fontSize: 12, background: "#fff",
                   borderRadius: "5px 14px 14px 14px",
                 }}>·  ·  ·</div>
               </div>
             )}
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 16px 9px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 14px 8px" }}>
             {draft?.quickActions.map((q, i) => (
               <button
                 key={i}
                 onClick={() => sendInstruction(q.prompt)}
                 style={{
-                  fontSize: 11.5, padding: "6px 11px", background: "#fff", borderRadius: 12,
+                  fontSize: 11, padding: "5px 10px", background: "#fff", borderRadius: 12,
                   color: "var(--gray-1)", display: "flex", alignItems: "center", gap: 5,
                   cursor: "pointer", border: "none",
                 }}
@@ -509,10 +509,10 @@ export default function WorkspaceClient({
               </button>
             ))}
           </div>
-          <div style={{ padding: "11px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ padding: "9px 13px", display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{
               flex: 1, display: "flex", alignItems: "center", gap: 7, background: "#fff",
-              borderRadius: 19, padding: "5px 6px 5px 14px",
+              borderRadius: 18, padding: "4px 5px 4px 12px",
             }}>
               <input
                 value={input}
@@ -525,7 +525,7 @@ export default function WorkspaceClient({
                 }}
                 placeholder="Tell me how to change the email…"
                 style={{
-                  flex: 1, border: "none", background: "none", fontSize: 12.5,
+                  flex: 1, border: "none", background: "none", fontSize: 12,
                   outline: "none", color: "var(--ink)",
                 }}
               />
@@ -537,7 +537,7 @@ export default function WorkspaceClient({
                   }
                 }}
                 style={{
-                  width: 28, height: 28, borderRadius: "50%", background: "var(--blue)",
+                  width: 27, height: 27, borderRadius: "50%", background: "var(--blue)",
                   display: "flex", alignItems: "center", justifyContent: "center",
                   flexShrink: 0, color: "#fff", fontSize: 15, border: "none", cursor: "pointer",
                 }}
@@ -549,12 +549,16 @@ export default function WorkspaceClient({
         </div>
 
         {/* compose */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#fff", overflow: "hidden" }}>
-          <div style={{ padding: "15px 22px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", background: "#fff", overflow: "hidden" }}>
+          <div style={{
+            width: "min(100%, 700px)",
+            padding: "12px 18px 8px",
+            display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
+          }}>
             <span style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 500 }}>Tone:</span>
             <span style={{
-              fontSize: 12, fontWeight: 500, color: "var(--blue-deep)",
-              background: "var(--blue-wash)", padding: "6px 12px", borderRadius: 11,
+              fontSize: 11.5, fontWeight: 500, color: "var(--blue-deep)",
+              background: "var(--blue-wash)", padding: "5px 11px", borderRadius: 10,
               display: "flex", alignItems: "center", gap: 6,
             }}>
               <Icon name={draft ? toneIcon[draft.tone] : "i-heart"} />
@@ -565,8 +569,8 @@ export default function WorkspaceClient({
                 key={alt.tone}
                 onClick={() => sendInstruction(`Make it ${alt.label.toLowerCase()}`)}
                 style={{
-                  fontSize: 11.5, color: "var(--gray-2)", padding: "6px 11px",
-                  borderRadius: 11, border: "0.5px solid #E1E6EB", cursor: "pointer",
+                  fontSize: 11, color: "var(--gray-2)", padding: "5px 10px",
+                  borderRadius: 10, border: "0.5px solid #E1E6EB", cursor: "pointer",
                   background: "transparent",
                 }}
               >
@@ -616,9 +620,13 @@ export default function WorkspaceClient({
             )}
           </div>
 
-          <div style={{ padding: "0 22px 12px", borderBottom: "0.5px solid var(--line)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 12.5 }}>
-              <span style={{ color: "var(--gray-3)", width: 48 }}>To</span>
+          <div style={{
+            width: "min(100%, 700px)",
+            padding: "0 18px 10px",
+            borderBottom: "0.5px solid var(--line)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12 }}>
+              <span style={{ color: "var(--gray-3)", width: 42 }}>To</span>
               <span style={{ color: "var(--ink)", fontWeight: 500 }}>{person.name}</span>
               <input
                 type="email"
@@ -631,7 +639,7 @@ export default function WorkspaceClient({
                 aria-label="Recipient email"
                 data-testid="recipient-email-input"
                 style={{
-                  flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--ink)",
+                  flex: 1, minWidth: 0, fontSize: 12, color: "var(--ink)",
                   border: "none", outline: "none", background: "none",
                 }}
               />
@@ -645,35 +653,42 @@ export default function WorkspaceClient({
                 </span>
               )}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 12.5 }}>
-              <span style={{ color: "var(--gray-3)", width: 48 }}>From</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12 }}>
+              <span style={{ color: "var(--gray-3)", width: 42 }}>From</span>
               <span style={{
-                width: 22, height: 22, borderRadius: "50%", background: "var(--blue-wash)",
+                width: 20, height: 20, borderRadius: "50%", background: "var(--blue-wash)",
                 color: "var(--blue-deep)", display: "inline-flex", alignItems: "center",
-                justifyContent: "center", fontSize: 10, fontWeight: 600, flexShrink: 0,
+                justifyContent: "center", fontSize: 9.5, fontWeight: 600, flexShrink: 0,
               }}>
                 {currentUser.initials}
               </span>
               <span style={{ color: "var(--ink)", fontWeight: 500 }}>{currentUser.name}</span>
               <span style={{ color: "var(--gray-3)" }}>{senderLabel}</span>
             </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "5px 0", fontSize: 12.5 }}>
-              <span style={{ color: "var(--gray-3)", width: 48 }}>Subject</span>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "4px 0", fontSize: 12 }}>
+              <span style={{ color: "var(--gray-3)", width: 42 }}>Subject</span>
               <input
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 style={{
-                  fontSize: 13, fontWeight: 500, color: "var(--ink)", border: "none",
+                  fontSize: 12.5, fontWeight: 500, color: "var(--ink)", border: "none",
                   outline: "none", width: "100%", background: "none",
                 }}
               />
             </div>
           </div>
 
-          <div style={{ flex: 1, overflowY: "auto", padding: "22px 30px" }}>
+          <div style={{
+            flex: 1,
+            width: "100%",
+            overflowY: "auto",
+            padding: "18px 22px",
+            display: "flex",
+            justifyContent: "center",
+          }}>
             <div className="ks-mail-body">
               <section>
-                <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 600, letterSpacing: "0.03em", marginBottom: 9 }}>
+                <div style={{ fontSize: 10.5, color: "var(--gray-3)", fontWeight: 600, letterSpacing: "0.03em", marginBottom: 8 }}>
                   EMAIL BODY
                 </div>
                 <textarea
@@ -683,37 +698,37 @@ export default function WorkspaceClient({
                   aria-label="Email body"
                   placeholder="Write the email body..."
                   style={{
-                    width: "100%", minHeight: 250, resize: "vertical",
+                    width: "100%", minHeight: 210, resize: "vertical",
                     border: "none", borderRadius: 0, background: "transparent",
                     color: "var(--ink)", outline: "none",
-                    fontSize: 14.5, lineHeight: 1.85, padding: 0,
+                    fontSize: 13.5, lineHeight: 1.7, padding: 0,
                     fontFamily: "inherit",
                   }}
                 />
               </section>
 
-            <section style={{ marginTop: 18, borderTop: "0.5px solid var(--line)", paddingTop: 14 }}>
-              <div style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 600, marginBottom: 9, letterSpacing: "0.03em" }}>
+            <section style={{ marginTop: 16, borderTop: "0.5px solid var(--line)", paddingTop: 12 }}>
+              <div style={{ fontSize: 10.5, color: "var(--gray-3)", fontWeight: 600, marginBottom: 8, letterSpacing: "0.03em" }}>
                 CARD VERSION
               </div>
               {hasCard && draft?.attachedCard ? (
                 <div style={{
-                  display: "flex", gap: 12, alignItems: "center", padding: 11,
-                  background: "var(--soft)", borderRadius: 12,
+                  display: "flex", gap: 11, alignItems: "center", padding: 10,
+                  background: "var(--soft)", borderRadius: 11,
                 }}>
                   <div style={{
-                    width: 60, height: 74, borderRadius: 8, flexShrink: 0,
+                    width: 52, height: 64, borderRadius: 8, flexShrink: 0,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    color: "#fff", fontSize: 22,
+                    color: "#fff", fontSize: 19,
                     background: cardGradientByHint[draft.attachedCard.paletteHint] ?? cardGradientByHint.soft,
                   }}>
                     <Icon name={draft.attachedCard.iconHint} />
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ink)" }}>
                       {draft.attachedCard.styleLabel}
                     </div>
-                    <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 2 }}>
+                    <div style={{ fontSize: 11, color: "var(--gray-3)", marginTop: 2 }}>
                       {draft.attachedCard.description}
                     </div>
                   </div>
@@ -728,7 +743,7 @@ export default function WorkspaceClient({
                       }, true);
                     }}
                     style={{
-                      width: 24, height: 24, borderRadius: "50%", background: "#fff",
+                      width: 23, height: 23, borderRadius: "50%", background: "#fff",
                       display: "flex", alignItems: "center", justifyContent: "center",
                       color: "var(--gray-2)", fontSize: 13, border: "none", cursor: "pointer",
                     }}
@@ -750,18 +765,18 @@ export default function WorkspaceClient({
                     }
                   }}
                   style={{
-                    display: "flex", alignItems: "center", gap: 9, padding: 11,
-                    border: "0.5px dashed #D4DBE2", borderRadius: 12, cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 8, padding: 10,
+                    border: "0.5px dashed #D4DBE2", borderRadius: 11, cursor: "pointer",
                     color: "var(--gray-2)", background: "transparent", width: "100%", textAlign: "left",
                   }}
                 >
                   <span style={{
-                    width: 32, height: 32, borderRadius: 8, background: "var(--soft)",
-                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0,
+                    width: 30, height: 30, borderRadius: 8, background: "var(--soft)",
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0,
                   }}>
                     <Icon name="i-cards" />
                   </span>
-                  <span style={{ fontSize: 12.5, fontWeight: 500, display: "block" }}>Add card version</span>
+                  <span style={{ fontSize: 12, fontWeight: 500, display: "block" }}>Add card version</span>
                 </button>
               )}
             </section>
@@ -769,10 +784,12 @@ export default function WorkspaceClient({
           </div>
 
           <div style={{
-            padding: "12px 22px", borderTop: "0.5px solid var(--line)",
+            width: "min(100%, 700px)",
+            padding: "10px 18px",
+            borderTop: "0.5px solid var(--line)",
             display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between",
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11.5, color: "var(--gray-3)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 11, color: "var(--gray-3)" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 14 }}><Icon name="i-clock" /></span>
                 Send now, or schedule for the day
@@ -904,12 +921,12 @@ function mapSendError(status: number, code: string | undefined): string {
 }
 
 const btnSmPri: React.CSSProperties = {
-  padding: "10px 16px", fontSize: 13, fontWeight: 500, borderRadius: 11,
+  padding: "9px 14px", fontSize: 12.5, fontWeight: 500, borderRadius: 10,
   display: "flex", alignItems: "center", gap: 7,
   background: "var(--blue)", color: "#fff", border: "none", cursor: "pointer",
 };
 const btnSmGhost: React.CSSProperties = {
-  padding: "10px 16px", fontSize: 13, fontWeight: 500, borderRadius: 11,
+  padding: "9px 14px", fontSize: 12.5, fontWeight: 500, borderRadius: 10,
   display: "flex", alignItems: "center", gap: 7,
   background: "#fff", color: "var(--gray-1)", border: "none", cursor: "pointer",
 };
