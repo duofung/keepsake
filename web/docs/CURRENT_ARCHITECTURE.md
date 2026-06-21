@@ -841,6 +841,12 @@ queries point to `/people`, compose requests point to `/workspace`
 with encoded recipient/context hints, and link-needed responses point
 to `/profile#command-channels`. The URL is still a review pointer, not
 an execution claim.
+P8-H lands the first real provider adapter: `POST /api/channels/telegram`
+verifies Telegram's `X-Telegram-Bot-Api-Secret-Token`, normalises private
+text updates into `CommandEvent`, resolves `(provider="telegram",
+externalUserId)` through `channel_accounts`, and replies through Telegram
+Bot API `sendMessage` with the same review URL. It does not create drafts,
+enqueue deliveries, or call Gmail.
 
 ```text
 WhatsApp webhook ┐                                    ┌─ ChannelAccountRepository
@@ -928,7 +934,26 @@ asserts an unlinked external id still gets `needs_link`.
 Missing or revoked links include `reviewUrl: "/profile#command-channels"`;
 real provider adapters should render that as the account-link CTA.
 
-Provider adapters (future) MUST:
+`POST /api/channels/telegram` is the first real provider adapter:
+
+- Gate: requires `TELEGRAM_WEBHOOK_SECRET` and validates Telegram's
+  `X-Telegram-Bot-Api-Secret-Token` header before any identity lookup.
+- Runtime config: requires `KEEPSAKE_DATA_SOURCE=db`,
+  `TELEGRAM_BOT_TOKEN`, and `KEEPSAKE_APP_ORIGIN`; optional
+  `TELEGRAM_API_BASE` exists only for local/stub testing.
+- Normalisation: text messages become `CommandEvent` with
+  `provider: "telegram"`, `externalUserId = message.from.id`, and
+  `externalThreadId = message.chat.id`.
+- Identity: active `channel_accounts` rows delegate to
+  `handleOwnerCommand(ownerId, event)`; missing or revoked rows get a
+  link-needed reply to `/profile#command-channels`.
+- Reply: the adapter calls Telegram Bot API `sendMessage` with the
+  response text plus an absolute Keepsake review URL. The JSON response
+  does **not** echo internal `ownerId`.
+- Non-goals: no draft creation, no queue/send, no Gmail, no update-id
+  dedupe persistence, no Profile Telegram link UX yet.
+
+Provider adapters MUST:
 
 - Verify webhook signatures / shared secrets before calling the router.
 - Dedupe provider message ids.
@@ -957,9 +982,10 @@ Provider notes (still future):
   user messages can be answered as service messages during the
   customer-service window, while proactive reminders outside that
   window require template-aware notification logic.
-- **Telegram** — easier for early bot UX because deep links, private
-  chat ids, inline keyboards, and callback queries are
-  straightforward.
+- **Telegram** — first real adapter (P8-H): private text webhook
+  handling is wired through the shared command path and replies via
+  Bot API `sendMessage`. Provider link UX, dedupe, inline keyboards,
+  callback queries, and reminders are still future slices.
 - **Slack** — slash commands, app mentions, and interactive buttons
   all delegate to the same router via the same `CommandEvent` shape.
 
@@ -970,7 +996,7 @@ Provider notes (still future):
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
 | Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/` | Render. Home and People call the people-payload dispatcher; Home, Workspace, and Profile read current user identity from the auth seam; Workspace also receives an initial people payload from its server wrapper, then keeps draft restore/generate/version interactions behind `/api/drafts`, autosaves subject + card toggle through `PATCH /api/drafts`, and POSTs the send buttons to `/api/deliveries` for queue-boundary enqueue (after first flushing any pending edits); History calls the delivery-history dispatcher. | yes (Workspace draft fetches + autosave PATCH + delivery enqueue) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts`, `app/api/webhooks/deliveries/route.ts`, `app/api/channels/mock/route.ts`, `app/api/channels/mock/inbound/route.ts`, `app/api/channels/mock/link/route.ts`, `app/api/channels/mock/revoke/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail; `/api/webhooks/deliveries` is the provider-agnostic delivery-status callback (shared-secret gate, never reads current user); `/api/channels/mock` exercises the pure router; `/api/channels/mock/inbound` exercises DB-backed provider identity resolution and returns a review pointer only; `/api/channels/mock/{link,revoke}` are owner-scoped Profile mutations (dev/mock only) that manage `channel_accounts` rows the inbound route then resolves against. | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only, delivery status updates from webhook in DB mode only, channel-account lookup for mock inbound in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
+| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts`, `app/api/webhooks/deliveries/route.ts`, `app/api/channels/mock/route.ts`, `app/api/channels/mock/inbound/route.ts`, `app/api/channels/mock/link/route.ts`, `app/api/channels/mock/revoke/route.ts`, `app/api/channels/telegram/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` and draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail; `/api/webhooks/deliveries` is the provider-agnostic delivery-status callback (shared-secret gate, never reads current user); `/api/channels/mock` exercises the pure router; `/api/channels/mock/inbound` exercises DB-backed provider identity resolution and returns a review pointer only; `/api/channels/mock/{link,revoke}` are owner-scoped Profile mutations (dev/mock only) that manage `channel_accounts` rows the inbound route then resolves against; `/api/channels/telegram` is the first real provider adapter: Telegram secret header → DB identity lookup → owner-scoped command reply → Telegram `sendMessage` with review URL. | yes | people + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only, delivery status updates from webhook in DB mode only, channel-account lookup for mock/Telegram inbound in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Server services | `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock,generator-errors}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/draft-generator/{index,mock,openai}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts` | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; `draft-generator/index.server.ts` dispatches `mock` vs `openai` behind `KEEPSAKE_DRAFT_SOURCE` so the route contract stays unchanged; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
