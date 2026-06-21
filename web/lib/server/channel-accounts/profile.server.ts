@@ -53,6 +53,10 @@ import {
   currentUserIdOrThrow,
   dataSource,
 } from "@/lib/server/auth/current-user.server";
+import {
+  createTelegramStartLinkForOwner,
+  type TelegramStartLinkView,
+} from "@/lib/server/channels/telegram-start-token.server";
 import { transaction } from "@/lib/server/db/transaction.server";
 
 const UUID_RE =
@@ -74,6 +78,7 @@ export interface ProfileChannelAccount {
 export interface ProfileChannelAccountsView {
   readonly dataSource: "mock" | "db";
   readonly accounts: readonly ProfileChannelAccount[];
+  readonly telegramStartLink: TelegramStartLinkView | null;
 }
 
 /**
@@ -88,7 +93,7 @@ export interface ProfileChannelAccountsView {
  */
 export async function getProfileChannelAccounts(): Promise<ProfileChannelAccountsView> {
   if (dataSource() !== "db") {
-    return { dataSource: "mock", accounts: [] };
+    return { dataSource: "mock", accounts: [], telegramStartLink: null };
   }
   const ownerId = await currentUserIdOrThrow();
   const accounts = await transaction(ownerId, (tx) =>
@@ -97,6 +102,7 @@ export async function getProfileChannelAccounts(): Promise<ProfileChannelAccount
   return {
     dataSource: "db",
     accounts: accounts.map(toProfileChannelAccount),
+    telegramStartLink: createTelegramStartLinkForOwner(ownerId),
   };
 }
 

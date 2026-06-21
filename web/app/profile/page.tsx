@@ -281,6 +281,7 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
             />
           ))
         )}
+        <TelegramStartLinkRow link={channels.telegramStartLink} />
         <ChannelLinkForm
           provider="telegram"
           title="Link Telegram user"
@@ -288,7 +289,7 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
           externalUserPlaceholder="e.g. 123456789"
           displayNamePlaceholder="Telegram display name"
           submitLabel="Link Telegram"
-          description="Paste the numeric Telegram user id. A /start token handshake comes later."
+          description="Manual fallback: paste the numeric Telegram user id."
           testIdPrefix="profile-channels-telegram-link"
         />
         <ChannelLinkForm
@@ -301,6 +302,60 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
           testIdPrefix="profile-channels-link"
         />
       </div>
+    </div>
+  );
+}
+
+function TelegramStartLinkRow({
+  link,
+}: {
+  link: ProfileChannelAccountsView["telegramStartLink"];
+}) {
+  return (
+    <div
+      data-testid="profile-channels-telegram-start"
+      style={{
+        display: "flex", alignItems: "center", gap: 13, padding: "14px 16px",
+        borderTop: "0.5px solid var(--line)", background: "#FAFBFD",
+      }}
+    >
+      <div style={{
+        width: 34, height: 34, borderRadius: 10, background: "var(--soft)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: "var(--gray-1)", fontSize: 17, flexShrink: 0,
+      }}>
+        <Icon name="i-send" />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>
+          Start Telegram bot
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
+          {link?.status === "ready"
+            ? "Opens Telegram with a short-lived link token."
+            : (link?.detail ?? "Telegram start links are not configured.")}
+        </div>
+      </div>
+      {link?.status === "ready" ? (
+        <a
+          href={link.url}
+          data-testid="profile-channels-telegram-start-link"
+          style={{
+            fontSize: 11, fontWeight: 500, color: "var(--blue-deep)",
+            background: "var(--blue-wash)", padding: "5px 11px", borderRadius: 10,
+            textDecoration: "none", whiteSpace: "nowrap",
+          }}
+        >
+          Open bot
+        </a>
+      ) : (
+        <span
+          data-testid="profile-channels-telegram-start-unavailable"
+          style={{ fontSize: 11, color: "var(--gray-2)", fontWeight: 500 }}
+        >
+          Not configured
+        </span>
+      )}
     </div>
   );
 }

@@ -4,6 +4,10 @@ import type { OwnerId } from "@/lib/repositories";
 import { createChannelAccountRepository } from "@/lib/repositories/channel-accounts.server";
 import { workerTransaction } from "@/lib/server/db/transaction.server";
 import { handleOwnerCommand } from "./command-service.server";
+import {
+  extractTelegramStartToken,
+  linkTelegramAccountFromStartToken,
+} from "./telegram-start-token.server";
 import type { CommandEvent, CommandResponse } from "./types";
 
 type TelegramUpdate = Record<string, unknown>;
@@ -35,7 +39,20 @@ export type TelegramInboundResponse =
   | {
       readonly status: "needs_link";
       readonly intent: "unknown";
-      readonly code: "needs_link";
+      readonly code:
+        | "needs_link"
+        | "invalid_link"
+        | "expired_link"
+        | "already_linked"
+        | "not_configured";
+      readonly text: string;
+      readonly reviewUrl: string;
+      readonly telegram: TelegramSendReceipt;
+    }
+  | {
+      readonly status: "ok";
+      readonly intent: "unknown";
+      readonly code: "linked";
       readonly text: string;
       readonly reviewUrl: string;
       readonly telegram: TelegramSendReceipt;
@@ -63,6 +80,8 @@ interface TelegramMessageContext {
   readonly externalThreadId: string;
   readonly text: string;
   readonly receivedAtISO: string;
+  readonly displayName: string | null;
+  readonly rawProfile: Record<string, unknown> | null;
 }
 
 const TELEGRAM_SECRET_HEADER = "x-telegram-bot-api-secret-token";
@@ -113,6 +132,11 @@ export async function handleTelegramInboundUpdate(
   const message = extractMessage(update);
   if (!message) {
     return ignored();
+  }
+
+  const startToken = extractTelegramStartToken(message.text);
+  if (startToken) {
+    return handleTelegramStartLink(config, message, startToken);
   }
 
   const account = await workerTransaction((tx) =>
@@ -186,6 +210,7 @@ function extractMessage(update: TelegramUpdate): TelegramMessageContext | null {
   const from = objectOrNull(message.from);
   const fromId = idToString(from?.id);
   if (!fromId) return null;
+  const displayName = telegramDisplayName(from);
 
   const chat = objectOrNull(message.chat);
   const chatId = idToString(chat?.id);
@@ -202,6 +227,57 @@ function extractMessage(update: TelegramUpdate): TelegramMessageContext | null {
     externalThreadId: chatId,
     text,
     receivedAtISO,
+    displayName,
+    rawProfile: from,
+  };
+}
+
+async function handleTelegramStartLink(
+  config: TelegramConfig,
+  message: TelegramMessageContext,
+  token: string,
+): Promise<TelegramInboundResult> {
+  const result = await linkTelegramAccountFromStartToken({
+    token,
+    externalUserId: message.externalUserId,
+    externalThreadId: message.externalThreadId,
+    displayName: message.displayName,
+    rawProfile: message.rawProfile,
+  });
+  const receipt = await sendTelegramMessage(
+    config,
+    message.chatId,
+    renderTelegramText({
+      text: result.text,
+      reviewUrl: result.reviewUrl,
+      config,
+    }),
+  );
+
+  if (result.ok) {
+    return {
+      status: 200,
+      body: {
+        status: "ok",
+        intent: "unknown",
+        code: "linked",
+        text: result.text,
+        reviewUrl: result.reviewUrl,
+        telegram: receipt,
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    body: {
+      status: "needs_link",
+      intent: "unknown",
+      code: result.code,
+      text: result.text,
+      reviewUrl: result.reviewUrl,
+      telegram: receipt,
+    },
   };
 }
 
@@ -344,6 +420,16 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function telegramDisplayName(from: Record<string, unknown> | null): string | null {
+  if (!from) return null;
+  const first = stringOrNull(from.first_name)?.trim();
+  const last = stringOrNull(from.last_name)?.trim();
+  const username = stringOrNull(from.username)?.trim();
+  const name = [first, last].filter(Boolean).join(" ").trim();
+  if (name) return name;
+  return username ? `@${username}` : null;
 }
 
 function numberOrNull(value: unknown): number {

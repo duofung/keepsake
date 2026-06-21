@@ -338,6 +338,7 @@ try {
       DEV_OWNER_EMAIL: "profile-owner-a@example.test",
       DEV_OWNER_NAME: "Profile Owner A",
       KEEPSAKE_DATA_SOURCE: "db",
+      TELEGRAM_BOT_USERNAME: "KeepsakeTestBot",
       NEXT_TELEMETRY_DISABLED: "1",
       APP_SESSION_SIGNING_SECRET: APP_SESSION_SECRET,
       ENABLE_DEV_SESSION_ROUTES: "1",
@@ -373,6 +374,17 @@ try {
       body.includes('action="/api/channels/telegram/link"'));
     check("Telegram form is marked with provider hook",
       body.includes('data-channel-link-provider="telegram"'));
+    check("renders the Telegram start-link row",
+      body.includes('data-testid="profile-channels-telegram-start"'));
+    check("renders the Telegram start link",
+      body.includes('data-testid="profile-channels-telegram-start-link"'));
+    const startMatch = body.match(/https:\/\/t\.me\/KeepsakeTestBot\?start=([A-Za-z0-9_-]+)/);
+    check("Telegram start link points to configured bot",
+      Boolean(startMatch),
+      "missing https://t.me/KeepsakeTestBot?start=...");
+    check("Telegram start token fits Telegram deep-link limit",
+      (startMatch?.[1]?.length ?? 999) <= 64,
+      `length=${startMatch?.[1]?.length ?? "missing"}`);
     check("does NOT render any linked row yet",
       !body.includes('data-testid="profile-channels-row"'));
     check("does NOT leak ownerB id into the page",

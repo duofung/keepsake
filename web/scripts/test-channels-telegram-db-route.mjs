@@ -28,6 +28,8 @@ const stubPort = Number(process.env.TEST_CHANNELS_TELEGRAM_STUB_PORT ?? 3225);
 const base = `http://localhost:${port}`;
 const telegramSecret = "telegram-secret-token-test";
 const telegramBotToken = "123456:test-bot-token";
+const telegramBotUsername = "KeepsakeTestBot";
+const appSessionSecret = "test-channels-telegram-app-session-secret-min-32-chars";
 
 let containerStarted = false;
 let nextChild = null;
@@ -230,6 +232,24 @@ async function postTelegram(body, { secret = telegramSecret } = {}) {
   return { status: res.status, body: json };
 }
 
+async function mintDevSession() {
+  const res = await fetch(`${base}/api/auth/dev-session/start`, { method: "POST" });
+  if (res.status !== 200) {
+    throw new Error(`dev-session/start failed: status=${res.status}`);
+  }
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  const cookie = setCookie.match(/keepsake_session=([^;]+)/)?.[1] ?? "";
+  if (!cookie) throw new Error("dev-session/start returned no keepsake_session cookie");
+  return cookie;
+}
+
+async function getProfile(sessionCookie) {
+  const res = await fetch(`${base}/profile`, {
+    headers: { cookie: `keepsake_session=${sessionCookie}` },
+  });
+  return { status: res.status, body: await res.text() };
+}
+
 function telegramUpdate({ fromId, chatId, text }) {
   return {
     update_id: 900001,
@@ -308,6 +328,7 @@ try {
       TO ${appRole}
     `);
     await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON channel_accounts TO ${appRole}`);
+    await client.query(`GRANT SELECT ON gmail_accounts TO ${appRole}`);
     await client.query(`GRANT SELECT ON people, occasion_nodes, relationships, cultures TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
@@ -379,14 +400,17 @@ try {
       DATABASE_URL: appUrl,
       KEEPSAKE_WORKER_DATABASE_URL: adminUrl,
       DEV_ENCRYPTION_KEY_BASE64: encryptionKey,
-      DEV_OWNER_ID: ownerB,
-      DEV_OWNER_EMAIL: "fallback-owner@example.test",
-      DEV_OWNER_NAME: "Fallback Owner",
+      DEV_OWNER_ID: ownerA,
+      DEV_OWNER_EMAIL: "telegram-owner-a@example.test",
+      DEV_OWNER_NAME: "Telegram Owner A",
       KEEPSAKE_DATA_SOURCE: "db",
       TELEGRAM_WEBHOOK_SECRET: telegramSecret,
       TELEGRAM_BOT_TOKEN: telegramBotToken,
+      TELEGRAM_BOT_USERNAME: telegramBotUsername,
       TELEGRAM_API_BASE: `http://127.0.0.1:${stubPort}`,
       KEEPSAKE_APP_ORIGIN: base,
+      APP_SESSION_SIGNING_SECRET: appSessionSecret,
+      ENABLE_DEV_SESSION_ROUTES: "1",
       NEXT_TELEMETRY_DISABLED: "1",
     },
   });
@@ -396,6 +420,25 @@ try {
   process.stdout.write(`booting next dev on :${port}...\n`);
   await waitForNext();
   process.stdout.write("server ready, running assertions:\n");
+
+  let startToken = "";
+  {
+    const sessionCookie = await mintDevSession();
+    const profile = await getProfile(sessionCookie);
+    check("/profile for Telegram start link -> 200",
+      profile.status === 200,
+      `status=${profile.status}`);
+    check("Profile renders Telegram start link CTA",
+      profile.body.includes('data-testid="profile-channels-telegram-start-link"'));
+    const match = profile.body.match(/https:\/\/t\.me\/KeepsakeTestBot\?start=([A-Za-z0-9_-]+)/);
+    startToken = match?.[1] ?? "";
+    check("Profile start link targets configured bot",
+      Boolean(match),
+      "missing t.me start link");
+    check("Profile start token fits Telegram's 64-char limit",
+      startToken.length > 0 && startToken.length <= 64,
+      `length=${startToken.length}`);
+  }
 
   {
     const before = stub.requests.length;
@@ -474,7 +517,130 @@ try {
       `text=${text}`);
   }
 
+  {
+    const before = stub.requests.length;
+    const res = await postTelegram(telegramUpdate({
+      fromId: 3003,
+      chatId: 5303,
+      text: `/start ${startToken}`,
+    }));
+    check("/start token -> 200",
+      res.status === 200,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("/start token links the account",
+      res.body?.status === "ok" && res.body?.code === "linked",
+      JSON.stringify(res.body));
+    check("/start response does NOT echo ownerId",
+      res.body?.ownerId === undefined,
+      JSON.stringify(res.body));
+    check("/start sends Telegram message",
+      stub.requests.length === before + 1);
+    const text = lastTelegramText();
+    check("/start Telegram text confirms link",
+      /linked to Keepsake/i.test(text),
+      `text=${text}`);
+    check("/start Telegram text links to Profile",
+      text.includes(`${base}/profile#command-channels`),
+      `text=${text}`);
+    check("/start Telegram text does NOT claim execution",
+      !/\b(sent|delivered|queued)\b/i.test(text),
+      `text=${text}`);
+    const row = await withClient(adminUrl, async (client) => {
+      const result = await client.query(
+        `SELECT owner_id, external_thread_id, status
+           FROM channel_accounts
+          WHERE provider = 'telegram' AND external_user_id = '3003'`,
+      );
+      return result.rows[0];
+    });
+    check("/start inserted channel account for ownerA",
+      row?.owner_id === ownerA,
+      JSON.stringify(row));
+    check("/start stored the Telegram chat id as thread id",
+      row?.external_thread_id === "5303",
+      JSON.stringify(row));
+    check("/start row is active",
+      row?.status === "active",
+      JSON.stringify(row));
+  }
+
+  {
+    const before = stub.requests.length;
+    const badToken = `${startToken.slice(0, -1)}${startToken.endsWith("A") ? "B" : "A"}`;
+    const res = await postTelegram(telegramUpdate({
+      fromId: 4004,
+      chatId: 5404,
+      text: `/start ${badToken}`,
+    }));
+    check("tampered /start token -> 200",
+      res.status === 200,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("tampered /start token asks for a fresh link",
+      res.body?.status === "needs_link" && res.body?.code === "invalid_link",
+      JSON.stringify(res.body));
+    check("tampered /start sends exactly one Telegram message",
+      stub.requests.length === before + 1);
+    const rowCount = await withClient(adminUrl, async (client) => {
+      const result = await client.query(
+        `SELECT count(*)::int AS count
+           FROM channel_accounts
+          WHERE provider = 'telegram' AND external_user_id = '4004'`,
+      );
+      return result.rows[0]?.count ?? -1;
+    });
+    check("tampered /start did NOT insert a channel account",
+      rowCount === 0,
+      `count=${rowCount}`);
+  }
+
+  {
+    const before = stub.requests.length;
+    const res = await postTelegram(telegramUpdate({
+      fromId: 2002,
+      chatId: 6002,
+      text: `/start ${startToken}`,
+    }));
+    check("cross-owner /start token -> 200",
+      res.status === 200,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("cross-owner /start reports already_linked",
+      res.body?.status === "needs_link" && res.body?.code === "already_linked",
+      JSON.stringify(res.body));
+    check("cross-owner /start sends Telegram message",
+      stub.requests.length === before + 1);
+    const row = await withClient(adminUrl, async (client) => {
+      const result = await client.query(
+        `SELECT owner_id, status
+           FROM channel_accounts
+          WHERE provider = 'telegram' AND external_user_id = '2002'`,
+      );
+      return result.rows[0];
+    });
+    check("cross-owner /start did NOT rebind ownerB row",
+      row?.owner_id === ownerB,
+      JSON.stringify(row));
+  }
+
   const ownerAFixtureNames = ["Lin", "Mom", "Aisha", "Dad", "Kira"];
+  {
+    const before = stub.requests.length;
+    const res = await postTelegram(telegramUpdate({
+      fromId: 3003,
+      chatId: 5303,
+      text: "最近有什么需要跟进的关系吗？",
+    }));
+    check("newly linked /start account follow-up -> 200",
+      res.status === 200);
+    check("newly linked /start account status=ok",
+      res.body?.status === "ok",
+      JSON.stringify(res.body));
+    check("newly linked /start account uses ownerA data",
+      ownerAFixtureNames.some((name) => lastTelegramText().includes(name)),
+      `text=${lastTelegramText()}`);
+    check("newly linked /start account sent one Telegram message",
+      stub.requests.length === before + 1);
+  }
+
   {
     const before = stub.requests.length;
     const res = await postTelegram(telegramUpdate({
