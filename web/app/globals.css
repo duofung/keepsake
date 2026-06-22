@@ -80,7 +80,7 @@ svg.ic.fill { fill: currentColor; stroke: none; }
 .ks-workspace-frame {
   flex: 1;
   min-height: 0;
-  width: min(100%, 1180px);
+  width: min(100%, 1120px);
   margin: 0 auto;
   background: #fff;
   display: flex;
@@ -92,7 +92,7 @@ svg.ic.fill { fill: currentColor; stroke: none; }
 
 .ks-mail-body {
   width: 100%;
-  max-width: 650px;
+  max-width: 580px;
 }
 
 ::-webkit-scrollbar { width: 7px; }

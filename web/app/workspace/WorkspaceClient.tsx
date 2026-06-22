@@ -445,7 +445,7 @@ export default function WorkspaceClient({
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         {/* assist panel */}
-        <div style={{ width: "31%", minWidth: 318, maxWidth: 370, background: "var(--rail)", display: "flex", flexDirection: "column" }}>
+        <div style={{ width: "30%", minWidth: 286, maxWidth: 330, background: "var(--rail)", display: "flex", flexDirection: "column" }}>
           <div ref={logRef} style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
             {log.map((m, i) => (
               <div
@@ -551,8 +551,8 @@ export default function WorkspaceClient({
         {/* compose */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", background: "#fff", overflow: "hidden" }}>
           <div style={{
-            width: "min(100%, 700px)",
-            padding: "12px 18px 8px",
+            width: "min(100%, 640px)",
+            padding: "12px 16px 8px",
             display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
           }}>
             <span style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 500 }}>Tone:</span>
@@ -621,8 +621,8 @@ export default function WorkspaceClient({
           </div>
 
           <div style={{
-            width: "min(100%, 700px)",
-            padding: "0 18px 10px",
+            width: "min(100%, 640px)",
+            padding: "0 16px 10px",
             borderBottom: "0.5px solid var(--line)",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12 }}>
@@ -682,7 +682,7 @@ export default function WorkspaceClient({
             flex: 1,
             width: "100%",
             overflowY: "auto",
-            padding: "18px 22px",
+            padding: "18px 20px",
             display: "flex",
             justifyContent: "center",
           }}>
@@ -784,8 +784,8 @@ export default function WorkspaceClient({
           </div>
 
           <div style={{
-            width: "min(100%, 700px)",
-            padding: "10px 18px",
+            width: "min(100%, 640px)",
+            padding: "10px 16px",
             borderTop: "0.5px solid var(--line)",
             display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between",
           }}>
