@@ -421,29 +421,76 @@ function AddPersonDialog({
         position: "absolute",
         inset: 0,
         zIndex: 30,
-        background: "rgba(47, 37, 50, 0.24)",
+        background: "rgba(47, 37, 50, 0.2)",
+        backdropFilter: "blur(10px)",
         display: "flex",
         justifyContent: "flex-end",
+        padding: 14,
       }}
     >
       <form
         data-testid="add-person-form"
         onSubmit={submit}
         style={{
-          width: 390,
-          maxWidth: "calc(100vw - 92px)",
+          width: 404,
+          maxWidth: "calc(100vw - 96px)",
           height: "100%",
-          background: "var(--heartline-bg-2)",
-          borderLeft: "0.5px solid var(--line)",
-          boxShadow: "-18px 0 48px rgba(70, 42, 82, 0.18)",
+          background:
+            "linear-gradient(180deg, rgba(255,253,249,0.98) 0%, rgba(255,249,246,0.98) 100%)",
+          border: "0.5px solid rgba(239, 224, 218, 0.92)",
+          borderRadius: 28,
+          boxShadow: "-24px 0 58px rgba(70, 42, 82, 0.16)",
           padding: "24px 24px 20px",
           display: "flex",
           flexDirection: "column",
           gap: 16,
+          position: "relative",
+          overflow: "hidden",
+          animation: "heartlinePanelIn 220ms ease-out",
         }}
       >
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: "0 0 auto 0",
+            height: 124,
+            background:
+              "linear-gradient(180deg, rgba(252,234,240,0.82) 0%, rgba(252,234,240,0.16) 58%, rgba(252,234,240,0) 100%)",
+            pointerEvents: "none",
+          }}
+        />
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: "18px 24px auto",
+            height: 1,
+            background:
+              "linear-gradient(90deg, rgba(204,120,153,0.26) 0%, rgba(135,80,180,0.16) 45%, rgba(135,80,180,0) 100%)",
+            pointerEvents: "none",
+          }}
+        />
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14 }}>
           <div>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "5px 10px",
+                borderRadius: 999,
+                background: "rgba(252, 234, 240, 0.92)",
+                color: "var(--heartline-purple-deep)",
+                fontSize: 10.5,
+                fontWeight: 700,
+                letterSpacing: "0.03em",
+                marginBottom: 12,
+              }}
+            >
+              <Icon name="i-heart" />
+              New relationship
+            </span>
             <h2 style={{ fontSize: 20, fontWeight: 650, color: "var(--ink)", margin: 0 }}>
               Add someone
             </h2>
@@ -456,19 +503,29 @@ function AddPersonDialog({
             onClick={onClose}
             aria-label="Close"
             style={{
-              width: 34,
-              height: 34,
-              borderRadius: "50%",
-              border: "none",
-              background: "var(--heartline-rose-wash)",
+              width: 44,
+              height: 44,
+              minWidth: 44,
+              minHeight: 44,
+              maxWidth: 44,
+              maxHeight: 44,
+              aspectRatio: "1 / 1",
+              borderRadius: 999,
+              border: "0.5px solid rgba(239, 224, 218, 0.92)",
+              background: "rgba(255,255,255,0.82)",
               color: "var(--heartline-purple-deep)",
               display: "grid",
               placeItems: "center",
               cursor: "pointer",
               fontSize: 18,
+              lineHeight: 0,
+              padding: 0,
+              flexShrink: 0,
+              boxShadow: "0 10px 24px -20px rgba(94, 54, 119, 0.48)",
+              transition: "transform 160ms ease, background 160ms ease, box-shadow 160ms ease",
             }}
           >
-            <Icon name="i-x" />
+            <Icon name="i-x" style={{ width: 18, height: 18 }} />
           </button>
         </div>
 
