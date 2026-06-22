@@ -18,7 +18,7 @@ methods will follow the same pattern as they land.
 | [`catalog.ts`](./catalog.ts) | `CatalogRepository` — catalog access to `relationships` + `cultures`. Relationships are owner-aware because user-custom rows share the table with system presets. |
 | [`catalog.server.ts`](./catalog.server.ts) | `PgCatalogRepository` — first server-only runtime implementation, backed by `pg` through `lib/server/db/transaction.server.ts`. |
 | [`people.ts`](./people.ts) | `PeopleRepository` — per-user CRUD over `people` + `occasion_nodes`. |
-| [`people.server.ts`](./people.server.ts) | `PgPeopleRepository` — read-only runtime implementation for people + occasions, including encrypted columns via `lib/server/crypto/envelope.server.ts`. Write methods intentionally throw for now. |
+| [`people.server.ts`](./people.server.ts) | `PgPeopleRepository` — runtime implementation for people + occasions, including encrypted columns via `lib/server/crypto/envelope.server.ts`. Supports owner-scoped reads and `create`; update/delete/occasion writes remain future. |
 | [`drafts.ts`](./drafts.ts) | `DraftRepository` — persistence for `message_drafts`. |
 | [`drafts.server.ts`](./drafts.server.ts) | `PgDraftRepository` — runtime implementation for `message_drafts` persistence/cache, including encrypted subject/paragraph/note/instruction columns. |
 | [`deliveries.ts`](./deliveries.ts) | `DeliveryRepository` — `deliveries` reads + the send/webhook write paths. |
@@ -133,12 +133,12 @@ user-custom rows.
 
 ### PeopleRepository
 
-Runtime implementation: `people.server.ts` for read methods only. It backs
-`/api/people` and `/api/drafts` context resolution when
+Runtime implementation: `people.server.ts` for owner-scoped reads and person
+creation. It backs `/api/people` and `/api/drafts` context resolution when
 `KEEPSAKE_DATA_SOURCE=db`; mock-backed server seams remain the default.
 `pnpm test:db:people` verifies decryption, RLS behavior,
-derived `nextOccasionId` / `isPrimary`, and `PeoplePayload` shape against
-temporary Postgres.
+derived `nextOccasionId` / `isPrimary`, person creation, and
+`PeoplePayload` shape against temporary Postgres.
 
 Per-user. All methods take `ownerId: OwnerId` as the first argument and
 return decrypted domain types. Occasion CRUD lives here because every
@@ -149,7 +149,7 @@ occasion belongs to a person — a `personId` lookup already proves ownership.
 | `listForOwner(ownerId)` | `Person[]` | `/api/people` GET (server) |
 | `listWithRelations(ownerId)` | `PeoplePayload` | `/api/people` GET — single batched query producing the full payload |
 | `findById(ownerId, personId)` | `Person \| null` | `/api/drafts` POST (internal); future drawer GET |
-| `create(ownerId, input)` | `Person` | Future "Add someone" (route TBD) |
+| `create(ownerId, input)` | `Person` | `POST /api/people` / People "Add someone" |
 | `update(ownerId, personId, patch)` | `Person` | Future drawer edit |
 | `softDelete(ownerId, personId)` | `void` | Future drawer delete |
 | `listOccasions(ownerId, personId)` | `OccasionNode[]` | Drawer load (internal) |

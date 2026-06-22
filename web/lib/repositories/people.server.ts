@@ -9,7 +9,7 @@ import type {
   Person,
   PersonKnownFact,
 } from "../domain";
-import { decrypt } from "@/lib/server/crypto/envelope.server";
+import { decrypt, encrypt } from "@/lib/server/crypto/envelope.server";
 import { query, transaction } from "@/lib/server/db/transaction.server";
 import { createCatalogRepository } from "./catalog.server";
 import type { PeopleRepository } from "./people";
@@ -76,6 +76,24 @@ async function decryptJson<T>(
 ): Promise<T> {
   const text = await decryptText(ownerId, table, column, value);
   return JSON.parse(text ?? "null") as T;
+}
+
+async function encryptText(
+  ownerId: OwnerId,
+  table: string,
+  column: string,
+  value: string,
+): Promise<Buffer> {
+  return Buffer.from(await encrypt(ownerId, table, column, Buffer.from(value, "utf8")));
+}
+
+async function encryptJson(
+  ownerId: OwnerId,
+  table: string,
+  column: string,
+  value: unknown,
+): Promise<Buffer> {
+  return encryptText(ownerId, table, column, JSON.stringify(value));
 }
 
 async function personFromRow(ownerId: OwnerId, row: PeopleRow): Promise<Person> {
@@ -201,8 +219,74 @@ export class PgPeopleRepository implements PeopleRepository {
     });
   }
 
-  async create(_ownerId: OwnerId, _input: PersonCreateInput, _tx?: Tx): Promise<Person> {
-    return notImplemented("create");
+  async create(ownerId: OwnerId, input: PersonCreateInput, tx?: Tx): Promise<Person> {
+    return withTx(ownerId, tx, async (activeTx) => {
+      const result = await query<PeopleRow>(
+        activeTx,
+        `
+          INSERT INTO people (
+            owner_id,
+            name_enc,
+            starred,
+            avatar_bg,
+            avatar_fg,
+            relationship_id,
+            culture_id,
+            since_enc,
+            identity_tags_enc,
+            known_facts_enc,
+            personal_taboos_enc,
+            last_contact_at
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            $8,
+            $9,
+            $10,
+            $11,
+            $12
+          )
+          RETURNING
+            id::text,
+            name_enc,
+            starred,
+            avatar_bg,
+            avatar_fg,
+            relationship_id,
+            culture_id,
+            since_enc,
+            identity_tags_enc,
+            known_facts_enc,
+            personal_taboos_enc,
+            to_char(last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            NULL::text AS next_occasion_id
+        `,
+        [
+          ownerId,
+          await encryptText(ownerId, "people", "name_enc", input.name),
+          input.starred ?? false,
+          input.avatarBg,
+          input.avatarFg,
+          input.relationshipId,
+          input.cultureId,
+          input.since
+            ? await encryptText(ownerId, "people", "since_enc", input.since)
+            : null,
+          await encryptJson(ownerId, "people", "identity_tags_enc", input.identityTags ?? []),
+          await encryptJson(ownerId, "people", "known_facts_enc", input.knownFacts ?? []),
+          await encryptJson(ownerId, "people", "personal_taboos_enc", input.personalTaboos ?? []),
+          input.lastContactAt ?? null,
+        ],
+      );
+
+      return personFromRow(ownerId, result.rows[0]);
+    });
   }
 
   async update(_ownerId: OwnerId, _personId: string, _patch: PersonPatch, _tx?: Tx): Promise<Person> {

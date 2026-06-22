@@ -19,14 +19,60 @@ PeoplePayload {
 
 Current implementation:
 
-- Static route.
-- Returns `peoplePayload()` from `lib/mock.ts`.
+- Dynamic route.
+- Dispatches through `lib/server/people-payload/index.server.ts`.
+- Mock mode returns `peoplePayload()` from `lib/mock.ts`.
+- DB mode resolves the owner, opens an RLS-scoped transaction, and calls
+  `PeopleRepository.listWithRelations(ownerId)`.
 
 Future implementation:
 
-- Query user-scoped rows from Postgres.
-- Derive `daysUntil` from `dateISO`.
+- Delete the mock fallback when DB mode is production-default.
 - Keep the response shape stable unless `domain.ts` changes deliberately.
+
+## POST /api/people
+
+Creates one person for the current owner.
+
+Request:
+
+```ts
+{
+  name: string;
+  relationshipId: string;
+  cultureId: CultureId;
+  since?: string;
+  note?: string;
+  starred?: boolean;
+}
+```
+
+Success response:
+
+```ts
+Person
+```
+
+Error responses:
+
+- `400 { code: "invalid_request" }` — malformed JSON, missing name,
+  missing relationship/culture, unsupported culture, or invalid field shape.
+- `400 { code: "invalid_reference" }` — relationship/culture FK cannot be
+  resolved in DB mode.
+- `401 { error: "Unauthenticated" }` — no current owner.
+- `500 { error: "Auth is misconfigured" }` — invalid auth/data-source config.
+
+Current implementation:
+
+- Thin route: JSON parse → auth mapping → `people-create` seam → response.
+- Mock mode returns a `local-*` `Person` so the browser preview can keep the
+  row in localStorage.
+- DB mode opens one RLS-scoped transaction and calls
+  `PeopleRepository.create(ownerId, input)`.
+
+Future implementation:
+
+- Person update/archive/date management should land as separate routes/seams.
 
 ## GET /api/session
 

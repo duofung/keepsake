@@ -26,6 +26,10 @@ lib/server/
 │   ├── index.server.ts       ← current: mock/db dispatcher
 │   ├── mock.server.ts        ← current: mock fallback
 │   └── db.server.ts          ← current: DB-backed PeoplePayload
+├── people-create/
+│   ├── index.server.ts       ← current: request validation + mock/db dispatcher
+│   ├── mock.server.ts        ← current: preview Person response for local UI persistence
+│   └── db.server.ts          ← current: DB-backed PeopleRepository.create
 ├── delivery-history/
 │   ├── index.server.ts       ← current: mock/db dispatcher
 │   ├── mock.server.ts        ← current: mock fallback
@@ -138,6 +142,8 @@ small on purpose.
 | `people-payload/index.server.ts` | `GET /api/people`, Home, People | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db` | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
+| `people-create/index.server.ts` | `POST /api/people`, People "Add someone" | Validates `{ name, relationshipId, cultureId, since?, note?, starred? }`, derives avatar + first known fact, dispatches by `KEEPSAKE_DATA_SOURCE`, and returns a `Person`. Mock mode returns a `local-*` preview person for browser-local persistence; DB mode writes through `PeopleRepository.create`. | Future People edit/archive/date routes stay sibling seams; this POST route remains thin. | `pnpm test:db:people`, `pnpm test:db:people-route` |
+| `people-create/db.server.ts` | `people-create/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.create(ownerId, input)`; FK misses map to 400 `invalid_reference`; no SQL in the route. | Same repository call with real auth. | `pnpm test:db:people-route` |
 | `delivery-history/index.server.ts` | History | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db`; `app/history/page.tsx` only calls this server helper | Real auth owner resolution; eventually delete mock fallback | `pnpm test:history`, `pnpm test:db:history-route`, `pnpm test:boundaries` |
 | `delivery-history/mock.server.ts` | `delivery-history/index.server.ts` | `deliveries` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:history`, `pnpm test:boundaries` |
 | `delivery-history/db.server.ts` | `delivery-history/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `DeliveryRepository.listByMonth(ownerId, { limit: 50 })`; read-only History DB mode | Same repository read with real auth; send/enqueue/webhook/worker remain separate future paths | `pnpm test:db:deliveries`, `pnpm test:db:history-route` |

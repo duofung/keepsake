@@ -121,6 +121,18 @@ async function getPeople() {
   return { status: res.status, body };
 }
 
+async function postPeople(body) {
+  const res = await fetch(`${base}/api/people`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+  const payload = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: payload };
+}
+
 const failures = [];
 function check(name, cond, detail = "") {
   if (cond) {
@@ -170,6 +182,7 @@ try {
     await client.query(`GRANT CONNECT ON DATABASE keepsake TO ${appRole}`);
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
     await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes TO ${appRole}`);
+    await client.query(`GRANT INSERT ON people TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 
@@ -256,6 +269,47 @@ try {
 
   const kira = people.find((person) => person.name === "Kira");
   check("Kira lastContactAt survives DB route", kira?.lastContactAt === "2026-04-14", `got ${kira?.lastContactAt}`);
+
+  const malformed = await postPeople("{");
+  check("POST /api/people malformed JSON → 400", malformed.status === 400, `status=${malformed.status}`);
+  check("malformed JSON code = invalid_request", malformed.body?.code === "invalid_request", `body=${JSON.stringify(malformed.body)}`);
+
+  const missingName = await postPeople({
+    relationshipId: "rel-friend",
+    cultureId: "none",
+  });
+  check("POST /api/people missing name → 400", missingName.status === 400, `status=${missingName.status}`);
+  check("missing name code = invalid_request", missingName.body?.code === "invalid_request", `body=${JSON.stringify(missingName.body)}`);
+
+  const invalidReference = await postPeople({
+    name: "Bad Reference",
+    relationshipId: "rel-not-real",
+    cultureId: "none",
+  });
+  check("POST /api/people invalid relationship → 400", invalidReference.status === 400, `status=${invalidReference.status}`);
+  check("invalid relationship code = invalid_reference", invalidReference.body?.code === "invalid_reference", `body=${JSON.stringify(invalidReference.body)}`);
+
+  const created = await postPeople({
+    name: "Helen",
+    relationshipId: "rel-friend",
+    cultureId: "none",
+    since: "promoted today",
+    note: "Prefers concise celebratory notes.",
+    starred: true,
+  });
+  check("POST /api/people valid create → 201", created.status === 201, `status=${created.status}`);
+  check("created person has DB uuid", /^[0-9a-f-]{36}$/i.test(created.body?.id ?? ""), `id=${created.body?.id}`);
+  check("created person name = Helen", created.body?.name === "Helen", `got ${created.body?.name}`);
+  check("created person starred = true", created.body?.starred === true, `got ${created.body?.starred}`);
+  check("created person relationshipId = rel-friend", created.body?.relationshipId === "rel-friend", `got ${created.body?.relationshipId}`);
+  check("created person cultureId = none", created.body?.cultureId === "none", `got ${created.body?.cultureId}`);
+  check("created person known fact preserved", created.body?.knownFacts?.[0]?.text === "Prefers concise celebratory notes.", `body=${JSON.stringify(created.body)}`);
+
+  const afterCreate = await getPeople();
+  const createdInPayload = afterCreate.body?.people?.find((person) => person.id === created.body?.id);
+  check("GET /api/people includes created person", !!createdInPayload);
+  check("created person remains decrypted in payload", createdInPayload?.name === "Helen", `got ${createdInPayload?.name}`);
+  check("people.length becomes 6 after create", afterCreate.body?.people?.length === 6, `got ${afterCreate.body?.people?.length}`);
 
   if (serverError && failures.length) {
     process.stdout.write(`\nnext stderr:\n${serverError}\n`);

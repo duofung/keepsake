@@ -106,15 +106,60 @@ export default function PeopleClient({ payload }: Props) {
     ?? cultures[0]?.id
     ?? "none";
 
-  function handleAddPerson(input: AddPersonInput) {
+  async function handleAddPerson(input: AddPersonInput) {
     const relationship = relationshipById.get(input.relationshipId) ?? relationships[0];
     const culture = cultureById.get(input.cultureId) ?? cultures.find((c) => c.id === "none") ?? cultures[0];
     if (!relationship || !culture) return;
 
+    const response = await fetch("/api/people", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: input.name,
+        relationshipId: relationship.id,
+        cultureId: culture.id,
+        since: input.since,
+        note: input.note,
+        starred: input.starred,
+      }),
+    });
+
+    if (!response.ok) {
+      if (response.status === 501) {
+        addPersonToList(createLocalPerson(input));
+        return;
+      }
+      const body = await response.json().catch(() => null) as { error?: string } | null;
+      throw new Error(body?.error ?? "Could not add this person.");
+    }
+
+    const serverPerson = await response.json() as Person;
+    addPersonToList(serverPerson);
+  }
+
+  function addPersonToList(person: Person) {
+    const shouldPersistLocally = person.id.startsWith("local-");
+    if (shouldPersistLocally) {
+      const nextLocal = [person, ...readLocalPeople().filter((localPerson) => localPerson.id !== person.id)];
+      saveLocalPeople(nextLocal);
+    }
+    setPeople((current) => [person, ...current.filter((p) => p.id !== person.id)]);
+    setTab("All");
+    setAdding(false);
+    setOpenId(person.id);
+  }
+
+  function createLocalPerson(input: AddPersonInput): Person {
+    const relationship = relationshipById.get(input.relationshipId) ?? relationships[0];
+    const culture = cultureById.get(input.cultureId) ?? cultures.find((c) => c.id === "none") ?? cultures[0];
+    if (!relationship || !culture) {
+      throw new Error("Choose a relationship and culture first.");
+    }
+
     const palette = avatarPalette[people.length % avatarPalette.length];
     const note = input.note.trim();
     const since = input.since.trim();
-    const person: Person = {
+    return {
       id: makeLocalPersonId(),
       name: input.name.trim(),
       starred: input.starred,
@@ -131,13 +176,6 @@ export default function PeopleClient({ payload }: Props) {
       nextOccasionId: null,
       lastContactAt: new Date().toISOString().slice(0, 10),
     };
-
-    const nextLocal = [person, ...readLocalPeople().filter((localPerson) => localPerson.id !== person.id)];
-    saveLocalPeople(nextLocal);
-    setPeople((current) => [person, ...current.filter((p) => p.id !== person.id)]);
-    setTab("All");
-    setAdding(false);
-    setOpenId(person.id);
   }
 
   return (
@@ -293,7 +331,7 @@ type AddPersonDialogProps = {
   defaultRelationshipId: string;
   defaultCultureId: CultureId;
   onClose: () => void;
-  onAdd: (input: AddPersonInput) => void;
+  onAdd: (input: AddPersonInput) => Promise<void>;
 };
 
 function AddPersonDialog({
@@ -312,6 +350,7 @@ function AddPersonDialog({
   const [note, setNote] = useState("");
   const [starred, setStarred] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -322,25 +361,34 @@ function AddPersonDialog({
     setNote("");
     setStarred(false);
     setError(null);
+    setSaving(false);
   }, [defaultCultureId, defaultRelationshipId, open]);
 
   if (!open) return null;
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError("Add a name first.");
       return;
     }
-    onAdd({
-      name: trimmedName,
-      relationshipId,
-      cultureId,
-      since,
-      note,
-      starred,
-    });
+    setSaving(true);
+    setError(null);
+    try {
+      await onAdd({
+        name: trimmedName,
+        relationshipId,
+        cultureId,
+        since,
+        note,
+        starred,
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not add this person.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -515,21 +563,22 @@ function AddPersonDialog({
           </button>
           <button
             type="submit"
+            disabled={saving}
             style={{
               padding: "10px 17px",
               borderRadius: 13,
               border: "none",
-              background: "var(--blue)",
+              background: saving ? "#9ED4FA" : "var(--blue)",
               color: "#fff",
               fontSize: 13,
               fontWeight: 600,
               display: "flex",
               alignItems: "center",
               gap: 6,
-              cursor: "pointer",
+              cursor: saving ? "default" : "pointer",
             }}
           >
-            <Icon name="i-plus" /> Add person
+            <Icon name="i-plus" /> {saving ? "Adding..." : "Add person"}
           </button>
         </div>
       </form>

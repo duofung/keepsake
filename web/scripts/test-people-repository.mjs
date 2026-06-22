@@ -247,6 +247,7 @@ try {
       TO ${appRole}
     `);
     await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes TO ${appRole}`);
+    await client.query(`GRANT INSERT ON people TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 
@@ -415,11 +416,50 @@ try {
   assertEqual(payload.relationships.length, 10, "listWithRelations includes visible relationship catalog");
   assertEqual(payload.cultures.length, 4, "listWithRelations includes culture catalog");
 
+  const created = await people.create(ownerA, {
+    name: "Helen",
+    starred: true,
+    avatarBg: "#D9EAFA",
+    avatarFg: "#4F83BA",
+    relationshipId: "rel-friend",
+    cultureId: "none",
+    since: "promoted today",
+    identityTags: ["promoted today"],
+    knownFacts: [{ text: "Prefers concise notes.", isLead: true }],
+    personalTaboos: ["No surprise parties."],
+    lastContactAt: dates.soon,
+  });
+  assert(created.id && created.id !== linId, "create returns a fresh person id");
+  assertEqual(created.name, "Helen", "create returns decrypted name");
+  assert(created.starred === true, "create preserves starred");
+  assertEqual(created.relationshipId, "rel-friend", "create preserves relationshipId");
+  assertEqual(created.cultureId, "none", "create preserves cultureId");
+  assertEqual(created.since, "promoted today", "create decrypts since");
+  assert(created.identityTags.includes("promoted today"), "create decrypts identity tags");
+  assert(created.knownFacts[0]?.text === "Prefers concise notes.", "create decrypts known facts");
+  assert(created.personalTaboos.includes("No surprise parties."), "create decrypts personal taboos");
+  assert(created.nextOccasionId === null, "create returns null nextOccasionId until dates exist");
+
+  const foundCreated = await people.findById(ownerA, created.id);
+  const hiddenCreated = await people.findById(ownerB, created.id);
+  assert(foundCreated?.name === "Helen", "findById returns newly created person");
+  assert(hiddenCreated === null, "newly created person stays owner-scoped");
+
   await db.transaction(ownerA, async (tx) => {
     const personInsideTx = await people.findById(ownerA, linId, tx);
     const payloadInsideTx = await people.listWithRelations(ownerA, tx);
+    const createdInsideTx = await people.create(ownerA, {
+      name: "Nina",
+      starred: false,
+      avatarBg: "#F7E7BE",
+      avatarFg: "#B68221",
+      relationshipId: "rel-close-friend",
+      cultureId: "chinese",
+      knownFacts: [{ text: "Met at a design review.", isLead: true }],
+    }, tx);
     assert(personInsideTx?.id === linId, "read methods can reuse an explicit Tx");
-    assertEqual(payloadInsideTx.people.length, 2, "listWithRelations can reuse an explicit Tx");
+    assertEqual(payloadInsideTx.people.length, 3, "listWithRelations can reuse an explicit Tx");
+    assertEqual(createdInsideTx.name, "Nina", "create can reuse an explicit Tx");
   });
 
   process.stdout.write("\nall people repository checks passed\n");
