@@ -487,7 +487,7 @@ function AddPersonDialog({
             onChange={(event) => setStarred(event.target.checked)}
             style={{ width: 16, height: 16, accentColor: "var(--blue)" }}
           />
-          Mark as close circle
+          Prioritize this person
         </label>
 
         {error && (
