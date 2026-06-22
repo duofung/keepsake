@@ -120,8 +120,8 @@ try {
   // ── Page header + data-driven subtitle ───────────────────────────────
   check("contains header 'History'", body.includes("History"));
   check(
-    "subtitle: 'Everything you've sent · 4 keepsakes and counting'",
-    body.includes("Everything you've sent · 4 keepsakes and counting"),
+    "subtitle: 'Everything you've sent · 4 Heartline moments and counting'",
+    body.includes("Everything you've sent · 4 Heartline moments and counting"),
   );
 
   // ── Month groups (mock data spans Mar / Feb / Jan 2026) ──────────────

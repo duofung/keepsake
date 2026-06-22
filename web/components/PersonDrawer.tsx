@@ -23,7 +23,7 @@ export default function PersonDrawer({
       <div
         onClick={onClose}
         style={{
-          position: "absolute", inset: 0, background: "rgba(20,32,43,0.28)",
+          position: "absolute", inset: 0, background: "rgba(47,37,50,0.26)",
           opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none",
           transition: ".3s", zIndex: 20,
         }}
@@ -31,11 +31,11 @@ export default function PersonDrawer({
       <aside
         style={{
           position: "absolute", top: 0, right: 0, bottom: 0, width: 380,
-          background: "#fff", zIndex: 30,
+          background: "var(--heartline-bg-2)", zIndex: 30,
           transform: open ? "translateX(0)" : "translateX(100%)",
           transition: "transform .34s cubic-bezier(.4,0,.2,1)",
           display: "flex", flexDirection: "column",
-          boxShadow: "-12px 0 40px -16px rgba(20,32,43,0.25)",
+          boxShadow: "-16px 0 46px -20px rgba(70,42,82,0.34)",
         }}
       >
         {person && relationship && culture && (
@@ -70,9 +70,9 @@ function DrawerContent({
           onClick={onClose}
           style={{
             position: "absolute", top: 18, right: 20, width: 30, height: 30,
-            borderRadius: "50%", background: "var(--soft)", border: "none",
+            borderRadius: "50%", background: "var(--heartline-rose-wash)", border: "none",
             display: "flex", alignItems: "center", justifyContent: "center",
-            color: "var(--gray-1)", fontSize: 17, cursor: "pointer",
+            color: "var(--heartline-purple-deep)", fontSize: 17, cursor: "pointer",
           }}
         >
           <Icon name="i-x" />
@@ -137,7 +137,7 @@ function DrawerContent({
                 </div>
                 <div style={{
                   fontSize: 11.5, textAlign: "right",
-                  color: lvl === "far" ? "var(--gray-3)" : "var(--blue-deep)",
+                  color: lvl === "far" ? "var(--gray-3)" : "var(--heartline-purple-deep)",
                   fontWeight: lvl === "far" ? 400 : 500,
                 }}>
                   {whenText}
@@ -149,7 +149,7 @@ function DrawerContent({
 
         <Section title="WHAT I KNOW">
           <div style={{
-            background: "var(--soft)", borderRadius: 11, padding: "12px 13px",
+            background: "rgba(255, 244, 241, 0.86)", borderRadius: 14, padding: "12px 13px",
             fontSize: 12.5, lineHeight: 1.65, color: "var(--gray-1)",
           }}>
             {person.knownFacts.map((f, i) => (
@@ -184,17 +184,17 @@ function DrawerContent({
         <Link
           href={`/workspace?person=${person.id}`}
           onClick={onClose}
+          className="heartline-button"
           style={{
-            flex: 1, justifyContent: "center", background: "var(--blue)", color: "#fff",
-            padding: 11, borderRadius: 12, fontSize: 13.5, fontWeight: 500,
-            display: "flex", alignItems: "center", gap: 7, textDecoration: "none",
+            flex: 1,
           }}
         >
           <Icon name="i-edit" /> {prepareLabel}
         </Link>
         <button style={{
-          padding: "11px 14px", background: "var(--soft)", borderRadius: 12, color: "var(--gray-1)",
+          padding: "11px 14px", background: "#fff", borderRadius: 12, color: "var(--heartline-purple-deep)",
           fontSize: 13.5, display: "flex", alignItems: "center", gap: 6, border: "none", cursor: "pointer",
+          boxShadow: "inset 0 0 0 0.5px var(--line)",
         }}>
           <Icon name="i-pencil" /> Edit
         </button>
@@ -206,7 +206,7 @@ function DrawerContent({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 20 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--gray-2)", letterSpacing: "0.04em", marginBottom: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--gray-2)", letterSpacing: "0.08em", marginBottom: 10 }}>
         {title}
       </div>
       {children}
@@ -219,6 +219,7 @@ function Tag({ children, dot }: { children: React.ReactNode; dot?: string }) {
     <span style={{
       fontSize: 12, padding: "5px 11px", borderRadius: 10, background: "var(--soft)",
       color: "var(--gray-1)", display: "flex", alignItems: "center", gap: 5,
+      border: "0.5px solid rgba(239, 224, 218, 0.72)",
     }}>
       {dot && <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot }} />}
       {children}

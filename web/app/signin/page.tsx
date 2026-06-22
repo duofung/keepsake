@@ -46,7 +46,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
     >
       <header>
         <h1 style={{ fontSize: 22, fontWeight: 600, color: "var(--ink-2)" }}>
-          Sign in to Keepsake
+          Sign in to Heartline
         </h1>
         <p
           style={{
@@ -64,17 +64,9 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
       <a
         href={googleHref}
         data-testid="signin-google-cta"
+        className="heartline-button"
         style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "11px 16px",
           fontSize: 14,
-          fontWeight: 500,
-          borderRadius: 10,
-          background: "var(--blue)",
-          color: "#fff",
-          textDecoration: "none",
         }}
       >
         Continue with Google

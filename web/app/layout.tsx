@@ -4,8 +4,8 @@ import IconSprite from "@/components/IconSprite";
 import Rail from "@/components/Rail";
 
 export const metadata: Metadata = {
-  title: "Keepsake",
-  description: "The right email, to the right person, at the right time.",
+  title: "Heartline",
+  description: "Nurture every connection with timely, meaningful notes.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -29,14 +29,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             width: "100vw",
             height: "100dvh",
             minHeight: "100vh",
-            background: "#FBFCFD",
+            background: "var(--heartline-bg)",
             overflow: "hidden",
             display: "flex",
             position: "relative",
           }}
         >
           <Rail />
-          <main style={{ flex: 1, position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", background: "#FBFCFD" }}>
+          <main style={{ flex: 1, position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", background: "var(--heartline-bg)" }}>
             {children}
           </main>
         </div>

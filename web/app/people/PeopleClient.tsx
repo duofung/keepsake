@@ -20,8 +20,8 @@ const TAB_ORDER: ("All" | RelationshipGroup)[] = [
 ];
 
 const metaColor: Record<string, string> = {
-  soon: "var(--blue-deep)",
-  mid: "var(--gray-1)",
+  soon: "var(--heartline-purple-deep)",
+  mid: "var(--heartline-sage)",
   far: "var(--gray-3)",
 };
 
@@ -180,21 +180,30 @@ export default function PeopleClient({ payload }: Props) {
 
   return (
     <div className="ks-page ks-page--stack">
-      <div className="ks-page-inner ks-page-inner--people" style={{ paddingBottom: 14 }}>
+      <div className="ks-page-inner ks-page-inner--people" style={{ paddingBottom: 14, width: "min(100%, 1000px)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 600, color: "var(--ink-2)" }}>People</h1>
+            <p style={{
+              margin: "0 0 8px",
+              color: "var(--heartline-rose-strong)",
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: "0.09em",
+              textTransform: "uppercase",
+            }}>
+              Heartline circle
+            </p>
+            <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>People</h1>
             <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-              {people.length} {people.length === 1 ? "relationship" : "relationships"} · the people you keep close
+              {people.length} {people.length === 1 ? "relationship" : "relationships"} · nurture every connection with context, dates, and care
             </p>
           </div>
           <button
             data-testid="add-person-button"
             onClick={() => setAdding(true)}
+            className="heartline-button"
             style={{
-            padding: "10px 17px", fontSize: 13, fontWeight: 500, borderRadius: 13,
-            display: "flex", alignItems: "center", gap: 6,
-            background: "var(--blue)", color: "#fff", border: "none", cursor: "pointer",
+              whiteSpace: "nowrap",
           }}
           >
             <Icon name="i-plus" /> Add someone
@@ -202,40 +211,41 @@ export default function PeopleClient({ payload }: Props) {
         </div>
       </div>
 
-      <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 0, paddingBottom: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 0, paddingBottom: 8, display: "flex", gap: 7, flexWrap: "wrap", width: "min(100%, 1000px)" }}>
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             style={{
-              fontSize: 13, padding: "7px 14px", borderRadius: 13,
-              color: tab === t.id ? "var(--blue-deep)" : "var(--gray-1)",
-              background: tab === t.id ? "var(--blue-wash)" : "transparent",
-              fontWeight: tab === t.id ? 500 : 400,
+              fontSize: 13, padding: "8px 14px", borderRadius: 999,
+              color: tab === t.id ? "var(--heartline-purple-deep)" : "var(--gray-1)",
+              background: tab === t.id ? "var(--heartline-rose-wash)" : "rgba(255,255,255,0.56)",
+              fontWeight: tab === t.id ? 650 : 500,
               display: "flex", alignItems: "center", gap: 6,
-              border: "none", cursor: "pointer",
+              border: tab === t.id ? "0.5px solid rgba(204, 120, 153, 0.28)" : "0.5px solid rgba(239, 224, 218, 0.78)",
+              cursor: "pointer",
             }}
           >
-            {t.id} <span style={{ fontSize: 11, color: tab === t.id ? "var(--blue)" : "var(--gray-3)" }}>{t.n}</span>
+            {t.id} <span style={{ fontSize: 11, color: tab === t.id ? "var(--heartline-rose-strong)" : "var(--gray-3)" }}>{t.n}</span>
           </button>
         ))}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 14 }}>
+        <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 14, width: "min(100%, 1000px)" }}>
         {visibleEntries.map(([g, list]) => (
           <div key={g} style={{ marginBottom: 24 }}>
             <div style={{
               fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
-              letterSpacing: "0.04em", marginBottom: 12,
+              letterSpacing: "0.08em", marginBottom: 12,
               display: "flex", alignItems: "center", gap: 7,
             }}>
-              <span style={{ fontSize: 14, color: "var(--gray-3)" }}>
+              <span style={{ fontSize: 14, color: "var(--heartline-rose-strong)" }}>
                 <Icon name={groupIcon[g]} />
               </span>
               {g.toUpperCase()}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 340px))", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 13 }}>
               {list.map((p) => {
                 const rel = relationshipById.get(p.relationshipId);
                 const culture = cultureById.get(p.cultureId);
@@ -250,8 +260,15 @@ export default function PeopleClient({ payload }: Props) {
                     key={p.id}
                     onClick={() => setOpenId(p.id)}
                     style={{
-                      background: "#fff", border: "0.5px solid var(--line)", borderRadius: 14,
-                      padding: 15, transition: ".18s", cursor: "pointer", display: "flex", gap: 13,
+                      background: "rgba(255,255,255,0.9)",
+                      border: "0.5px solid rgba(239, 224, 218, 0.92)",
+                      borderRadius: 18,
+                      padding: 16,
+                      transition: ".18s",
+                      cursor: "pointer",
+                      display: "flex",
+                      gap: 13,
+                      boxShadow: "0 14px 34px -30px rgba(94, 54, 119, 0.42)",
                     }}
                   >
                     <Avatar name={p.name} bg={p.avatarBg} fg={p.avatarFg} size={44} fontSize={16} />
@@ -266,11 +283,11 @@ export default function PeopleClient({ payload }: Props) {
                       </div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 9 }}>
                         <span style={{
-                          fontSize: 10.5, padding: "2px 8px", borderRadius: 8, fontWeight: 500,
+                          fontSize: 10.5, padding: "3px 8px", borderRadius: 999, fontWeight: 650,
                           background: rel.paletteBg, color: rel.paletteFg,
                         }}>{rel.label}</span>
                         <span style={{
-                          fontSize: 10.5, padding: "2px 8px", borderRadius: 8,
+                          fontSize: 10.5, padding: "3px 8px", borderRadius: 999,
                           background: "var(--soft)", color: "var(--gray-1)",
                           display: "flex", alignItems: "center", gap: 3,
                         }}>
@@ -279,8 +296,11 @@ export default function PeopleClient({ payload }: Props) {
                         </span>
                       </div>
                       <div style={{
-                        fontSize: 11.5, display: "flex", alignItems: "center", gap: 5,
-                        color: metaColor[lvl], fontWeight: lvl === "soon" ? 500 : 400,
+                        fontSize: 11.5, display: "flex", alignItems: "center", gap: 6,
+                        color: metaColor[lvl], fontWeight: lvl === "soon" ? 650 : 500,
+                        background: "rgba(255, 248, 245, 0.78)",
+                        borderRadius: 13,
+                        padding: "8px 9px",
                       }}>
                         <span style={{ fontSize: 13 }}><Icon name={occIcon} /></span>
                         {text}
@@ -401,7 +421,7 @@ function AddPersonDialog({
         position: "absolute",
         inset: 0,
         zIndex: 30,
-        background: "rgba(20, 33, 45, 0.22)",
+        background: "rgba(47, 37, 50, 0.24)",
         display: "flex",
         justifyContent: "flex-end",
       }}
@@ -413,9 +433,9 @@ function AddPersonDialog({
           width: 390,
           maxWidth: "calc(100vw - 92px)",
           height: "100%",
-          background: "#fff",
+          background: "var(--heartline-bg-2)",
           borderLeft: "0.5px solid var(--line)",
-          boxShadow: "-18px 0 42px rgba(16, 32, 49, 0.11)",
+          boxShadow: "-18px 0 48px rgba(70, 42, 82, 0.18)",
           padding: "24px 24px 20px",
           display: "flex",
           flexDirection: "column",
@@ -440,8 +460,8 @@ function AddPersonDialog({
               height: 34,
               borderRadius: "50%",
               border: "none",
-              background: "var(--soft)",
-              color: "var(--gray-2)",
+              background: "var(--heartline-rose-wash)",
+              color: "var(--heartline-purple-deep)",
               display: "grid",
               placeItems: "center",
               cursor: "pointer",
@@ -533,7 +553,7 @@ function AddPersonDialog({
             type="checkbox"
             checked={starred}
             onChange={(event) => setStarred(event.target.checked)}
-            style={{ width: 16, height: 16, accentColor: "var(--blue)" }}
+            style={{ width: 16, height: 16, accentColor: "var(--heartline-purple)" }}
           />
           Prioritize this person
         </label>
@@ -551,8 +571,8 @@ function AddPersonDialog({
             style={{
               padding: "10px 16px",
               borderRadius: 13,
-              border: "none",
-              background: "var(--soft)",
+              border: "0.5px solid var(--line)",
+              background: "#fff",
               color: "var(--gray-1)",
               fontSize: 13,
               fontWeight: 550,
@@ -564,17 +584,9 @@ function AddPersonDialog({
           <button
             type="submit"
             disabled={saving}
+            className="heartline-button"
             style={{
-              padding: "10px 17px",
-              borderRadius: 13,
-              border: "none",
-              background: saving ? "#9ED4FA" : "var(--blue)",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 600,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
+              opacity: saving ? 0.72 : 1,
               cursor: saving ? "default" : "pointer",
             }}
           >
@@ -603,12 +615,12 @@ const fieldLabelStyle = {
 const inputStyle = {
   border: "0.5px solid var(--line)",
   borderRadius: 13,
-  background: "#fff",
+  background: "rgba(255,255,255,0.86)",
   color: "var(--ink)",
   fontSize: 14,
   outline: "none",
   padding: "11px 12px",
-  boxShadow: "0 1px 0 rgba(16, 31, 45, 0.02)",
+  boxShadow: "0 1px 0 rgba(70, 42, 82, 0.03)",
 } as const;
 
 const selectStyle = {

@@ -3,26 +3,39 @@
 @tailwind utilities;
 
 :root {
-  --blue: #38A8F5;
-  --blue-deep: #2C90DE;
-  --blue-wash: #F0F8FE;
-  --blue-chip: #DCEFFB;
-  --ink: #14202B;
-  --ink-2: #0E1620;
-  --gray-1: #5A6573;
-  --gray-2: #8A95A1;
-  --gray-3: #98A2AD;
-  --line: #EDF0F3;
-  --rail: #F4F7FA;
-  --soft: #F5F7FA;
-  --soft-2: #F0F3F6;
-  --amber: #E0A92E;
+  --heartline-bg: #FFF8F5;
+  --heartline-bg-2: #FFFDF9;
+  --heartline-card: #FFFFFF;
+  --heartline-rose: #F3C4D3;
+  --heartline-rose-strong: #CC7899;
+  --heartline-rose-wash: #FCEAF0;
+  --heartline-purple: #8750B4;
+  --heartline-purple-deep: #5E3677;
+  --heartline-purple-wash: #F4EAF8;
+  --heartline-plum: #2C2131;
+  --heartline-sage: #7C936F;
+  --blue: var(--heartline-purple);
+  --blue-deep: var(--heartline-purple-deep);
+  --blue-wash: var(--heartline-purple-wash);
+  --blue-chip: #EBD8F1;
+  --ink: #2F2532;
+  --ink-2: #211823;
+  --gray-1: #6B5C67;
+  --gray-2: #978792;
+  --gray-3: #B5A7B0;
+  --line: #EFE0DA;
+  --rail: #FFF2EE;
+  --soft: #FFF4F1;
+  --soft-2: #F4E7E2;
+  --amber: #D99540;
+  --shadow-soft: 0 18px 45px -28px rgba(94, 54, 119, 0.45);
+  --shadow-card: 0 18px 55px -34px rgba(70, 42, 82, 0.38);
 }
 
 html, body { height: 100%; }
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #FBFCFD;
+  background: var(--heartline-bg);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   margin: 0;
@@ -49,7 +62,7 @@ svg.ic.fill { fill: currentColor; stroke: none; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  background: #FBFCFD;
+  background: var(--heartline-bg);
 }
 
 .ks-page--stack {
@@ -82,12 +95,13 @@ svg.ic.fill { fill: currentColor; stroke: none; }
   min-height: 0;
   width: min(100%, 1120px);
   margin: 0 auto;
-  background: #fff;
+  background: var(--heartline-card);
   display: flex;
   flex-direction: column;
   position: relative;
   border-left: 0.5px solid var(--line);
   border-right: 0.5px solid var(--line);
+  box-shadow: var(--shadow-card);
 }
 
 .ks-mail-body {
@@ -96,9 +110,60 @@ svg.ic.fill { fill: currentColor; stroke: none; }
 }
 
 ::-webkit-scrollbar { width: 7px; }
-::-webkit-scrollbar-thumb { background: #D9DFE5; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: #E4D0D6; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-.hl { background: #E4F6ED; padding: 1px 4px; border-radius: 3px; }
+.hl { background: #F7E5EC; padding: 1px 4px; border-radius: 3px; }
 .mail-text { font-family: 'Newsreader', Georgia, serif; }
 .mail-text p { margin-bottom: 13px; }
+
+.heartline-card {
+  background: rgba(255, 255, 255, 0.88);
+  border: 0.5px solid rgba(239, 224, 218, 0.92);
+  box-shadow: var(--shadow-card);
+}
+
+.heartline-section-label {
+  color: var(--gray-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0 0 12px;
+}
+
+.heartline-button {
+  align-items: center;
+  background: var(--heartline-purple);
+  border: none;
+  border-radius: 14px;
+  box-shadow: 0 12px 24px -18px rgba(94, 54, 119, 0.65);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  gap: 7px;
+  justify-content: center;
+  padding: 10px 16px;
+  text-decoration: none;
+}
+
+.heartline-button--soft {
+  background: #fff;
+  border: 0.5px solid var(--line);
+  box-shadow: none;
+  color: var(--heartline-purple-deep);
+}
+
+.heartline-pill {
+  align-items: center;
+  background: var(--heartline-rose-wash);
+  border-radius: 999px;
+  color: var(--heartline-purple-deep);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 650;
+  gap: 6px;
+  padding: 5px 10px;
+}

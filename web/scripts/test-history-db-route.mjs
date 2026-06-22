@@ -258,8 +258,8 @@ try {
   check("GET /history -> 200", status === 200, `status=${status}`);
   check("contains History", normalizedText.includes("History"));
   check(
-    "contains 4 keepsakes subtitle",
-    normalizedText.includes("Everything you've sent · 4 keepsakes and counting"),
+    "contains 4 Heartline moments subtitle",
+    normalizedText.includes("Everything you've sent · 4 Heartline moments and counting"),
   );
   check("contains MARCH 2026", normalizedText.includes("MARCH 2026"));
   check("contains FEBRUARY 2026", normalizedText.includes("FEBRUARY 2026"));

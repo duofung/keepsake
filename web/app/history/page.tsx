@@ -49,16 +49,26 @@ export default async function HistoryPage() {
     <div className="ks-page">
       <div className="ks-page-inner ks-page-inner--history">
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 600, color: "var(--ink-2)" }}>History</h1>
+        <p style={{
+          margin: "0 0 8px",
+          color: "var(--heartline-rose-strong)",
+          fontSize: 11,
+          fontWeight: 800,
+          letterSpacing: "0.09em",
+          textTransform: "uppercase",
+        }}>
+          Sent with care
+        </p>
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>History</h1>
         <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-          Everything you've sent · {deliveryCount} {deliveryCount === 1 ? "keepsake" : "keepsakes"} and counting
+          Everything you've sent · {deliveryCount} Heartline {deliveryCount === 1 ? "moment" : "moments"} and counting
         </p>
       </div>
         {groups.map((g) => (
           <div key={g.month}>
             <div style={{
               fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
-              letterSpacing: "0.04em", margin: "14px 0 12px",
+              letterSpacing: "0.08em", margin: "14px 0 12px",
             }}>
               {g.month}
             </div>
@@ -68,8 +78,9 @@ export default async function HistoryPage() {
               return (
                 <div key={it.id} style={{
                   display: "flex", alignItems: "center", gap: 14, padding: 13,
-                  background: "#fff", border: "0.5px solid var(--line)",
-                  borderRadius: 13, marginBottom: 10,
+                  background: "rgba(255,255,255,0.9)", border: "0.5px solid rgba(239, 224, 218, 0.92)",
+                  borderRadius: 17, marginBottom: 10,
+                  boxShadow: "0 14px 34px -32px rgba(94, 54, 119, 0.42)",
                 }}>
                   <div style={{
                     width: 42, height: 52, borderRadius: 8, flexShrink: 0,

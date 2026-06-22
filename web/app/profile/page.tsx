@@ -36,8 +36,9 @@ export default async function ProfilePage() {
       <div className="ks-page-inner ks-page-inner--profile">
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 26 }}>
         <div style={{
-          width: 62, height: 62, fontSize: 24, background: "var(--blue)", color: "#fff",
+          width: 62, height: 62, fontSize: 24, background: "linear-gradient(145deg, #F1BAC9, #8750B4)", color: "#fff",
           borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600,
+          boxShadow: "0 14px 30px -20px rgba(94, 54, 119, 0.72)",
         }}>
           {user.initials}
         </div>
@@ -46,12 +47,12 @@ export default async function ProfilePage() {
           <div style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 3 }}>{user.email}</div>
         </div>
         <div style={{
-          marginLeft: "auto", fontSize: 11.5, fontWeight: 500, color: "var(--blue-deep)",
-          background: "var(--blue-wash)", padding: "7px 13px", borderRadius: 12,
+          marginLeft: "auto", fontSize: 11.5, fontWeight: 650, color: "var(--heartline-purple-deep)",
+          background: "var(--heartline-rose-wash)", padding: "7px 13px", borderRadius: 999,
           display: "inline-flex", alignItems: "center", gap: 5,
         }}>
           <span style={{ fontSize: 13 }}><Icon name="i-crown" /></span>
-          Keepsake+
+          Heartline+
         </div>
       </div>
 
@@ -68,13 +69,13 @@ export default async function ProfilePage() {
       <CommandChannelsSection channels={channels} />
 
       <Section label="PREFERENCES">
-        <Row icon="i-bell" title="Reminders" desc="How far ahead Keepsake nudges you" right={<><Val>7 days before</Val><Chev /></>} />
-        <Row icon="i-pencil" title="My voice" desc="How Keepsake learns to write like you" right={<><Val>Learning</Val><Chev /></>} />
+        <Row icon="i-bell" title="Reminders" desc="How far ahead Heartline nudges you" right={<><Val>7 days before</Val><Chev /></>} />
+        <Row icon="i-pencil" title="My voice" desc="How Heartline learns to write like you" right={<><Val>Learning</Val><Chev /></>} />
         <Row icon="i-palette2" title="Card style" desc="Your default look for designed cards" right={<><Val>Warm</Val><Chev /></>} last />
       </Section>
 
       <Section label="ACCOUNT">
-        <Row icon="i-crown" title="Keepsake+ subscription" desc="Renews 14 May 2026 · designed cards, your voice" right={<Chev />} />
+        <Row icon="i-crown" title="Heartline+ subscription" desc="Renews 14 May 2027 · designed cards, your voice" right={<Chev />} />
         <Row icon="i-shield" title="Privacy & data" desc="Your relationships stay yours, encrypted" right={<Chev />} />
         <SignOutRow />
       </Section>
@@ -86,12 +87,13 @@ export default async function ProfilePage() {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <>
-      <p style={{ fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)", letterSpacing: "0.04em", marginBottom: 12 }}>
+      <p style={{ fontSize: 11.5, fontWeight: 700, color: "var(--gray-2)", letterSpacing: "0.08em", marginBottom: 12 }}>
         {label}
       </p>
       <div style={{
-        background: "#fff", border: "0.5px solid var(--line)", borderRadius: 14,
+        background: "rgba(255,255,255,0.9)", border: "0.5px solid rgba(239, 224, 218, 0.92)", borderRadius: 18,
         overflow: "hidden", marginBottom: 18,
+        boxShadow: "0 14px 34px -32px rgba(94, 54, 119, 0.42)",
       }}>
         {children}
       </div>
@@ -108,9 +110,9 @@ function Row({ icon, title, desc, right, last }: {
       borderBottom: last ? "none" : "0.5px solid var(--line)", cursor: "pointer",
     }}>
       <div style={{
-        width: 34, height: 34, borderRadius: 10, background: "var(--soft)",
+        width: 34, height: 34, borderRadius: 11, background: "var(--heartline-rose-wash)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        color: "var(--gray-1)", fontSize: 17, flexShrink: 0,
+        color: "var(--heartline-purple-deep)", fontSize: 17, flexShrink: 0,
       }}>
         <Icon name={icon} />
       </div>
@@ -172,8 +174,8 @@ function ConnectLink({ label }: { label: string }) {
       style={{
         fontSize: 11,
         fontWeight: 500,
-        color: "var(--blue-deep)",
-        background: "var(--blue-wash)",
+        color: "var(--heartline-purple-deep)",
+        background: "var(--heartline-rose-wash)",
         padding: "5px 11px",
         borderRadius: 10,
         textDecoration: "none",
@@ -194,14 +196,15 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
         data-channel-data-source="mock"
       >
         <p style={{
-          fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
-          letterSpacing: "0.04em", marginBottom: 12,
+          fontSize: 11.5, fontWeight: 700, color: "var(--gray-2)",
+          letterSpacing: "0.08em", marginBottom: 12,
         }}>
           COMMAND CHANNELS
         </p>
         <div style={{
-          background: "#fff", border: "0.5px solid var(--line)", borderRadius: 14,
+          background: "rgba(255,255,255,0.9)", border: "0.5px solid rgba(239, 224, 218, 0.92)", borderRadius: 18,
           overflow: "hidden", marginBottom: 18,
+          boxShadow: "0 14px 34px -32px rgba(94, 54, 119, 0.42)",
         }}>
           <div
             data-testid="profile-channels-placeholder"
@@ -210,9 +213,9 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
             }}
           >
             <div style={{
-              width: 34, height: 34, borderRadius: 10, background: "var(--soft)",
+              width: 34, height: 34, borderRadius: 11, background: "var(--heartline-rose-wash)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              color: "var(--gray-1)", fontSize: 17, flexShrink: 0,
+              color: "var(--heartline-purple-deep)", fontSize: 17, flexShrink: 0,
             }}>
               <Icon name="i-bulb" />
             </div>
@@ -238,14 +241,15 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
       data-channel-data-source="db"
     >
       <p style={{
-        fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
-        letterSpacing: "0.04em", marginBottom: 12,
+        fontSize: 11.5, fontWeight: 700, color: "var(--gray-2)",
+        letterSpacing: "0.08em", marginBottom: 12,
       }}>
         COMMAND CHANNELS
       </p>
       <div style={{
-        background: "#fff", border: "0.5px solid var(--line)", borderRadius: 14,
+        background: "rgba(255,255,255,0.9)", border: "0.5px solid rgba(239, 224, 218, 0.92)", borderRadius: 18,
         overflow: "hidden", marginBottom: 18,
+        boxShadow: "0 14px 34px -32px rgba(94, 54, 119, 0.42)",
       }}>
         {accounts.length === 0 ? (
           <div
@@ -256,9 +260,9 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
             }}
           >
             <div style={{
-              width: 34, height: 34, borderRadius: 10, background: "var(--soft)",
+              width: 34, height: 34, borderRadius: 11, background: "var(--heartline-rose-wash)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              color: "var(--gray-1)", fontSize: 17, flexShrink: 0,
+              color: "var(--heartline-purple-deep)", fontSize: 17, flexShrink: 0,
             }}>
               <Icon name="i-bulb" />
             </div>
@@ -316,13 +320,13 @@ function TelegramStartLinkRow({
       data-testid="profile-channels-telegram-start"
       style={{
         display: "flex", alignItems: "center", gap: 13, padding: "14px 16px",
-        borderTop: "0.5px solid var(--line)", background: "#FAFBFD",
+        borderTop: "0.5px solid var(--line)", background: "rgba(255, 248, 245, 0.78)",
       }}
     >
       <div style={{
-        width: 34, height: 34, borderRadius: 10, background: "var(--soft)",
+        width: 34, height: 34, borderRadius: 11, background: "var(--heartline-rose-wash)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        color: "var(--gray-1)", fontSize: 17, flexShrink: 0,
+        color: "var(--heartline-purple-deep)", fontSize: 17, flexShrink: 0,
       }}>
         <Icon name="i-send" />
       </div>
@@ -341,8 +345,8 @@ function TelegramStartLinkRow({
           href={link.url}
           data-testid="profile-channels-telegram-start-link"
           style={{
-            fontSize: 11, fontWeight: 500, color: "var(--blue-deep)",
-            background: "var(--blue-wash)", padding: "5px 11px", borderRadius: 10,
+            fontSize: 11, fontWeight: 650, color: "var(--heartline-purple-deep)",
+            background: "var(--heartline-rose-wash)", padding: "5px 11px", borderRadius: 999,
             textDecoration: "none", whiteSpace: "nowrap",
           }}
         >
@@ -385,9 +389,9 @@ function ChannelRow({
       }}
     >
       <div style={{
-        width: 34, height: 34, borderRadius: 10, background: "var(--soft)",
+        width: 34, height: 34, borderRadius: 11, background: "var(--heartline-rose-wash)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        color: "var(--gray-1)", fontSize: 17, flexShrink: 0,
+        color: "var(--heartline-purple-deep)", fontSize: 17, flexShrink: 0,
       }}>
         <Icon name="i-send" />
       </div>
@@ -398,14 +402,14 @@ function ChannelRow({
         }}>
           <span>{account.displayName ?? `${providerLabel} channel`}</span>
           <span style={{
-            fontSize: 10, fontWeight: 500, padding: "2px 7px", borderRadius: 6,
+            fontSize: 10, fontWeight: 650, padding: "2px 7px", borderRadius: 999,
             background: "var(--soft)", color: "var(--gray-1)",
           }}>
             {providerLabel}
           </span>
           <span
             style={{
-              fontSize: 10, fontWeight: 500, padding: "2px 7px", borderRadius: 6,
+              fontSize: 10, fontWeight: 650, padding: "2px 7px", borderRadius: 999,
               background: isRevoked ? "#FBEAE8" : "#E5F2EB",
               color: isRevoked ? "#B83A30" : "#2F7A56",
             }}
@@ -469,7 +473,7 @@ function ChannelLinkForm({
       style={{
         display: "flex", flexDirection: "column", gap: 9,
         padding: "14px 16px", margin: 0,
-        borderTop: "0.5px solid var(--line)", background: "#FAFBFD",
+        borderTop: "0.5px solid var(--line)", background: "rgba(255, 248, 245, 0.78)",
       }}
       data-testid={`${testIdPrefix}-form`}
       data-channel-link-provider={provider}
@@ -494,7 +498,7 @@ function ChannelLinkForm({
           data-testid={`${testIdPrefix}-external-id`}
           style={{
             fontSize: 12.5, padding: "7px 10px", borderRadius: 8,
-            border: "0.5px solid var(--line)", background: "#fff",
+            border: "0.5px solid var(--line)", background: "rgba(255,255,255,0.86)",
             fontFamily: "inherit",
           }}
         />
@@ -508,7 +512,7 @@ function ChannelLinkForm({
           data-testid={`${testIdPrefix}-display-name`}
           style={{
             fontSize: 12.5, padding: "7px 10px", borderRadius: 8,
-            border: "0.5px solid var(--line)", background: "#fff",
+            border: "0.5px solid var(--line)", background: "rgba(255,255,255,0.86)",
             fontFamily: "inherit",
           }}
         />
@@ -516,11 +520,11 @@ function ChannelLinkForm({
       <button
         type="submit"
         data-testid={`${testIdPrefix}-submit`}
+        className="heartline-button"
         style={{
           alignSelf: "flex-start",
-          fontSize: 12, fontWeight: 500, color: "#fff",
-          background: "var(--blue)", padding: "7px 14px", borderRadius: 10,
-          border: "none", cursor: "pointer", fontFamily: "inherit",
+          fontSize: 12,
+          padding: "7px 14px",
         }}
       >
         {submitLabel}
@@ -559,12 +563,12 @@ function SignOutRow() {
           style={{
             width: 34,
             height: 34,
-            borderRadius: 10,
-            background: "var(--soft)",
+            borderRadius: 11,
+            background: "var(--heartline-rose-wash)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "var(--gray-1)",
+            color: "var(--heartline-purple-deep)",
             fontSize: 17,
             flexShrink: 0,
           }}

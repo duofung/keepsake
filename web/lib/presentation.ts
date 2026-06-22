@@ -49,8 +49,8 @@ export const cardGradientByHint: Record<string, string> = {
   rose: "linear-gradient(150deg,#E59ABF,#B5538C)",
   "warm-pastel": "linear-gradient(150deg,#FBD9C4,#F3A9C2)",
   "festive-green": "linear-gradient(150deg,#F6C99A,#E88B5A)",
-  "calm-blue": "linear-gradient(150deg,#9FC9E8,#5C8BD1)",
-  soft: "linear-gradient(150deg,#CDE7F7,#A9C2F3)",
+  "calm-blue": "linear-gradient(150deg,#D9C4ED,#8F63B8)",
+  soft: "linear-gradient(150deg,#F2C9D7,#D8C0E8)",
   // History thumbnails
   "festive-red": "linear-gradient(150deg,#E8746B,#C23A42)",
   "deepavali-amber": "linear-gradient(150deg,#E08A2E,#C25A1E)",

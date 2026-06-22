@@ -113,10 +113,12 @@ try {
   check("GET / -> 200", status === 200, `status=${status}`);
   check("renders current user greeting", body.includes(`Good evening, ${testUser.name}`));
   check("does not render old hard-coded greeting", !body.includes("Good evening, Arthur"));
-  check("renders data-driven people/date subtitle", body.includes("Watching over 5 people · 3 dates coming up"));
-  check("renders Lin anniversary focus", body.includes("Your anniversary with Lin"));
-  check("renders anniversary timing chip", body.includes("Coming up · 12 days"));
-  check("renders people grid label", body.includes("PEOPLE YOU'RE WATCHING OVER"));
+  check("renders Heartline relationship subtitle", body.includes("Nurture every connection with meaningful notes for 5 people."));
+  check("renders upcoming moments count", body.includes("3 moments could use your care soon."));
+  check("renders Lin anniversary focus", body.includes("Anniversary with Lin"));
+  check("renders anniversary timing chip", body.includes("In 12 days"));
+  check("renders people grid label", body.includes("PEOPLE YOU'RE NURTURING"));
+  check("renders Add someone CTA", body.includes("Add someone"));
   check("renders workspace CTA", body.includes("Write it with me"));
 } catch (error) {
   process.stdout.write(`harness error: ${error?.message ?? error}\n`);

@@ -131,7 +131,7 @@ try {
     "mock-mode profile does not render Reconnect CTA",
     !body.includes(">Reconnect Gmail</a>"),
   );
-  check("keeps subscription badge", body.includes("Keepsake+"));
+  check("keeps subscription badge", body.includes("Heartline+"));
   check("keeps Sending section", body.includes("SENDING"));
   check("keeps Preferences section", body.includes("PREFERENCES"));
   check("keeps Account section", body.includes("ACCOUNT"));
