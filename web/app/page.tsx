@@ -45,7 +45,7 @@ export default async function HomePage() {
 
   return (
     <div className="ks-page">
-      <div className="ks-page-inner" style={{ width: "min(100%, 1180px)" }}>
+      <div className="ks-page-inner" style={{ width: "min(100%, 1060px)" }}>
         <div style={headerRow}>
           <div>
             <p style={eyebrow}>Heartline home</p>
@@ -199,8 +199,8 @@ const headerRow: CSSProperties = {
   display: "flex",
   alignItems: "flex-start",
   justifyContent: "space-between",
-  gap: 24,
-  marginBottom: 24,
+  gap: 20,
+  marginBottom: 20,
 };
 
 const eyebrow: CSSProperties = {
@@ -213,7 +213,7 @@ const eyebrow: CSSProperties = {
 };
 
 const pageTitle: CSSProperties = {
-  fontSize: 30,
+  fontSize: 27,
   fontWeight: 700,
   color: "var(--ink-2)",
   letterSpacing: "0",
@@ -221,104 +221,104 @@ const pageTitle: CSSProperties = {
 };
 
 const pageSubcopy: CSSProperties = {
-  fontSize: 13.5,
+  fontSize: 13,
   color: "var(--gray-1)",
-  lineHeight: 1.65,
+  lineHeight: 1.58,
   margin: "8px 0 0",
-  maxWidth: 620,
+  maxWidth: 560,
 };
 
 const homeGrid: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1.55fr) minmax(290px, 0.82fr)",
-  gap: 16,
+  gridTemplateColumns: "minmax(0, 1.44fr) minmax(258px, 0.72fr)",
+  gap: 14,
   alignItems: "stretch",
 };
 
 const heroCard: CSSProperties = {
-  borderRadius: 24,
+  borderRadius: 22,
   display: "grid",
-  gridTemplateColumns: "minmax(300px, 0.92fr) minmax(330px, 1fr)",
-  gap: 18,
+  gridTemplateColumns: "minmax(270px, 0.92fr) minmax(300px, 1fr)",
+  gap: 16,
   overflow: "hidden",
-  padding: 18,
-  minHeight: 380,
+  padding: 16,
+  minHeight: 326,
 };
 
 const heroCopy: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   minWidth: 0,
-  padding: "14px 6px 14px 14px",
+  padding: "12px 4px 12px 12px",
 };
 
 const heroTitle: CSSProperties = {
   color: "var(--ink-2)",
-  fontSize: 32,
+  fontSize: 28,
   fontWeight: 700,
   letterSpacing: "0",
-  lineHeight: 1.12,
-  margin: "18px 0 10px",
+  lineHeight: 1.14,
+  margin: "16px 0 9px",
 };
 
 const heroBody: CSSProperties = {
   color: "var(--gray-1)",
-  fontSize: 14,
-  lineHeight: 1.7,
-  margin: "0 0 22px",
-  maxWidth: 390,
+  fontSize: 13,
+  lineHeight: 1.65,
+  margin: "0 0 18px",
+  maxWidth: 345,
 };
 
 const heroImageWrap: CSSProperties = {
   position: "relative",
-  minHeight: 338,
-  borderRadius: 20,
+  minHeight: 292,
+  borderRadius: 18,
   overflow: "hidden",
   border: "0.5px solid rgba(239, 224, 218, 0.74)",
   background: "#F9EDE8",
 };
 
 const sideCard: CSSProperties = {
-  borderRadius: 22,
-  padding: 18,
+  borderRadius: 20,
+  padding: 16,
 };
 
 const momentRow: CSSProperties = {
   alignItems: "center",
   background: "rgba(255, 248, 245, 0.78)",
   border: "0.5px solid rgba(239, 224, 218, 0.85)",
-  borderRadius: 16,
+  borderRadius: 15,
   color: "inherit",
   display: "flex",
   gap: 10,
-  padding: 12,
+  padding: 10,
   textDecoration: "none",
 };
 
 const momentIcon: CSSProperties = {
   alignItems: "center",
   background: "var(--heartline-rose-wash)",
-  borderRadius: 13,
+  borderRadius: 12,
   color: "var(--heartline-purple-deep)",
   display: "flex",
   flexShrink: 0,
-  fontSize: 16,
-  height: 38,
+  fontSize: 15,
+  height: 34,
   justifyContent: "center",
-  width: 38,
+  width: 34,
 };
 
 const momentTitle: CSSProperties = {
   color: "var(--ink)",
   display: "block",
-  fontSize: 13,
+  fontSize: 12.5,
   fontWeight: 700,
 };
 
 const momentMeta: CSSProperties = {
   color: "var(--gray-2)",
   display: "block",
-  fontSize: 11.5,
+  fontSize: 11,
   marginTop: 2,
 };
 
@@ -329,28 +329,28 @@ const momentArrow: CSSProperties = {
 };
 
 const quoteCard: CSSProperties = {
-  borderRadius: 22,
-  minHeight: 168,
-  padding: 20,
+  borderRadius: 20,
+  minHeight: 142,
+  padding: 18,
   position: "relative",
 };
 
 const quoteMark: CSSProperties = {
   color: "var(--heartline-rose)",
   fontFamily: "Newsreader, Georgia, serif",
-  fontSize: 54,
-  left: 18,
+  fontSize: 46,
+  left: 16,
   lineHeight: 1,
   position: "absolute",
-  top: 10,
+  top: 8,
 };
 
 const quoteText: CSSProperties = {
   color: "var(--ink)",
   fontFamily: "Newsreader, Georgia, serif",
-  fontSize: 21,
-  lineHeight: 1.28,
-  margin: "36px 0 14px",
+  fontSize: 18,
+  lineHeight: 1.3,
+  margin: "30px 0 12px",
 };
 
 const quoteMeta: CSSProperties = {
@@ -362,20 +362,20 @@ const quoteMeta: CSSProperties = {
 
 const peopleGrid: CSSProperties = {
   display: "grid",
-  gap: 13,
-  gridTemplateColumns: "repeat(auto-fill, minmax(236px, 1fr))",
+  gap: 12,
+  gridTemplateColumns: "repeat(auto-fill, minmax(208px, 1fr))",
 };
 
 const personCard: CSSProperties = {
   background: "rgba(255, 255, 255, 0.9)",
   border: "0.5px solid rgba(239, 224, 218, 0.92)",
-  borderRadius: 18,
+  borderRadius: 16,
   boxShadow: "0 14px 34px -30px rgba(94, 54, 119, 0.42)",
   color: "inherit",
   display: "grid",
-  gap: 14,
-  minHeight: 172,
-  padding: 15,
+  gap: 12,
+  minHeight: 150,
+  padding: 13,
   textDecoration: "none",
 };
 
@@ -383,7 +383,7 @@ const personName: CSSProperties = {
   alignItems: "center",
   color: "var(--ink)",
   display: "flex",
-  fontSize: 14,
+  fontSize: 13.5,
   fontWeight: 750,
   gap: 5,
 };
@@ -411,12 +411,12 @@ const miniTagMuted: CSSProperties = {
 const nextNode: CSSProperties = {
   alignItems: "center",
   background: "rgba(255, 248, 245, 0.78)",
-  borderRadius: 14,
+  borderRadius: 13,
   display: "flex",
-  fontSize: 12,
+  fontSize: 11.5,
   fontWeight: 650,
   gap: 7,
-  padding: "9px 10px",
+  padding: "8px 9px",
 };
 
 const quickActions: CSSProperties = {
@@ -430,13 +430,13 @@ const addCard: CSSProperties = {
   alignItems: "center",
   background: "rgba(252, 234, 240, 0.72)",
   border: "0.5px dashed rgba(204, 120, 153, 0.42)",
-  borderRadius: 18,
+  borderRadius: 16,
   color: "var(--heartline-purple-deep)",
   display: "flex",
   flexDirection: "column",
   gap: 7,
   justifyContent: "center",
-  minHeight: 172,
-  padding: 15,
+  minHeight: 150,
+  padding: 13,
   textDecoration: "none",
 };
