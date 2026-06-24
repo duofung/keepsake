@@ -46,7 +46,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
     >
       <header>
         <h1 style={{ fontSize: 22, fontWeight: 600, color: "var(--ink-2)" }}>
-          Sign in to Heartline
+          Sign in to ReMaster
         </h1>
         <p
           style={{
@@ -56,8 +56,8 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             lineHeight: 1.5,
           }}
         >
-          We use Google to identify your account. You can connect a Gmail
-          sending address separately, later.
+          We use Google to identify your ReMaster account. You can connect a
+          Gmail sending address later for outbound outreach.
         </p>
       </header>
 

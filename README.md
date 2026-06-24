@@ -1,20 +1,33 @@
-# Keepsake
+# Keepsake / ReMaster
 
-Keepsake is a relationship-aware message assistant for remembering important
-people, drafting thoughtful notes, and sending them through a review-first
-workflow.
+This repository contains the current Keepsake runtime and the documentation for
+the ReMaster product pivot.
 
-The current codebase is an MVP-quality local web app. It includes the core
-desktop product flow, DB-backed seams, Gmail send queue infrastructure, and a
-provider-agnostic command-channel foundation. It is not yet a production
-deployment.
+ReMaster is the business relationship management direction: account-aware,
+contact-aware, and activity-driven. The shipped runtime is still the earlier
+person-centered workflow for drafting thoughtful outreach and sending it through
+a review-first flow.
+
+Today the codebase is still an MVP-quality local web app with DB-backed seams,
+Gmail queue infrastructure, and a provider-agnostic command-channel foundation.
+It has not yet migrated runtime or schema to the planned ReMaster
+account/contact/activity model.
+
+## ReMaster Pivot Snapshot
+
+- Product direction: business-first relationship management.
+- Runtime today: `Person`, `OccasionNode`, draft, and delivery centered.
+- Planned evolution: `Account`, `Contact`, stakeholder role, and
+  `ActivityEvent` centered.
+- Planning reference: `web/docs/REMASTER_MODEL.md`.
 
 ## What Works Today
 
-- Home dashboard for upcoming relationship moments.
-- People directory with groups, details, and add-person flow.
-- Workspace for generating, editing, autosaving, and queueing message drafts.
-- History timeline with delivered / opened / failed status surfaces.
+- Home dashboard for upcoming follow-ups and relationship milestones.
+- Current People directory (legacy surface) with groups, details, and
+  add-person flow.
+- Workspace for generating, editing, autosaving, and queueing outreach drafts.
+- History timeline with delivered / opened / failed communication status.
 - Profile page with app session, Google sign-in foundation, Gmail connect /
   disconnect, sign-out, and command-channel links.
 - DB-backed Postgres schema with RLS, local fixture seed, repository runtimes,
@@ -79,6 +92,8 @@ pnpm db:seed:dev   # seed local dev fixtures after schema/catalog load
 
 ## Key Docs
 
+- `web/docs/REMASTER_MODEL.md` — forward-looking ReMaster entity blueprint and
+  migration posture.
 - `web/docs/CURRENT_ARCHITECTURE.md` — current request flows and layering.
 - `web/docs/DEVELOPMENT_PROGRESS.md` — project board and completed P-slices.
 - `web/docs/API_CONTRACTS.md` — public route contracts.
@@ -90,23 +105,25 @@ pnpm db:seed:dev   # seed local dev fixtures after schema/catalog load
 
 ## Current Boundaries
 
-Completed MVP engineering loop:
+Completed current engineering loop:
 
 1. Sign in locally / with Google identity foundation.
-2. Review people and upcoming relationship moments.
-3. Generate or edit a draft in Workspace.
+2. Review current relationship records and upcoming follow-up moments.
+3. Generate or edit an outreach draft in Workspace.
 4. Persist draft edits.
 5. Queue an email delivery.
 6. Drain the queue with the worker.
 7. Ingest provider status by webhook.
 8. See status in History.
-9. Add a new person from People.
+9. Add a new record through the current People flow.
 
-Deferred from the MVP:
+Planned beyond the current runtime:
 
 - Payments and subscriptions.
 - Production deployment and CI/CD.
 - Mobile-specific layout pass.
+- ReMaster account/contact/activity runtime migration from the current
+  person/occasion model.
 - Real WhatsApp / Slack adapters.
 - Gmail push subscription setup.
 - Reminder scheduler and outbound notifications.
@@ -120,4 +137,3 @@ Deferred from the MVP:
 - Default local mode should stay mock/dev friendly.
 - DB mode must use owner-scoped transactions and RLS.
 - Do not commit local secrets or generated `.next` output.
-

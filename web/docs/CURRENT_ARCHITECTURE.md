@@ -1,4 +1,4 @@
-# Keepsake — current architecture map
+# Keepsake / ReMaster — current architecture map
 
 A snapshot of how the codebase looks today, for handing work between Claude
 Code, Codex, and humans without re-deriving the layering each time. Pairs
@@ -7,6 +7,14 @@ under [`lib/repositories/`](../lib/repositories/README.md), [`lib/server/`](../l
 
 This document is descriptive. When the codebase moves, this file moves
 with it. When in doubt, the code wins.
+
+> **ReMaster pivot note**
+> - The live runtime described here is still centered on `Person`,
+>   `OccasionNode`, drafts, and deliveries.
+> - The planned product evolution is centered on `Account`, `Contact`,
+>   stakeholder role, and `ActivityEvent`.
+> - This file stays descriptive of current code. The forward model blueprint
+>   lives in [`docs/REMASTER_MODEL.md`](./REMASTER_MODEL.md).
 
 ---
 

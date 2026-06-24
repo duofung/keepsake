@@ -57,11 +57,11 @@ export default async function HistoryPage() {
           letterSpacing: "0.09em",
           textTransform: "uppercase",
         }}>
-          Sent with care
+          Outreach log
         </p>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>History</h1>
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Activity</h1>
         <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-          Everything you've sent · {deliveryCount} Heartline {deliveryCount === 1 ? "moment" : "moments"} and counting
+          Every queued and completed touchpoint · {deliveryCount} {deliveryCount === 1 ? "delivery" : "deliveries"} recorded
         </p>
       </div>
         {groups.map((g) => (

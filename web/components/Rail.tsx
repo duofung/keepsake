@@ -5,10 +5,10 @@ import { usePathname } from "next/navigation";
 import Icon from "./Icon";
 
 const nav = [
-  { href: "/", key: "home", icon: "i-home", title: "Home" },
-  { href: "/workspace", key: "workspace", icon: "i-edit", title: "Workspace" },
-  { href: "/people", key: "people", icon: "i-users", title: "People" },
-  { href: "/history", key: "history", icon: "i-history", title: "History" },
+  { href: "/", key: "home", icon: "i-home", title: "Dashboard" },
+  { href: "/workspace", key: "workspace", icon: "i-edit", title: "Outreach" },
+  { href: "/people", key: "people", icon: "i-users", title: "Contacts" },
+  { href: "/history", key: "history", icon: "i-history", title: "Activity" },
 ];
 
 export default function Rail() {
@@ -51,7 +51,7 @@ export default function Rail() {
           marginBottom: 14,
         }}
       >
-        Heartline
+        ReMaster
       </div>
 
       {nav.map((n) => (
@@ -72,7 +72,7 @@ export default function Rail() {
 
       <Link
         href="/profile"
-        aria-label="Profile"
+        aria-label="Account"
         style={{
           marginTop: "auto", width: 38, height: 38, borderRadius: "50%",
           background: "linear-gradient(145deg, #F1BAC9, #8750B4)", display: "flex", alignItems: "center",

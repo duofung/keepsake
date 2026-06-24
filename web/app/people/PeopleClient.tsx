@@ -15,6 +15,13 @@ const groupIcon: Record<RelationshipGroup, string> = {
   Colleagues: "i-users",
 };
 
+const groupLabel: Record<RelationshipGroup, string> = {
+  Partner: "Partners",
+  Family: "Personal",
+  Friends: "Network",
+  Colleagues: "Colleagues",
+};
+
 const TAB_ORDER: ("All" | RelationshipGroup)[] = [
   "All", "Partner", "Family", "Friends", "Colleagues",
 ];
@@ -130,7 +137,7 @@ export default function PeopleClient({ payload }: Props) {
         return;
       }
       const body = await response.json().catch(() => null) as { error?: string } | null;
-      throw new Error(body?.error ?? "Could not add this person.");
+      throw new Error(body?.error ?? "Could not add this contact.");
     }
 
     const serverPerson = await response.json() as Person;
@@ -153,7 +160,7 @@ export default function PeopleClient({ payload }: Props) {
     const relationship = relationshipById.get(input.relationshipId) ?? relationships[0];
     const culture = cultureById.get(input.cultureId) ?? cultures.find((c) => c.id === "none") ?? cultures[0];
     if (!relationship || !culture) {
-      throw new Error("Choose a relationship and culture first.");
+      throw new Error("Choose a contact type and culture first.");
     }
 
     const palette = avatarPalette[people.length % avatarPalette.length];
@@ -171,7 +178,7 @@ export default function PeopleClient({ payload }: Props) {
       identityTags: since ? [since] : [],
       knownFacts: note
         ? [{ text: note, isLead: true }]
-        : [{ text: "New relationship to learn about.", isLead: true }],
+        : [{ text: "New contact to learn about.", isLead: true }],
       personalTaboos: [],
       nextOccasionId: null,
       lastContactAt: new Date().toISOString().slice(0, 10),
@@ -191,11 +198,11 @@ export default function PeopleClient({ payload }: Props) {
               letterSpacing: "0.09em",
               textTransform: "uppercase",
             }}>
-              Heartline circle
+              ReMaster contacts
             </p>
-            <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>People</h1>
+            <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Contacts</h1>
             <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-              {people.length} {people.length === 1 ? "relationship" : "relationships"} · nurture every connection with context, dates, and care
+              {people.length} {people.length === 1 ? "contact" : "contacts"} in your relationship book of business
             </p>
           </div>
           <button
@@ -206,7 +213,7 @@ export default function PeopleClient({ payload }: Props) {
               whiteSpace: "nowrap",
           }}
           >
-            <Icon name="i-plus" /> Add someone
+            <Icon name="i-plus" /> Add contact
           </button>
         </div>
       </div>
@@ -226,7 +233,8 @@ export default function PeopleClient({ payload }: Props) {
               cursor: "pointer",
             }}
           >
-            {t.id} <span style={{ fontSize: 11, color: tab === t.id ? "var(--heartline-rose-strong)" : "var(--gray-3)" }}>{t.n}</span>
+            {t.id === "All" ? "All contacts" : groupLabel[t.id]}
+            <span style={{ fontSize: 11, color: tab === t.id ? "var(--heartline-rose-strong)" : "var(--gray-3)" }}>{t.n}</span>
           </button>
         ))}
       </div>
@@ -243,7 +251,7 @@ export default function PeopleClient({ payload }: Props) {
               <span style={{ fontSize: 14, color: "var(--heartline-rose-strong)" }}>
                 <Icon name={groupIcon[g]} />
               </span>
-              {g.toUpperCase()}
+              {groupLabel[g].toUpperCase()}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 13 }}>
               {list.map((p) => {
@@ -251,7 +259,7 @@ export default function PeopleClient({ payload }: Props) {
                 const culture = cultureById.get(p.cultureId);
                 const occ = p.nextOccasionId ? occasionById.get(p.nextOccasionId) : undefined;
                 const days = occ?.daysUntil ?? -60;
-                const text = nodeChipText(occ?.label ?? "Last note", days);
+                const text = nodeChipText(occ?.label ?? "Last touchpoint", days);
                 const lvl = urgencyLevel(days);
                 const occIcon = occ ? occasionIcon[occ.kind] : "i-bulb";
                 if (!rel || !culture) return null;
@@ -405,7 +413,7 @@ function AddPersonDialog({
         starred,
       });
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not add this person.");
+      setError(error instanceof Error ? error.message : "Could not add this contact.");
     } finally {
       setSaving(false);
     }
@@ -489,13 +497,13 @@ function AddPersonDialog({
               }}
             >
               <Icon name="i-heart" />
-              New relationship
+              New contact
             </span>
             <h2 style={{ fontSize: 20, fontWeight: 650, color: "var(--ink)", margin: 0 }}>
-              Add someone
+              Add contact
             </h2>
             <p style={{ margin: "6px 0 0", color: "var(--gray-2)", fontSize: 13, lineHeight: 1.45 }}>
-              Keep the first note simple. You can fill in more after they are on your list.
+              Capture the minimum context you need for the next follow-up. You can fill in the rest later.
             </p>
           </div>
           <button
@@ -538,7 +546,7 @@ function AddPersonDialog({
               setName(event.target.value);
               if (error) setError(null);
             }}
-            placeholder="Helen"
+            placeholder="Helen Zhang"
             autoFocus
             style={inputStyle}
           />
@@ -546,7 +554,7 @@ function AddPersonDialog({
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <label style={fieldWrapStyle}>
-            <span style={fieldLabelStyle}>Relationship</span>
+            <span style={fieldLabelStyle}>Contact type</span>
             <select
               value={relationshipId}
               onChange={(event) => setRelationshipId(event.target.value)}
@@ -573,21 +581,21 @@ function AddPersonDialog({
         </div>
 
         <label style={fieldWrapStyle}>
-          <span style={fieldLabelStyle}>Context</span>
+          <span style={fieldLabelStyle}>Where you know them from</span>
           <input
             value={since}
             onChange={(event) => setSince(event.target.value)}
-            placeholder="Colleague from the Malaysia launch"
+            placeholder="Met through the Malaysia launch"
             style={inputStyle}
           />
         </label>
 
         <label style={{ ...fieldWrapStyle, flex: 1, minHeight: 0 }}>
-          <span style={fieldLabelStyle}>What should I remember?</span>
+          <span style={fieldLabelStyle}>What matters for follow-up?</span>
           <textarea
             value={note}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="A detail, a preference, a date, or anything that makes future messages more personal."
+            placeholder="A preference, open workstream, key date, or anything that helps with the next touchpoint."
             style={{
               ...inputStyle,
               minHeight: 120,
@@ -612,7 +620,7 @@ function AddPersonDialog({
             onChange={(event) => setStarred(event.target.checked)}
             style={{ width: 16, height: 16, accentColor: "var(--heartline-purple)" }}
           />
-          Prioritize this person
+          Flag as priority contact
         </label>
 
         {error && (
@@ -647,7 +655,7 @@ function AddPersonDialog({
               cursor: saving ? "default" : "pointer",
             }}
           >
-            <Icon name="i-plus" /> {saving ? "Adding..." : "Add person"}
+            <Icon name="i-plus" /> {saving ? "Adding..." : "Add contact"}
           </button>
         </div>
       </form>

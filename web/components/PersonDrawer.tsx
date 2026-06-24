@@ -60,8 +60,8 @@ function DrawerContent({
 }) {
   const primary = occasions.find((o) => o.isPrimary) ?? occasions[0];
   const prepareLabel = primary
-    ? `Write for ${primary.label.split(" ")[0].toLowerCase() === "anniversary" ? "anniversary" : primary.label}`
-    : "Write a note";
+    ? `Draft outreach for ${primary.label}`
+    : "Draft outreach";
 
   return (
     <>
@@ -97,7 +97,7 @@ function DrawerContent({
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 24px 20px" }}>
-        <Section title="SOCIAL IDENTITY">
+        <Section title="CONTACT PROFILE">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
             <Tag dot={culture.dotColor}>{relationship.label}</Tag>
             {culture.id !== "none" && <Tag dot={culture.dotColor}>{culture.label}</Tag>}
@@ -105,10 +105,10 @@ function DrawerContent({
           </div>
         </Section>
 
-        <Section title="DATES I'M WATCHING">
+        <Section title="DATES & FOLLOW-UPS">
           {occasions.length === 0 && (
             <p style={{ fontSize: 12.5, color: "var(--gray-3)" }}>
-              No dates yet — add one to start watching over this friend.
+              No dates yet - add one to keep this contact on your radar.
             </p>
           )}
           {occasions.map((o, i) => {
@@ -147,7 +147,7 @@ function DrawerContent({
           })}
         </Section>
 
-        <Section title="WHAT I KNOW">
+        <Section title="NOTES & CONTEXT">
           <div style={{
             background: "rgba(255, 244, 241, 0.86)", borderRadius: 14, padding: "12px 13px",
             fontSize: 12.5, lineHeight: 1.65, color: "var(--gray-1)",
@@ -161,7 +161,7 @@ function DrawerContent({
         </Section>
 
         {(culture.taboos.length > 0 || person.personalTaboos.length > 0) && (
-          <Section title="MIND THESE">
+          <Section title="WATCHOUTS">
             <div style={{
               background: "#FFF6F0", borderRadius: 11, padding: "11px 13px",
               display: "flex", gap: 9, alignItems: "flex-start",

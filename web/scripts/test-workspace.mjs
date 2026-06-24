@@ -113,22 +113,22 @@ try {
   const { status, body } = await getWorkspace();
 
   check("GET /workspace?person=p-lin -> 200", status === 200, `status=${status}`);
-  check("renders recipient header", body.includes("To Lin"));
+  check("renders recipient header", body.includes("Outreach to Lin"));
   check("renders relationship subtitle", body.includes("Partner") && body.includes("together 12 years"));
   check("renders compose To row", body.includes("To") && body.includes("Lin"));
   check("renders sender From row", body.includes("From"));
   check("renders sender name", body.includes(testUser.name));
   check("renders sender email", body.includes(testUser.email));
   check("renders sender initials", body.includes(testUser.initials));
-  check("renders missing sender configuration", body.includes("no sender configured"));
+  check("renders missing sender configuration", body.includes("sender not configured"));
   check("keeps tone controls", body.includes("Tone:"));
-  check("keeps send footer", body.includes("Send now, or schedule for the day"));
-  check("renders Send email button", body.includes("Send email"));
-  check("renders Mail as card button", body.includes("Mail as card"));
+  check("keeps send footer", body.includes("Queue now, or hold for the right day"));
+  check("renders Queue email button", body.includes("Queue email"));
+  check("renders Queue print card button", body.includes("Queue print card"));
   check("renders direct message editor", body.includes('data-testid="message-body-editor"'));
   check("message editor is not hidden behind an edit mode", !body.includes('data-testid="message-body-edit-toggle"'));
   check("message editor is not preview-only", !body.includes('data-testid="message-body-preview"'));
-  check("renders card as its own content format", body.includes("CARD VERSION"));
+  check("renders card as its own content format", body.includes("PRINT VERSION"));
   check("card is no longer labelled as an attachment", !body.includes("ATTACHED TO THIS EMAIL"));
   check("does not render fake attachments section", !body.includes("ATTACHMENTS"));
   check("does not render fake attachments empty state", !body.includes("No files attached"));

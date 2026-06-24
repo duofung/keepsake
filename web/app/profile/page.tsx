@@ -43,6 +43,9 @@ export default async function ProfilePage() {
           {user.initials}
         </div>
         <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--gray-2)", letterSpacing: "0.08em", marginBottom: 5 }}>
+            ACCOUNT
+          </div>
           <div style={{ fontSize: 18, fontWeight: 600, color: "var(--ink-2)" }}>{user.name}</div>
           <div style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 3 }}>{user.email}</div>
         </div>
@@ -52,31 +55,31 @@ export default async function ProfilePage() {
           display: "inline-flex", alignItems: "center", gap: 5,
         }}>
           <span style={{ fontSize: 13 }}><Icon name="i-crown" /></span>
-          Heartline+
+          ReMaster
         </div>
       </div>
 
-      <Section label="SENDING">
+      <Section label="DELIVERY">
         <Row
           icon="i-mail"
           title="Sending email"
-          desc={user.sendingAccount ? `Emails send from ${user.sendingAccount.email}` : "No sending account connected yet"}
+          desc={user.sendingAccount ? `Outbound email sends from ${user.sendingAccount.email}` : "No outbound sender connected yet"}
           right={<SendingEmailControls sendingAccount={user.sendingAccount} />}
         />
-        <Row icon="i-truck" title="Mailing address book" desc="Where printed cards get sent from" right={<Chev />} last />
+        <Row icon="i-truck" title="Postal return details" desc="Default return details for printed outreach" right={<Chev />} last />
       </Section>
 
       <CommandChannelsSection channels={channels} />
 
       <Section label="PREFERENCES">
-        <Row icon="i-bell" title="Reminders" desc="How far ahead Heartline nudges you" right={<><Val>7 days before</Val><Chev /></>} />
-        <Row icon="i-pencil" title="My voice" desc="How Heartline learns to write like you" right={<><Val>Learning</Val><Chev /></>} />
-        <Row icon="i-palette2" title="Card style" desc="Your default look for designed cards" right={<><Val>Warm</Val><Chev /></>} last />
+        <Row icon="i-bell" title="Reminders" desc="How far ahead ReMaster surfaces follow-ups" right={<><Val>7 days before</Val><Chev /></>} />
+        <Row icon="i-pencil" title="Draft voice" desc="How ReMaster learns to draft like you" right={<><Val>Learning</Val><Chev /></>} />
+        <Row icon="i-palette2" title="Print style" desc="Default look for printed outreach" right={<><Val>Warm</Val><Chev /></>} last />
       </Section>
 
       <Section label="ACCOUNT">
-        <Row icon="i-crown" title="Heartline+ subscription" desc="Renews 14 May 2027 · designed cards, your voice" right={<Chev />} />
-        <Row icon="i-shield" title="Privacy & data" desc="Your relationships stay yours, encrypted" right={<Chev />} />
+        <Row icon="i-crown" title="ReMaster subscription" desc="Renews 14 May 2027 · printed outreach, voice drafting" right={<Chev />} />
+        <Row icon="i-shield" title="Privacy & data" desc="Your contact records stay yours, encrypted" right={<Chev />} />
         <SignOutRow />
       </Section>
       </div>
@@ -224,7 +227,7 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
                 Command channels are available in DB mode
               </div>
               <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
-                Set <code>KEEPSAKE_DATA_SOURCE=db</code> to link WhatsApp / Telegram / Slack stand-ins.
+                Set <code>KEEPSAKE_DATA_SOURCE=db</code> to link WhatsApp / Telegram / Slack stand-ins for workflow testing.
               </div>
             </div>
           </div>
@@ -271,7 +274,7 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
                 No channels linked yet
               </div>
               <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
-                Link a Telegram or mock identity below to drive the inbound webhook end-to-end.
+                Link a Telegram or mock identity below to test inbound routing end-to-end.
               </div>
             </div>
           </div>
@@ -298,7 +301,7 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
         />
         <ChannelLinkForm
           provider="mock"
-          title="Link a mock channel identity"
+          title="Link a mock workspace identity"
           action={MOCK_CHANNEL_LINK_ACTION}
           externalUserPlaceholder="e.g. mock-user-1"
           displayNamePlaceholder="What to call this identity"

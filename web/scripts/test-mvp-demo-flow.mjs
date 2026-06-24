@@ -148,9 +148,9 @@ try {
 
   const pages = [
     { path: "/", label: "Home", expected: "MVP Demo" },
-    { path: "/people", label: "People", expected: "5 relationships" },
-    { path: "/workspace?person=p-lin", label: "Workspace", expected: "To Lin" },
-    { path: "/history", label: "History", expected: "Everything you've sent" },
+    { path: "/people", label: "People", expected: "5 contacts in your relationship book of business" },
+    { path: "/workspace?person=p-lin", label: "Workspace", expected: "Outreach to Lin" },
+    { path: "/history", label: "History", expected: "Every queued and completed touchpoint" },
     { path: "/profile", label: "Profile", expected: "Command channels" },
   ];
 

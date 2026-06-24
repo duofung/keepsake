@@ -1,4 +1,4 @@
-# Keepsake Development Progress
+# Keepsake / ReMaster Development Progress
 
 This document is the working project board for Keepsake. It tracks what is
 already stable, what is active, what is queued, and how Codex/CC work should be
@@ -26,7 +26,8 @@ Rules:
 | Workstream | Status | What Is Stable | Remaining Work |
 |---|---|---|---|
 | App shell + core UI | MVP demo-ready desktop | Full-screen desktop shell, Home, People, Workspace, History, Profile, preview-safe icon fallback, page smoke tests, and an end-to-end `pnpm test:mvp-demo` flow. | Mobile pass, deeper visual polish, interaction polish. |
-| Domain model | Stable | `domain.ts`, presentation mapping, mock data, API contracts. | Add fields only when a real product flow needs them. |
+| ReMaster pivot / model blueprint | Docs-only planning complete; runtime unchanged | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` now define the business-first target model: `Account`, `Contact`, stakeholder role, business relationship type, and `ActivityEvent`, plus forward mapping from current `Person` / `OccasionNode` / `Delivery`. | Runtime/schema slices, compatibility read model, route/UI transition plan, data migration/backfill strategy. |
+| Domain model | Stable current runtime | `domain.ts`, presentation mapping, mock data, API contracts. Current runtime remains person-centered. | ReMaster runtime adoption is still ahead; add fields only when a real product flow needs them. |
 | Mock seams | Stable | People payload, draft context, draft service, delivery history dispatchers default to mock. | Delete mock fallback only after DB mode is default and production-ready. |
 | DB schema/RLS | Stable | Postgres schema, catalog seed, local dev fixtures, RLS, transaction helper. | Future migrations for real auth/session, reminders, send queue details. |
 | Crypto | Stable | AES-256-GCM envelope helper, AAD conventions, tests. | KMS/DEK wrapping hardening for production. |
@@ -41,6 +42,27 @@ Rules:
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | MVP demo / release readiness | Close-out in progress | `docs/MVP_DEMO_RUNBOOK.md`, `pnpm test:mvp-demo`, `pnpm test`, `pnpm build`, and `git diff --check` define the close-out gate. P9 adds the last product-critical create path found during user testing. | Final verification and deployment checklist. |
 | Deployment/ops | Local only | Local env guard/init, Docker DB tests, delivery lifecycle runbook, and MVP demo runbook. | Production env, CI, hosting, logs, secrets, migrations. |
+
+## ReMaster Pivot Snapshot
+
+This pivot is documented, not implemented. The current runtime and contracts
+are still the legacy relationship-first model.
+
+| Area | Current runtime | Planned ReMaster direction |
+|---|---|---|
+| Primary anchor | `Person` + upcoming `OccasionNode` | `Account` + `Contact` + `ActivityEvent` |
+| Relationship taxonomy | Personal relationship catalog on the person record | Business relationship type on the account, stakeholder role on the contact/account link |
+| Timeline/history | `Delivery` history plus occasion-derived follow-up prompts | Unified account/contact activity timeline, with delivery as one event family |
+| Product surfaces | Home, People, Workspace, History, Profile | Account list/detail, contact/stakeholder views, activity timeline, outreach workflow |
+
+Reference:
+
+- [`REMASTER_MODEL.md`](./REMASTER_MODEL.md) is the forward-looking model
+  blueprint.
+- [`CURRENT_ARCHITECTURE.md`](./CURRENT_ARCHITECTURE.md) still describes the
+  live code and request flows.
+- No schema, route, or runtime migration has shipped as part of this pivot
+  documentation pass.
 
 ## Execution Log
 

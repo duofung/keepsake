@@ -4,8 +4,8 @@ import IconSprite from "@/components/IconSprite";
 import Rail from "@/components/Rail";
 
 export const metadata: Metadata = {
-  title: "Heartline",
-  description: "Nurture every connection with timely, meaningful notes.",
+  title: "ReMaster",
+  description: "Business relationship management with timely follow-ups and draft outreach.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

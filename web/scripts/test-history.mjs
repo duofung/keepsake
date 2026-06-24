@@ -118,10 +118,10 @@ try {
   check("response is a non-empty HTML string", typeof body === "string" && body.length > 0);
 
   // ── Page header + data-driven subtitle ───────────────────────────────
-  check("contains header 'History'", body.includes("History"));
+  check("contains header 'Activity'", body.includes("Activity"));
   check(
-    "subtitle: 'Everything you've sent · 4 Heartline moments and counting'",
-    body.includes("Everything you've sent · 4 Heartline moments and counting"),
+    "subtitle: 'Every queued and completed touchpoint · 4 deliveries recorded'",
+    body.includes("Every queued and completed touchpoint · 4 deliveries recorded"),
   );
 
   // ── Month groups (mock data spans Mar / Feb / Jan 2026) ──────────────

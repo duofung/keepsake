@@ -48,17 +48,17 @@ export default async function HomePage() {
       <div className="ks-page-inner" style={{ width: "min(100%, 1060px)" }}>
         <div style={headerRow}>
           <div>
-            <p style={eyebrow}>Heartline home</p>
+            <p style={eyebrow}>ReMaster dashboard</p>
             <h1 style={pageTitle}>
               Good evening, {user.name}
             </h1>
             <p style={pageSubcopy}>
-              Nurture every connection with meaningful notes for {peopleCount} {peopleCount === 1 ? "person" : "people"}.
-              {" "}{datesComingUp} {datesComingUp === 1 ? "moment" : "moments"} could use your care soon.
+              Stay on top of follow-ups, milestone dates, and outreach across {peopleCount} {peopleCount === 1 ? "contact" : "contacts"}.
+              {" "}{datesComingUp} upcoming {datesComingUp === 1 ? "date needs" : "dates need"} attention soon.
             </p>
           </div>
           <Link href="/people" className="heartline-button" style={{ whiteSpace: "nowrap" }}>
-            <Icon name="i-plus" /> Add someone
+            <Icon name="i-plus" /> Add contact
           </Link>
         </div>
 
@@ -66,31 +66,33 @@ export default async function HomePage() {
           <section className="heartline-card" style={heroCard}>
             <div style={heroCopy}>
               <span className="heartline-pill">
-                <Icon name="i-heart" />
-                {focusOccasion ? timingText(focusOccasion.daysUntil) : "Relationship focus"}
+                <Icon name="i-users" />
+                {focusOccasion ? timingText(focusOccasion.daysUntil) : "Priority contact"}
               </span>
               <h2 style={heroTitle}>
                 {focusPerson && focusOccasion
-                  ? `${focusOccasion.label} with ${focusPerson.name}`
-                  : "Start with someone close"}
+                  ? `Prepare ${focusOccasion.label} outreach for ${focusPerson.name}`
+                  : focusPerson
+                    ? `Plan the next touchpoint with ${focusPerson.name}`
+                    : "Start with a priority contact"}
               </h2>
               <p style={heroBody}>
-                Heartline helps you turn dates, memories, and small details into thoughtful messages
-                that keep meaningful relationships warm.
+                ReMaster keeps contact context, key dates, and draft outreach in one place so
+                client, partner, and key contact follow-up stays consistent.
               </p>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "auto" }}>
                 <Link href={`/workspace?person=${focusPerson?.id ?? ""}`} className="heartline-button">
-                  <Icon name="i-edit" /> Write it with me
+                  <Icon name="i-edit" /> Draft outreach
                 </Link>
                 <Link href="/people" className="heartline-button heartline-button--soft">
-                  <Icon name="i-users" /> Review circle
+                  <Icon name="i-users" /> Review contacts
                 </Link>
               </div>
             </div>
             <div style={heroImageWrap}>
               <Image
                 src="/images/heartline-hero.png"
-                alt="A warm tabletop with cards, photos, flowers, and a reminder calendar"
+                alt="A desk with notes, a calendar, and correspondence planning materials"
                 fill
                 priority
                 sizes="(min-width: 1000px) 520px, 100vw"
@@ -101,9 +103,13 @@ export default async function HomePage() {
 
           <aside style={{ display: "grid", gap: 14 }}>
             <section className="heartline-card" style={sideCard}>
-              <p className="heartline-section-label">UPCOMING MOMENTS</p>
+              <p className="heartline-section-label">UPCOMING FOLLOW-UPS</p>
               <div style={{ display: "grid", gap: 10 }}>
-                {upcoming.map((occasion) => {
+                {upcoming.length === 0 ? (
+                  <p style={{ margin: 0, fontSize: 12.5, color: "var(--gray-2)", lineHeight: 1.6 }}>
+                    Nothing urgent in the next 30 days. Review your contacts to plan proactive outreach.
+                  </p>
+                ) : upcoming.map((occasion) => {
                   const person = personById.get(occasion.personId);
                   return (
                     <Link
@@ -115,7 +121,7 @@ export default async function HomePage() {
                         <Icon name={occasionIcon[occasion.kind]} />
                       </span>
                       <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={momentTitle}>{person?.name ?? "Someone close"}</span>
+                        <span style={momentTitle}>{person?.name ?? "Priority contact"}</span>
                         <span style={momentMeta}>{occasion.label} · {timingText(occasion.daysUntil)}</span>
                       </span>
                       <span style={momentArrow}><Icon name="i-chev" /></span>
@@ -128,22 +134,22 @@ export default async function HomePage() {
             <section className="heartline-card" style={quoteCard}>
               <span style={quoteMark}>“</span>
               <p style={quoteText}>
-                Small remembered details become the quiet architecture of meaningful relationships.
+                The best business relationship systems make follow-up feel timely, prepared, and personal.
               </p>
-              <p style={quoteMeta}>Heartline relationship practice</p>
+              <p style={quoteMeta}>ReMaster operating principle</p>
             </section>
           </aside>
         </div>
 
         <div style={{ marginTop: 28 }}>
-          <p className="heartline-section-label">PEOPLE YOU'RE NURTURING</p>
+          <p className="heartline-section-label">CONTACTS TO REVIEW</p>
           <div style={peopleGrid}>
             {people.map((p) => {
               const rel = relationshipById.get(p.relationshipId);
               const culture = cultureById.get(p.cultureId);
               const occ = occasionById(p.nextOccasionId);
               const days = occ?.daysUntil ?? -60;
-              const label = occ?.label ?? "Last note";
+              const label = occ?.label ?? "Last touchpoint";
               const text = nodeChipText(label, days);
               const lvl = urgencyLevel(days);
               return (
@@ -161,7 +167,7 @@ export default async function HomePage() {
                       </div>
                       <div style={personTags}>
                         {rel && <span style={{ ...miniTag, background: rel.paletteBg, color: rel.paletteFg }}>{rel.label}</span>}
-                        <span style={miniTagMuted}>{p.identityTags[0] ?? culture?.label ?? "Relationship"}</span>
+                        <span style={miniTagMuted}>{p.identityTags[0] ?? culture?.label ?? "Contact"}</span>
                       </div>
                     </div>
                   </div>
@@ -172,15 +178,15 @@ export default async function HomePage() {
                     <span style={{ color: metaColor[lvl] }}>{text}</span>
                   </div>
                   <div style={quickActions}>
-                    <span>Draft note</span>
-                    <span>Remember detail</span>
+                    <span>Draft outreach</span>
+                    <span>Log context</span>
                   </div>
                 </Link>
               );
             })}
             <Link href="/people" style={addCard}>
               <span style={{ fontSize: 22 }}><Icon name="i-plus" /></span>
-              <span style={{ fontWeight: 650 }}>See all people</span>
+              <span style={{ fontWeight: 650 }}>See all contacts</span>
             </Link>
           </div>
         </div>

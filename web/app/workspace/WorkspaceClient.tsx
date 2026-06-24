@@ -402,12 +402,12 @@ export default function WorkspaceClient({
 
   const nodeText = occasion
     ? nodeChipText(occasion.label, occasion.daysUntil)
-    : "Last note · 2 mo ago";
+    : "Last touchpoint · 2 mo ago";
   const nodeIcon = occasion ? occasionIcon[occasion.kind] : "i-bulb";
   const activeVersionId = selectedVersionId ?? draft?.id ?? null;
   const senderLabel = currentUser.sendingAccount
     ? currentUser.sendingAccount.email
-    : `${currentUser.email} (no sender configured)`;
+    : `${currentUser.email} (sender not configured)`;
 
   return (
     <div className="ks-workspace-frame">
@@ -424,13 +424,13 @@ export default function WorkspaceClient({
           >
             <Icon name="i-arrow-left" />
           </button>
-          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-            <Avatar name={person.name} bg={person.avatarBg} fg={person.avatarFg} size={30} fontSize={12} />
-            <div>
-              <h3 style={{ fontSize: 14, fontWeight: 600 }}>To {person.name}</h3>
-              <p style={{ fontSize: 11, color: "var(--gray-3)" }}>
-                {relationship.label}{person.since ? ` · ${person.since}` : ""}
-              </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+              <Avatar name={person.name} bg={person.avatarBg} fg={person.avatarFg} size={30} fontSize={12} />
+              <div>
+                <h3 style={{ fontSize: 14, fontWeight: 600 }}>Outreach to {person.name}</h3>
+                <p style={{ fontSize: 11, color: "var(--gray-3)" }}>
+                  {relationship.label}{person.since ? ` · ${person.since}` : ""}
+                </p>
             </div>
           </div>
         </div>
@@ -523,7 +523,7 @@ export default function WorkspaceClient({
                     setInput("");
                   }
                 }}
-                placeholder="Tell me how to change the email…"
+                placeholder="Tell me how to change the outreach…"
                 style={{
                   flex: 1, border: "none", background: "none", fontSize: 12,
                   outline: "none", color: "var(--ink)",
@@ -689,14 +689,14 @@ export default function WorkspaceClient({
             <div className="ks-mail-body">
               <section>
                 <div style={{ fontSize: 10.5, color: "var(--gray-3)", fontWeight: 600, letterSpacing: "0.03em", marginBottom: 8 }}>
-                  EMAIL BODY
+                  OUTREACH DRAFT
                 </div>
                 <textarea
                   value={bodyText}
                   onChange={(e) => setBodyText(e.target.value)}
                   data-testid="message-body-editor"
                   aria-label="Email body"
-                  placeholder="Write the email body..."
+                  placeholder="Write the outreach body..."
                   style={{
                     width: "100%", minHeight: 210, resize: "vertical",
                     border: "none", borderRadius: 0, background: "transparent",
@@ -709,7 +709,7 @@ export default function WorkspaceClient({
 
             <section style={{ marginTop: 16, borderTop: "0.5px solid var(--line)", paddingTop: 12 }}>
               <div style={{ fontSize: 10.5, color: "var(--gray-3)", fontWeight: 600, marginBottom: 8, letterSpacing: "0.03em" }}>
-                CARD VERSION
+                PRINT VERSION
               </div>
               {hasCard && draft?.attachedCard ? (
                 <div style={{
@@ -776,7 +776,7 @@ export default function WorkspaceClient({
                   }}>
                     <Icon name="i-cards" />
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 500, display: "block" }}>Add card version</span>
+                  <span style={{ fontSize: 12, fontWeight: 500, display: "block" }}>Add print version</span>
                 </button>
               )}
             </section>
@@ -792,7 +792,7 @@ export default function WorkspaceClient({
             <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 11, color: "var(--gray-3)" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 14 }}><Icon name="i-clock" /></span>
-                Send now, or schedule for the day
+                Queue now, or hold for the right day
               </span>
               <span
                 role="status"
@@ -815,7 +815,7 @@ export default function WorkspaceClient({
                 aria-busy={sending}
                 style={{ ...btnSmGhost, opacity: sending ? 0.55 : 1, cursor: sending ? "default" : "pointer" }}
               >
-                <Icon name="i-truck" /> {sending ? "Queuing…" : "Mail as card"}
+                <Icon name="i-truck" /> {sending ? "Queuing…" : "Queue print card"}
               </button>
               <button
                 onClick={() => void queueDelivery("email")}
@@ -823,7 +823,7 @@ export default function WorkspaceClient({
                 aria-busy={sending}
                 style={{ ...btnSmPri, opacity: sending ? 0.55 : 1, cursor: sending ? "default" : "pointer" }}
               >
-                <Icon name="i-send" /> {sending ? "Queuing…" : "Send email"}
+                <Icon name="i-send" /> {sending ? "Queuing…" : "Queue email"}
               </button>
             </div>
           </div>
@@ -908,13 +908,13 @@ function mapSendError(status: number, code: string | undefined): string {
   }
   if (status === 409) {
     if (code === "sender_not_connected") {
-      return "Connect Gmail from Profile before sending an email.";
+      return "Connect Gmail from Account before queueing an email.";
     }
     if (code === "sender_expired") {
-      return "Your Gmail connection has expired. Reconnect from Profile.";
+      return "Your Gmail connection has expired. Reconnect from Account.";
     }
     if (code === "no_draft") {
-      return "Generate or refresh the draft before sending.";
+      return "Generate or refresh the draft before queueing.";
     }
   }
   return GENERIC_SEND_ERROR;
