@@ -125,9 +125,10 @@ try {
     check("中文 follow-up reviewUrl -> /people",
       res.body?.reviewUrl === "/people",
       `reviewUrl=${res.body?.reviewUrl}`);
-    check("中文 follow-up reply points to Keepsake",
+    check("中文 follow-up reply points to ReMaster",
       typeof res.body?.text === "string"
-        && res.body.text.includes("Keepsake"));
+        && res.body.text.includes("ReMaster")
+        && !res.body.text.includes("Keepsake"));
   }
 
   // ── relationship_followup_query (English) ─────────────────────────
@@ -171,8 +172,10 @@ try {
       res.body?.reviewUrl?.includes("contextHint=")
         && decodeURIComponent(res.body.reviewUrl).includes("今天升职了"),
       `reviewUrl=${res.body?.reviewUrl}`);
-    check("中文 compose reply points to Keepsake review",
-      res.body?.text?.includes("review") && res.body?.text?.includes("Keepsake"));
+    check("中文 compose reply points to ReMaster review",
+      res.body?.text?.includes("Review")
+        && res.body?.text?.includes("ReMaster")
+        && !res.body?.text?.includes("Keepsake"));
   }
 
   // ── compose_request (English) ─────────────────────────────────────
@@ -204,7 +207,7 @@ try {
       `reviewUrl=${res.body?.reviewUrl}`);
     check("unknown reply explains what we DO support",
       res.body?.text?.includes("follow-up")
-        || res.body?.text?.includes("drafting"));
+        || res.body?.text?.includes("outreach drafting"));
   }
 
   // ── Response never claims execution ────────────────────────────────
@@ -222,6 +225,9 @@ try {
     const reply = (res.body?.text ?? "").toLowerCase();
     check(`reply for "${text.slice(0, 24)}…" does NOT claim execution`,
       !/\b(sent|delivered|queued)\b/.test(reply),
+      `reply=${reply}`);
+    check(`reply for "${text.slice(0, 24)}…" does NOT mention Keepsake`,
+      !reply.includes("keepsake"),
       `reply=${reply}`);
   }
 } catch (error) {

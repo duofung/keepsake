@@ -512,6 +512,9 @@ try {
     check("unlinked Telegram text links to Profile anchor",
       text.includes(`${base}/profile#command-channels`),
       `text=${text}`);
+    check("unlinked Telegram text is ReMaster-framed",
+      text.includes("ReMaster") && !text.includes("Keepsake"),
+      `text=${text}`);
     check("unlinked Telegram text does NOT claim execution",
       !/\b(sent|delivered|queued)\b/i.test(text),
       `text=${text}`);
@@ -536,11 +539,14 @@ try {
     check("/start sends Telegram message",
       stub.requests.length === before + 1);
     const text = lastTelegramText();
-    check("/start Telegram text confirms link",
-      /linked to Keepsake/i.test(text),
+    check("/start Telegram text confirms ReMaster link",
+      /linked to ReMaster/i.test(text),
       `text=${text}`);
     check("/start Telegram text links to Profile",
       text.includes(`${base}/profile#command-channels`),
+      `text=${text}`);
+    check("/start Telegram text does NOT mention Keepsake",
+      !text.includes("Keepsake"),
       `text=${text}`);
     check("/start Telegram text does NOT claim execution",
       !/\b(sent|delivered|queued)\b/i.test(text),
@@ -580,6 +586,10 @@ try {
       JSON.stringify(res.body));
     check("tampered /start sends exactly one Telegram message",
       stub.requests.length === before + 1);
+    check("tampered /start text is ReMaster-framed",
+      lastTelegramText().includes("ReMaster")
+        && !lastTelegramText().includes("Keepsake"),
+      `text=${lastTelegramText()}`);
     const rowCount = await withClient(adminUrl, async (client) => {
       const result = await client.query(
         `SELECT count(*)::int AS count
@@ -608,6 +618,10 @@ try {
       JSON.stringify(res.body));
     check("cross-owner /start sends Telegram message",
       stub.requests.length === before + 1);
+    check("cross-owner /start text is ReMaster-framed",
+      lastTelegramText().includes("ReMaster")
+        && !lastTelegramText().includes("Keepsake"),
+      `text=${lastTelegramText()}`);
     const row = await withClient(adminUrl, async (client) => {
       const result = await client.query(
         `SELECT owner_id, status
@@ -669,6 +683,9 @@ try {
     check("active follow-up Telegram text links to /people",
       text.includes(`${base}/people`),
       `text=${text}`);
+    check("active follow-up Telegram text is ReMaster-framed",
+      text.includes("ReMaster") && !text.includes("Keepsake"),
+      `text=${text}`);
     check("active follow-up Telegram text does NOT claim execution",
       !/\b(sent|delivered|queued)\b/i.test(text),
       `text=${text}`);
@@ -694,6 +711,9 @@ try {
       `leaked=${leakedName ?? ""} text=${text}`);
     check("ownerB Telegram text uses empty-window response",
       /nothing\s+in\s+the\s+next/i.test(text),
+      `text=${text}`);
+    check("ownerB Telegram text is ReMaster-framed",
+      text.includes("ReMaster") && !text.includes("Keepsake"),
       `text=${text}`);
   }
 
@@ -731,6 +751,9 @@ try {
       text.includes("contextHint=")
         && decodeURIComponent(text).includes("今天升职了"),
       `text=${text}`);
+    check("active compose Telegram text is ReMaster-framed",
+      text.includes("ReMaster") && !text.includes("Keepsake"),
+      `text=${text}`);
     check("active compose Telegram text does NOT claim execution",
       !/\b(sent|delivered|queued)\b/i.test(text),
       `text=${text}`);
@@ -753,6 +776,10 @@ try {
     check("revoked reviewUrl -> profile command channels",
       res.body?.reviewUrl === "/profile#command-channels",
       JSON.stringify(res.body));
+    check("revoked Telegram text is ReMaster-framed",
+      lastTelegramText().includes("ReMaster")
+        && !lastTelegramText().includes("Keepsake"),
+      `text=${lastTelegramText()}`);
   }
 } catch (error) {
   process.stdout.write(`harness error: ${error?.message ?? error}\n`);

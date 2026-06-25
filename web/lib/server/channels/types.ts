@@ -6,7 +6,7 @@
 // hand it to `routeCommandEvent()` (see `router.server.ts`). The router
 // returns a `CommandResponse` the platform adapter can render back into
 // the user's chat (a reply text, optionally a structured suggested
-// action). Keepsake's web app stays the execution / review surface — the
+// action). ReMaster's web app stays the execution / review surface — the
 // channel layer NEVER sends mail, NEVER enqueues a delivery, and (in this
 // P8-A slice) NEVER touches the DB.
 
@@ -32,10 +32,10 @@ export type CommandIntent =
   | "unknown";
 
 /**
- * What Keepsake's web app should open / pre-fill if the user follows
+ * What ReMaster's web app should open / pre-fill if the user follows
  * through. The channel layer only *suggests* — it never starts the
  * action itself. Adapters that want to deep-link can render the kind
- * into a `keepsake://` URL or similar.
+ * into a ReMaster web URL or similar.
  */
 export type SuggestedAction =
   | {
@@ -51,11 +51,11 @@ export interface CommandResponse {
   /**
    * - `ok`              — channel handled the message; no follow-up needed
    * - `needs_review`    — channel acknowledged a request, but the user
-   *                       must finish (review + send) inside Keepsake.
+   *                       must finish (review + send) inside ReMaster.
    *                       This is the explicit "I started something,
    *                       you finish it" signal.
    * - `unsupported`     — router could not map the text to any intent;
-   *                       Keepsake suggests what kinds of messages it
+   *                       ReMaster suggests what kinds of messages it
    *                       understands.
    */
   readonly status: "ok" | "needs_review" | "unsupported";
@@ -63,7 +63,7 @@ export interface CommandResponse {
   readonly intent: CommandIntent;
   readonly suggestedAction?: SuggestedAction;
   /**
-   * Relative Keepsake URL the provider adapter can render as a review link.
+   * Relative ReMaster URL the provider adapter can render as a review link.
    * This is the bridge between command channels as input surfaces and the web
    * app as the only execution surface. Real provider adapters may prepend the
    * deployment origin, but the channel layer itself keeps the URL relative.

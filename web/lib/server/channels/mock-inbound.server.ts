@@ -38,7 +38,7 @@ export type MockInboundResponse =
     });
 
 const LINK_NEEDED_TEXT =
-  "Link this channel in Keepsake before I can help from here.";
+  "Link this channel in ReMaster before I can help from here.";
 
 export async function handleMockInboundCommand(
   input: unknown,

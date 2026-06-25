@@ -15,7 +15,7 @@ import type {
 // Once a provider webhook has resolved `(provider, externalUserId) → ownerId`
 // via `ChannelAccountRepository.findByProviderUser`, it calls this seam so
 // the channel reply can be specific to the user — naming the people who
-// have something coming up — instead of the generic "open Keepsake to
+// have something coming up — instead of the generic "open ReMaster to
 // review" reply the keyword router emits.
 //
 // Hard limits (kept aligned with the brief):
@@ -23,7 +23,7 @@ import type {
 //   - NEVER creates a draft, enqueues a delivery, calls Gmail,
 //     touches `currentUser*`, or talks to a real provider,
 //   - the channel still surfaces a `suggestedAction` deep link; the actual
-//     send / review work happens inside Keepsake.
+//     send / review work happens inside ReMaster web.
 //
 // The router's classifier stays the source of truth for intent. We only
 // enrich the response text + intent payload AFTER intent is decided.
@@ -86,16 +86,16 @@ function selectFollowups(
 function renderFollowupText(items: readonly FollowupItem[]): string {
   if (items.length === 0) {
     return (
-      "Nothing in the next 30 days needs your attention right now. " +
-      "Open Keepsake when you want to look ahead further."
+      "Nothing in the next 30 days needs outreach review right now. " +
+      "Open ReMaster when you want to look ahead across accounts and contacts."
     );
   }
   const lines = items.map((item) =>
     `• ${item.personName} — ${item.occasionLabel} in ${renderDays(item.daysUntil)}`,
   );
   return (
-    `Here's what's coming up:\n${lines.join("\n")}\n` +
-    `Open Keepsake to draft and send when you're ready.`
+    `Here's what's coming up for outreach review:\n${lines.join("\n")}\n` +
+    `Open ReMaster to review, draft, and send when you're ready.`
   );
 }
 

@@ -8,12 +8,13 @@ contact-aware, and activity-driven. The shipped runtime is still mostly the
 earlier person-centered workflow for drafting thoughtful outreach and sending
 it through a review-first flow, but Home, People, Workspace, and History now
 read a compatibility account/contact/activity overview on top of the current
-data, and Profile / Sign-in are framed as ReMaster workspace surfaces.
+data, Profile / Sign-in are framed as ReMaster workspace surfaces, and
+command-channel replies now use ReMaster review-pointer language.
 
 Today the codebase is still an MVP-quality local web app with DB-backed seams,
-Gmail queue infrastructure, and a provider-agnostic command-channel foundation.
-It has not yet migrated schema or most runtime verticals to the planned
-ReMaster account/contact/activity model.
+Gmail queue infrastructure, and a ReMaster-framed provider-agnostic
+command-channel foundation. It has not yet migrated schema or most runtime
+verticals to the planned ReMaster account/contact/activity model.
 
 ## ReMaster Pivot Snapshot
 
@@ -25,7 +26,7 @@ ReMaster account/contact/activity model.
 - Still not migrated: there is no ReMaster schema migration yet, and the
   draft/send/delivery/webhook contracts remain legacy person-centered storage;
   auth, Gmail sender connect, and command-channel runtimes keep their current
-  contracts.
+  contracts while channel replies point back to ReMaster for review.
 - Planned evolution: `Account`, `Contact`, stakeholder role, and
   `ActivityEvent` centered.
 - Planning reference: `web/docs/REMASTER_MODEL.md`.
@@ -35,8 +36,8 @@ ReMaster account/contact/activity model.
 - Home dashboard for upcoming follow-ups and relationship milestones.
 - Compatibility ReMaster overview seam powering Home, People, Workspace, and
   History with derived accounts, contacts, and activities over the current
-  runtime payloads; Profile / Sign-in are ReMaster-framed without changing
-  auth, Gmail, or command-channel behavior.
+  runtime payloads; Profile / Sign-in and command-channel replies are
+  ReMaster-framed without changing auth, Gmail, or channel behavior.
 - People Accounts / Contacts view with ReMaster account grouping, legacy detail
   drawer continuity, and the existing Add contact flow.
 - Workspace account outreach surface for generating, editing, autosaving, and
@@ -50,8 +51,10 @@ ReMaster account/contact/activity model.
   and smoke tests.
 - Gmail delivery queue, bounded worker loop, webhook status ingest, and runbook.
 - Optional OpenAI-compatible draft generator runtime.
-- Mock / dev command-channel route plus DB-backed identity resolution for future
-  WhatsApp, Telegram, Slack, and similar adapters.
+- ReMaster-framed mock / dev command-channel route plus DB-backed identity
+  resolution for future WhatsApp, Telegram, Slack, and similar adapters.
+  Channels act as inbound command assistants and return review pointers into
+  the web app; they do not draft, queue, or send.
 
 ## Repository Layout
 

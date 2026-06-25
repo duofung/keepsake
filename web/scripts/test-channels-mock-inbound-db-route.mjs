@@ -375,6 +375,10 @@ try {
     check("unlinked reviewUrl points to Profile command channels",
       res.body?.reviewUrl === "/profile#command-channels",
       JSON.stringify(res.body));
+    check("unlinked reply is ReMaster-framed",
+      res.body?.text?.includes("ReMaster")
+        && !res.body?.text?.includes("Keepsake"),
+      JSON.stringify(res.body));
     check("unlinked did NOT fall back to DEV_OWNER",
       res.body?.ownerId === undefined && res.body?.intent === "unknown",
       JSON.stringify(res.body));
@@ -426,8 +430,9 @@ try {
       labelHit, `text=${ownerAFollowUpText}`,
     );
     check(
-      "active follow-up text still points the user back to Keepsake to act",
-      /open\s+keepsake/i.test(ownerAFollowUpText),
+      "active follow-up text points the user back to ReMaster to act",
+      /open\s+remaster/i.test(ownerAFollowUpText)
+        && !/keepsake/i.test(ownerAFollowUpText),
       `text=${ownerAFollowUpText}`,
     );
     check(
@@ -472,6 +477,11 @@ try {
       /nothing\s+in\s+the\s+next/i.test(ownerBText),
       `text=${ownerBText}`,
     );
+    check(
+      "ownerB follow-up text is ReMaster-framed",
+      /remaster/i.test(ownerBText) && !/keepsake/i.test(ownerBText),
+      `text=${ownerBText}`,
+    );
   }
 
   {
@@ -507,6 +517,9 @@ try {
     check("active compose response does NOT claim execution",
       !/\b(sent|delivered|queued)\b/.test(bodyText),
       bodyText);
+    check("active compose response is ReMaster-framed",
+      bodyText.includes("remaster") && !bodyText.includes("keepsake"),
+      bodyText);
   }
 
   {
@@ -524,6 +537,10 @@ try {
       JSON.stringify(res.body));
     check("revoked reviewUrl points to Profile command channels",
       res.body?.reviewUrl === "/profile#command-channels",
+      JSON.stringify(res.body));
+    check("revoked reply is ReMaster-framed",
+      res.body?.text?.includes("ReMaster")
+        && !res.body?.text?.includes("Keepsake"),
       JSON.stringify(res.body));
   }
 } catch (error) {

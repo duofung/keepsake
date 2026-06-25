@@ -86,10 +86,10 @@ interface TelegramMessageContext {
 
 const TELEGRAM_SECRET_HEADER = "x-telegram-bot-api-secret-token";
 const LINK_NEEDED_TEXT =
-  "Link Telegram in Keepsake before I can help from here.";
+  "Link Telegram in ReMaster before I can help from here.";
 const IGNORED_TEXT = "Only text messages are supported right now.";
 const NO_EXECUTION_TEXT =
-  "Keepsake will never send from Telegram. Review and finish in the web app.";
+  "ReMaster will not send from Telegram. Review and finish in the web app.";
 
 export async function handleTelegramInboundUpdate(
   input: unknown,
@@ -330,7 +330,7 @@ function renderTelegramText(input: {
 }): string {
   const lines = [input.text.trim()];
   if (input.reviewUrl) {
-    lines.push(`Review in Keepsake: ${absoluteReviewUrl(input.config, input.reviewUrl)}`);
+    lines.push(`Review in ReMaster: ${absoluteReviewUrl(input.config, input.reviewUrl)}`);
   }
   lines.push(NO_EXECUTION_TEXT);
   return lines.join("\n\n");

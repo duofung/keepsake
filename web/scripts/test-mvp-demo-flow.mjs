@@ -194,6 +194,9 @@ try {
   }, { headers: {} });
   check("mock channel follow-up -> 200", followup.status === 200, `status=${followup.status}`);
   check("mock channel follow-up returns reviewUrl", followup.json?.reviewUrl === "/people");
+  check("mock channel follow-up is ReMaster-framed",
+    String(followup.json?.text ?? "").includes("ReMaster")
+      && !String(followup.json?.text ?? "").includes("Keepsake"));
   check("mock channel follow-up does not claim execution",
     !/\b(sent|delivered|queued)\b/i.test(followup.body));
 
@@ -202,6 +205,9 @@ try {
   }, { headers: {} });
   check("mock channel compose -> 200", compose.status === 200, `status=${compose.status}`);
   check("mock channel compose requires review", compose.json?.status === "needs_review");
+  check("mock channel compose is ReMaster-framed",
+    String(compose.json?.text ?? "").includes("ReMaster")
+      && !String(compose.json?.text ?? "").includes("Keepsake"));
   check("mock channel compose opens Workspace", String(compose.json?.reviewUrl ?? "").startsWith("/workspace"));
   check("mock channel compose extracts recipient", compose.json?.suggestedAction?.recipientHint === "Helen");
 

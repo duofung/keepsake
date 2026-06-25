@@ -88,7 +88,7 @@ export async function linkTelegramAccountFromStartToken(
       return {
         ok: false,
         code: "not_configured",
-        text: "Telegram linking is not configured. Open Keepsake to manage command channels.",
+        text: "Telegram linking is not configured. Open ReMaster to manage command channels.",
         reviewUrl: "/profile#command-channels",
       };
     }
@@ -96,8 +96,8 @@ export async function linkTelegramAccountFromStartToken(
       ok: false,
       code: verified.code,
       text: verified.code === "expired_link"
-        ? "That Telegram link expired. Open Keepsake to generate a fresh link."
-        : "That Telegram link is not valid. Open Keepsake to generate a fresh link.",
+        ? "That Telegram link expired. Open ReMaster to generate a fresh link."
+        : "That Telegram link is not valid. Open ReMaster to generate a fresh link.",
       reviewUrl: "/profile#command-channels",
     };
   }
@@ -113,7 +113,7 @@ export async function linkTelegramAccountFromStartToken(
     return {
       ok: true,
       account,
-      text: "Telegram is linked to Keepsake. You can now ask me about relationships from here.",
+      text: "Telegram is linked to ReMaster. You can now ask me about account/contact follow-ups from here.",
       reviewUrl: "/profile#command-channels",
     };
   } catch (error) {
@@ -122,7 +122,7 @@ export async function linkTelegramAccountFromStartToken(
       return {
         ok: false,
         code: "already_linked",
-        text: "This Telegram account is already linked to a different Keepsake account.",
+        text: "This Telegram account is already linked to a different ReMaster workspace.",
         reviewUrl: "/profile#command-channels",
       };
     }

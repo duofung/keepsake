@@ -16,7 +16,7 @@ import type {
 //   * one place to evolve intent classification (LLM, keyword, hybrid),
 //   * no DB / OpenAI / queue dependencies — the router can be exercised
 //     by a smoke that never boots Postgres or a real provider,
-//   * "Keepsake stays the execution surface" enforced at the type level:
+//   * "ReMaster web stays the execution surface" enforced at the type level:
 //     even a successful `compose_request` returns `needs_review`, never
 //     `ok`, so no adapter can claim it sent mail.
 //
@@ -40,11 +40,11 @@ const COMPOSE_PATTERNS: readonly RegExp[] = [
 ];
 
 const FOLLOWUP_REPLY =
-  "I found a few relationships that may need attention. Open Keepsake to review them.";
+  "I found account/contact follow-ups ready for outreach review. Open ReMaster to review them.";
 const COMPOSE_REPLY =
-  "I drafted the request, but you'll review and send it in Keepsake.";
+  "I organized the outreach request. Review and send it in ReMaster.";
 const UNKNOWN_REPLY =
-  "I can help with relationship follow-ups or drafting a message.";
+  "I can help with account/contact follow-ups or outreach drafting in ReMaster.";
 
 export async function routeCommandEvent(
   event: CommandEvent,
