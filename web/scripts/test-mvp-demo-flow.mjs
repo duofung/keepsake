@@ -149,7 +149,7 @@ try {
   const pages = [
     { path: "/", label: "Home", expected: "MVP Demo" },
     { path: "/people", label: "People", expected: "5 accounts / 5 contacts in the ReMaster compatibility view" },
-    { path: "/workspace?person=p-lin", label: "Workspace", expected: "Outreach to Lin" },
+    { path: "/workspace?person=p-lin", label: "Workspace", expected: "Account outreach for Lin" },
     { path: "/history", label: "History", expected: "Every queued and completed touchpoint" },
     { path: "/profile", label: "Profile", expected: "Command channels" },
   ];

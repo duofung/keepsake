@@ -16,7 +16,19 @@ import type {
   Person,
   Relationship,
 } from "@/lib/domain";
-import { cardGradientByHint, nodeChipText, occasionIcon, toneIcon } from "@/lib/presentation";
+import type {
+  RemasterDashboardAccount,
+  RemasterDashboardActivity,
+  RemasterDashboardOverview,
+  RemasterRelationshipType,
+} from "@/lib/remaster/read-model";
+import {
+  cardGradientByHint,
+  deliveryStatusBadge,
+  nodeChipText,
+  occasionIcon,
+  toneIcon,
+} from "@/lib/presentation";
 import {
   DraftAutosaveController,
   type SaveStatus,
@@ -41,9 +53,11 @@ export interface WorkspaceSendingAccount {
 export default function WorkspaceClient({
   currentUser,
   initialPayload,
+  remasterOverview,
 }: {
   currentUser: WorkspaceCurrentUser;
   initialPayload: PeoplePayload;
+  remasterOverview: RemasterDashboardOverview;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -123,6 +137,39 @@ export default function WorkspaceClient({
       ? payload.occasions.find((o) => o.id === person.nextOccasionId) ?? null
       : null,
     [payload, person],
+  );
+  const activityById = useMemo(
+    () => new Map(
+      [...remasterOverview.upcomingActivities, ...remasterOverview.recentActivities]
+        .map((activity) => [activity.id, activity]),
+    ),
+    [remasterOverview.recentActivities, remasterOverview.upcomingActivities],
+  );
+  const account = useMemo(
+    () => person
+      ? remasterOverview.accounts.find((item) => item.primaryContactId === person.id) ?? null
+      : null,
+    [person, remasterOverview.accounts],
+  );
+  const contact = useMemo(
+    () => person
+      ? remasterOverview.contacts.find((item) => item.id === person.id) ?? null
+      : null,
+    [person, remasterOverview.contacts],
+  );
+  const currentActivity = useMemo(
+    () => {
+      if (!account) return null;
+      if (account.nextActivityId) {
+        const explicit = activityById.get(account.nextActivityId);
+        if (explicit) return explicit;
+      }
+      return remasterOverview.upcomingActivities.find((activity) => (
+        activity.accountId === account.id
+        && activity.contactId === account.primaryContactId
+      )) ?? null;
+    },
+    [account, activityById, remasterOverview.upcomingActivities],
   );
 
   const applyDraft = useCallback((
@@ -400,10 +447,29 @@ export default function WorkspaceClient({
     return <div style={{ padding: 24, color: "var(--gray-2)", fontSize: 13 }}>Loading…</div>;
   }
 
-  const nodeText = occasion
-    ? nodeChipText(occasion.label, occasion.daysUntil)
-    : "Last touchpoint · 2 mo ago";
-  const nodeIcon = occasion ? occasionIcon[occasion.kind] : "i-bulb";
+  const accountName = account?.name ?? person.name;
+  const primaryContactName = contact?.displayName ?? person.name;
+  const accountTypeLabel = account
+    ? remasterRelationshipTypeLabel[account.relationshipType]
+    : relationship.label;
+  const relationshipDetail = account?.relationshipLabel && account.relationshipLabel !== accountTypeLabel
+    ? `${account.relationshipLabel} · ${accountTypeLabel} account`
+    : `${accountTypeLabel} account`;
+  const accountContextLabel = account?.contextLabel ?? person.since ?? "contact-led account";
+  const secondaryLabel = account?.secondaryLabel
+    && account.secondaryLabel !== account.contextLabel
+    && account.secondaryLabel !== account.relationshipLabel
+    ? account.secondaryLabel
+    : "";
+  const accountMetaText = [
+    `Primary contact: ${primaryContactName}`,
+    relationshipDetail,
+    accountContextLabel,
+    secondaryLabel,
+  ].filter(Boolean).join(" · ");
+  const activitySummary = workspaceActivitySummary(account, currentActivity, occasion);
+  const nodeText = activitySummary.text;
+  const nodeIcon = activitySummary.icon;
   const activeVersionId = selectedVersionId ?? draft?.id ?? null;
   const senderLabel = currentUser.sendingAccount
     ? currentUser.sendingAccount.email
@@ -425,11 +491,11 @@ export default function WorkspaceClient({
             <Icon name="i-arrow-left" />
           </button>
             <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-              <Avatar name={person.name} bg={person.avatarBg} fg={person.avatarFg} size={30} fontSize={12} />
+              <Avatar name={accountName} bg={person.avatarBg} fg={person.avatarFg} size={30} fontSize={12} />
               <div>
-                <h3 style={{ fontSize: 14, fontWeight: 600 }}>Outreach to {person.name}</h3>
+                <h3 style={{ fontSize: 14, fontWeight: 600 }}>Account outreach for {accountName}</h3>
                 <p style={{ fontSize: 11, color: "var(--gray-3)" }}>
-                  {relationship.label}{person.since ? ` · ${person.since}` : ""}
+                  {accountMetaText}
                 </p>
             </div>
           </div>
@@ -689,7 +755,7 @@ export default function WorkspaceClient({
             <div className="ks-mail-body">
               <section>
                 <div style={{ fontSize: 10.5, color: "var(--gray-3)", fontWeight: 600, letterSpacing: "0.03em", marginBottom: 8 }}>
-                  OUTREACH DRAFT
+                  ACCOUNT OUTREACH DRAFT
                 </div>
                 <textarea
                   value={bodyText}
@@ -884,6 +950,44 @@ function saveStatusLabel(status: "idle" | "saving" | "saved" | "error"): string 
     default:
       return "Edits save automatically";
   }
+}
+
+const remasterRelationshipTypeLabel: Record<RemasterRelationshipType, string> = {
+  partner: "Partner",
+  personal: "Personal",
+  network: "Network",
+  colleague: "Colleague",
+};
+
+function workspaceActivitySummary(
+  account: RemasterDashboardAccount | null,
+  currentActivity: RemasterDashboardActivity | null,
+  occasion: OccasionNode | null,
+): { text: string; icon: string } {
+  if (currentActivity && currentActivity.daysUntil !== null) {
+    return {
+      text: `Next activity · ${nodeChipText(currentActivity.title, currentActivity.daysUntil)}`,
+      icon: occasionIcon[currentActivity.occasionKind ?? "check-in"],
+    };
+  }
+
+  if (account?.lastDeliveryStatus) {
+    const badge = deliveryStatusBadge[account.lastDeliveryStatus];
+    const deliveryDate = account.lastDeliveryAtISO ? ` · ${account.lastDeliveryAtISO.slice(0, 10)}` : "";
+    return {
+      text: `Last delivery · ${badge.label}${deliveryDate}`,
+      icon: badge.icon,
+    };
+  }
+
+  if (occasion) {
+    return {
+      text: `Next activity · ${nodeChipText(occasion.label, occasion.daysUntil)}`,
+      icon: occasionIcon[occasion.kind],
+    };
+  }
+
+  return { text: "No scheduled activity", icon: "i-bulb" };
 }
 
 // Mirrors the server-side `EMAIL_RE` in `lib/server/delivery-send/mock.server.ts`.

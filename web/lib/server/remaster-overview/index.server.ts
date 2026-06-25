@@ -11,6 +11,9 @@ export interface RemasterPeopleCompatibilityView {
   legacyPayload: PeoplePayload;
 }
 
+// Same shape for now; the named alias keeps Workspace consumers explicit.
+export type RemasterWorkspaceCompatibilityView = RemasterPeopleCompatibilityView;
+
 export async function getRemasterDashboardOverview(): Promise<RemasterDashboardOverview> {
   const view = await getRemasterPeopleCompatibilityView();
   return view.overview;
@@ -23,4 +26,8 @@ export async function getRemasterPeopleCompatibilityView(): Promise<RemasterPeop
     overview: buildRemasterDashboardOverview(payload, deliveries),
     legacyPayload: payload,
   };
+}
+
+export async function getRemasterWorkspaceCompatibilityView(): Promise<RemasterWorkspaceCompatibilityView> {
+  return getRemasterPeopleCompatibilityView();
 }

@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
-import { getPeoplePayload } from "@/lib/server/people-payload/index.server";
+import { getRemasterWorkspaceCompatibilityView } from "@/lib/server/remaster-overview/index.server";
 import WorkspaceClient from "./WorkspaceClient";
 
 export const dynamic = "force-dynamic";
@@ -20,13 +20,17 @@ export default async function Page({ searchParams }: WorkspacePageProps) {
 
   // Sequential by design: auth guard must complete first so an
   // unauthenticated visitor in DB mode gets the /signin redirect, not a
-  // 500 from `getPeoplePayload()` racing its own currentUserIdOrThrow().
+  // 500 from the compatibility view racing its own currentUserIdOrThrow().
   const currentUser = await requireSessionUserOrRedirect(returnTo);
-  const initialPayload = await getPeoplePayload();
+  const view = await getRemasterWorkspaceCompatibilityView();
 
   return (
     <Suspense fallback={null}>
-      <WorkspaceClient currentUser={currentUser} initialPayload={initialPayload} />
+      <WorkspaceClient
+        currentUser={currentUser}
+        initialPayload={view.legacyPayload}
+        remasterOverview={view.overview}
+      />
     </Suspense>
   );
 }

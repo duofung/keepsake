@@ -2,7 +2,7 @@
 
 Where server-only orchestration lives. This directory keeps `app/` and
 `components/` away from `lib/mock.ts`, SQL, crypto, and future auth/LLM
-clients. People payload, the ReMaster compatibility runtime for Home + People,
+clients. People payload, the ReMaster compatibility runtime for Home + People + Workspace,
 draft generation orchestration, latest draft restore, draft version history,
 draft context, delivery history, and the send-boundary queue now have
 DB-capable runtime verticals.
@@ -24,7 +24,7 @@ code; production auth/KMS remain later passes.
 lib/server/
 ├── README.md
 ├── remaster-overview/
-│   └── index.server.ts      ← current: compatibility account/contact/activity overview for Home + People
+│   └── index.server.ts      ← current: compatibility account/contact/activity overview for Home + People + Workspace
 ├── people-payload/
 │   ├── index.server.ts       ← current: mock/db dispatcher
 │   ├── mock.server.ts        ← current: mock fallback
@@ -142,7 +142,7 @@ small on purpose.
 | `auth/google-signin.server.ts` | `app/api/auth/google/start`, `app/api/auth/google/callback` | Google identity sign-in transport (P6-B). `startGoogleSignIn({ returnTo, origin })` signs a state cookie (`OAUTH_STATE_SIGNING_SECRET`, distinct cookie name from the Gmail OAuth flow), redirects to `KEEPSAKE_AUTH_GOOGLE_AUTH_URL` with `openid email profile` scope — **never** `gmail.send`. `completeGoogleSignIn({ code, state, providerError, stateCookie, origin })` verifies the state cookie, exchanges the code at `KEEPSAKE_AUTH_GOOGLE_TOKEN_ENDPOINT`, decodes the `id_token` for email + name (rejects `email_verified === false`), find-or-creates a `users` row via `UsersRepository`, and mints a `keepsake_session` cookie via the P6-A helper. Requires `KEEPSAKE_DATA_SOURCE=db`. Does NOT touch `gmail_accounts` or `CurrentUser.sendingAccount` — this is purely identity transport. Every callback response (success or failure) clears the auth state cookie. | A future provider-agnostic identity seam slots in here; the routes stay thin. | `pnpm test:auth` (default route smoke), `pnpm test:db:google-signin` (users row create/reuse + session cookie minted) |
 | `oauth/gmail.server.ts` | `GET /api/oauth/gmail/start`, `GET /api/oauth/gmail/callback` | Full Gmail OAuth flow. Start signs a state cookie with HMAC-SHA256 (`OAUTH_STATE_SIGNING_SECRET`) and redirects to Google with `openid email gmail.send` scopes. Callback verifies the cookie (signature, TTL, owner, state match), POSTs the authorization code to `GOOGLE_TOKEN_ENDPOINT` via native `fetch`, extracts the account `email` from the returned `id_token`, opens one short `transaction(ownerId, ...)` and persists encrypted refresh-token metadata through `GmailAccountRepository.upsertPrimary`. All callback responses (success or failure) clear the state cookie. The seam never sends mail and never queues anything. | Real auth replaces `currentUserIdOrThrow()`; the rest of the seam is unchanged. | `pnpm test:oauth`, `pnpm test:db:gmail-callback`, `pnpm test:boundaries` |
 | `gmail-account/disconnect.server.ts` | `POST /api/gmail/disconnect` | Idempotent disconnect of the caller's primary Gmail account. Mock mode short-circuits before opening a transaction; DB mode looks up `GmailAccountRepository.getPrimary(ownerId)` and, when a row exists, delegates to `GmailAccountRepository.disconnect(ownerId, accountId)` inside a short `transaction(ownerId, ...)`. Returns a plain `{ redirectTo }` so the route can `303` the user back to `/profile`. Shares the strict `dataSource()` from the auth seam — a misconfigured `KEEPSAKE_DATA_SOURCE` raises `AuthError("misconfigured")` and the route maps it to 500, matching `/api/session`. No Google revoke call; no SQL outside the repo. | Real auth replaces `currentUserIdOrThrow()`. Future `markExpired`-on-send-failure and Google revoke can compose on top without changing this seam. | `pnpm test:profile`, `pnpm test:gmail-disconnect`, `pnpm test:db:current-user`, `pnpm test:boundaries` |
-| `remaster-overview/index.server.ts` | Home, People | Composes `getPeoplePayload()` and `getDeliveryHistory()` into derived account/contact/activity read models. `getRemasterDashboardOverview()` powers Home; `getRemasterPeopleCompatibilityView()` powers People and returns the legacy payload only for drawer/add compatibility. Page-only, no new API contract. | Expand Workspace and History to the compatibility runtime, then replace the derivation with native ReMaster storage later. | `pnpm test:home`, `pnpm test:people` |
+| `remaster-overview/index.server.ts` | Home, People, Workspace | Composes `getPeoplePayload()` and `getDeliveryHistory()` into derived account/contact/activity read models. `getRemasterDashboardOverview()` powers Home; `getRemasterPeopleCompatibilityView()` powers People and returns the legacy payload only for drawer/add compatibility; `getRemasterWorkspaceCompatibilityView()` powers Workspace account/contact framing while keeping legacy draft compatibility. Page-only, no new API contract. | Expand History to the compatibility runtime, then replace the derivation with native ReMaster storage later. | `pnpm test:home`, `pnpm test:people`, `pnpm test:workspace` |
 | `people-payload/index.server.ts` | `GET /api/people`, `remaster-overview/index.server.ts` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db`. People no longer imports this seam directly; it receives legacy payload through the ReMaster compatibility view while `/api/people` keeps returning `PeoplePayload`. | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
@@ -274,11 +274,12 @@ and no `BYPASSRLS`. `ownerId === null` is deliberately fail-closed: the
 helper sets `app.user_id` to the empty string, `current_user_id()` returns
 `NULL`, and per-user policies see no rows.
 
-`/api/people`, Home + People (through `remaster-overview`), `/api/drafts`,
+`/api/people`, Home + People + Workspace (through `remaster-overview`), `/api/drafts`,
 `/api/drafts/versions`, and History delivery reads can now reach this DB layer when
 `KEEPSAKE_DATA_SOURCE=db`. The underlying People schema and `/api/people`
-contract are still person-centered; Workspace and History have not migrated to
-the ReMaster compatibility model yet. The default remains mock so local UI work does not
+contract are still person-centered; Workspace framing has migrated while the
+draft/send route contracts remain person/occasion-centered, and History has not
+migrated to the ReMaster compatibility model yet. The default remains mock so local UI work does not
 require Postgres. Draft generation is now mock/provider-swappable behind
 `KEEPSAKE_DRAFT_SOURCE` (default `mock`, opt-in `openai`); the route
 contract is unchanged.

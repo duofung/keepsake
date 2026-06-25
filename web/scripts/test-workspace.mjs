@@ -1,7 +1,7 @@
 // Smoke test for the Workspace page. Boots `next dev` on an isolated port
 // with dev auth env and verifies the server-rendered workspace shell includes
-// recipient and sender identity. Draft generation still happens through the
-// existing client-side route calls.
+// account/contact framing plus recipient and sender identity. Draft generation
+// still happens through the existing client-side route calls.
 //
 // Run via: pnpm test:workspace
 
@@ -113,8 +113,13 @@ try {
   const { status, body } = await getWorkspace();
 
   check("GET /workspace?person=p-lin -> 200", status === 200, `status=${status}`);
-  check("renders recipient header", body.includes("Outreach to Lin"));
-  check("renders relationship subtitle", body.includes("Partner") && body.includes("together 12 years"));
+  check("renders account outreach header", body.includes("Account outreach for Lin"));
+  check("renders account/contact subtitle",
+    body.includes("Primary contact: Lin")
+      && body.includes("Partner account")
+      && body.includes("together 12 years"));
+  check("renders next account activity", body.includes("Next activity · Anniversary · in 12 days"));
+  check("renders account outreach draft label", body.includes("ACCOUNT OUTREACH DRAFT"));
   check("renders compose To row", body.includes("To") && body.includes("Lin"));
   check("renders sender From row", body.includes("From"));
   check("renders sender name", body.includes(testUser.name));
