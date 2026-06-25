@@ -127,6 +127,9 @@ await runPhase({
     check("/signin -> 200", res.status === 200, `status=${res.status}`);
     const body = await res.text();
     check("signin page rendered", body.includes('data-testid="signin-page"'));
+    check("signin frames ReMaster as an account/contact workspace",
+      body.includes("account/contact workspace")
+        && body.includes("connect Gmail later from Profile"));
     check("Google CTA targets /api/auth/google/start",
       body.includes('data-testid="signin-google-cta"')
         && body.includes('href="/api/auth/google/start?returnTo='));

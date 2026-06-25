@@ -26,7 +26,7 @@ Rules:
 | Workstream | Status | What Is Stable | Remaining Work |
 |---|---|---|---|
 | App shell + core UI | MVP demo-ready desktop | Full-screen desktop shell, Home, People, Workspace, History, Profile, preview-safe icon fallback, page smoke tests, and an end-to-end `pnpm test:mvp-demo` flow. | Mobile pass, deeper visual polish, interaction polish. |
-| ReMaster pivot / model blueprint | Compatibility runtime started | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` now derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`, and Home + People + Workspace + History render through that compatibility runtime without changing storage/schema yet. | Plan native schema/backfill and route deprecation. |
+| ReMaster pivot / model blueprint | Compatibility runtime started | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` now derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`, and Home + People + Workspace + History render through that compatibility runtime without changing storage/schema yet. Profile + Sign-in are also ReMaster-framed while keeping the current auth, Gmail, and command-channel contracts. | Plan native schema/backfill and route deprecation. |
 | Domain model | Stable current runtime | `domain.ts`, presentation mapping, mock data, API contracts. Current runtime remains person-centered. | ReMaster runtime adoption is still ahead; add fields only when a real product flow needs them. |
 | Mock seams | Stable | People payload, draft context, draft service, delivery history dispatchers default to mock. | Delete mock fallback only after DB mode is default and production-ready. |
 | DB schema/RLS | Stable | Postgres schema, catalog seed, local dev fixtures, RLS, transaction helper. | Future migrations for real auth/session, reminders, send queue details. |
@@ -36,7 +36,7 @@ Rules:
 | Delivery history | Stable read path + ReMaster framing | DB-backed delivery-history read repository, History account/contact activity framing, and status badges for delivered/opened/failed rows. The underlying delivery storage, webhook, worker, and send contracts are unchanged. | Pagination, filters, live status refresh, native ReMaster activity storage. |
 | Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + sign-out + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start 303s when given `?returnTo=`. `POST /api/auth/signout` clears the cookie and 303s to `/signin` — no DB, no Google revoke, no Gmail disconnect. Profile's "Sign out" row is now a real form POST. `/api/session` shape unchanged. | Retiring the `DEV_OWNER_*` env fallback from the cookie-first seam; Google grant revoke on signout. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
-| Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
+| Sending account UI | Connect/Disconnect wired | ReMaster-framed Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
 | Command Channel Platform | Foundation + identity-link schema + repository runtime + DB-backed mock inbound + owner-scoped read path + Profile mock/Telegram link UI + review URLs + first Telegram adapter + Telegram start-link binding (P8-A → P8-J) | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner`, `link`, `markRevoked`; `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. P8-D: `POST /api/channels/mock/inbound` runs DB-only mock provider identity resolution (`externalUserId → owner_id`) through a worker transaction, returns `needs_link` for missing/revoked links, and only then calls the shared router. P8-E: `handleOwnerCommand(ownerId, event)` opens `transaction(ownerId, …)` and enriches a follow-up reply with that owner's real people + upcoming occasions (≤30 days, top 3 by daysUntil). P8-F: Profile gains a "Command channels" section with `POST /api/channels/mock/{link,revoke}` form actions; DB mode shows real linked rows + a link form, mock mode shows a DB-mode-required placeholder. P8-G: `CommandResponse.reviewUrl` gives adapters a relative Keepsake review link (`/people`, `/workspace?...`, `/profile#command-channels`) while preserving the no-execution invariant. P8-H: `POST /api/channels/telegram` verifies Telegram's webhook secret, normalises private text messages, resolves Telegram user ids through `channel_accounts`, and replies through Telegram Bot API. P8-I: Profile DB mode can manually link/revoke Telegram user ids. P8-J: Profile renders a signed `https://t.me/<bot>?start=<token>` link; Telegram `/start <token>` verifies the stateless token and links that Telegram user to the owner. Still no WhatsApp/Slack adapter; still no draft creation, no enqueue, no Gmail send. | WhatsApp / Slack adapters, dedupe/persistence of provider update ids, one-time nonce table if needed, notification + reminder outbound, LLM intent classifier behind the same router seam. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
@@ -54,7 +54,7 @@ relationship-first model.
 | Primary anchor | `Person` + upcoming `OccasionNode` | `Account` + `Contact` + `ActivityEvent` |
 | Relationship taxonomy | Personal relationship catalog on the person record | Business relationship type on the account, stakeholder role on the contact/account link |
 | Timeline/history | `Delivery` history plus occasion-derived follow-up prompts | Unified account/contact activity timeline, with delivery as one event family |
-| Product surfaces | Home + People + Workspace + History through compatibility account/contact/activity views; Profile still on current runtime | Account list/detail, contact/stakeholder views, activity timeline, outreach workflow |
+| Product surfaces | Home + People + Workspace + History through compatibility account/contact/activity views; Profile + Sign-in compatibility-framed on top of the current auth/Gmail/channel runtime | Account list/detail, contact/stakeholder views, activity timeline, outreach workflow |
 
 Reference:
 
@@ -64,8 +64,38 @@ Reference:
   live code and request flows.
 - The first runtime slices have shipped: Home, People, Workspace, and History now render
   compatibility `Account` / `Contact` / `Activity` views derived from the
-  current person-centered storage model. Schema and route contracts remain
+  current person-centered storage model. Profile and Sign-in have matching
+  ReMaster framing, but their auth, Gmail, and command-channel contracts remain
   unchanged.
+
+### P10-E. Profile + Sign-in ReMaster Framing
+
+Status: done. Guarded by `pnpm test:profile`, `pnpm test:signin`,
+`pnpm test:mvp-demo`, `pnpm test`, and `pnpm build`.
+
+Goal: align the remaining user-visible entry points with ReMaster's
+account/contact outreach language without changing auth, Gmail OAuth, command
+channels, DB schema, worker, webhook, or send contracts.
+
+Shipped:
+
+- `app/profile/page.tsx` keeps the same server auth guard, Gmail connect /
+  disconnect controls, sign-out form, and command-channel forms, but reframes
+  visible sections as workspace identity, outreach delivery, outreach workflow,
+  plan/privacy, and inbound command channels.
+- `app/signin/page.tsx` keeps the same Google identity CTA, dev-session gate,
+  returnTo validation, and redirects, but explains that Google is the identity
+  entry point for a ReMaster account/contact outreach workspace and that Gmail
+  sender setup happens later from Profile.
+- Profile, Sign-in, and the MVP demo smokes now pin the new ReMaster-facing copy
+  while preserving the existing route and form contracts.
+
+Out of scope:
+
+- No DB schema change or migration.
+- No auth, Google sign-in, Gmail OAuth, command-channel, send, worker, or
+  webhook contract change.
+- No UI redesign.
 
 ### P10-D. History ReMaster Compatibility View
 

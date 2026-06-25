@@ -132,6 +132,8 @@ try {
   const signIn = await getHtml("/signin?returnTo=%2Fworkspace%3Fperson%3Dp-lin");
   check("signin page -> 200", signIn.status === 200, `status=${signIn.status}`);
   check("signin page shows dev CTA", signIn.body.includes("Continue as dev owner"));
+  check("signin page frames ReMaster workspace",
+    signIn.body.includes("account/contact workspace"));
   assertNoAppError("signin page", signIn.body);
 
   const signInResponse = await fetch(
@@ -151,7 +153,7 @@ try {
     { path: "/people", label: "People", expected: "5 accounts / 5 contacts in the ReMaster compatibility view" },
     { path: "/workspace?person=p-lin", label: "Workspace", expected: "Account outreach for Lin" },
     { path: "/history", label: "History", expected: "Account/contact outreach history" },
-    { path: "/profile", label: "Profile", expected: "Command channels" },
+    { path: "/profile", label: "Profile", expected: "OUTREACH WORKFLOW" },
   ];
 
   for (const page of pages) {

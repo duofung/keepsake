@@ -44,7 +44,7 @@ export default async function ProfilePage() {
         </div>
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, color: "var(--gray-2)", letterSpacing: "0.08em", marginBottom: 5 }}>
-            ACCOUNT
+            REMASTER WORKSPACE
           </div>
           <div style={{ fontSize: 18, fontWeight: 600, color: "var(--ink-2)" }}>{user.name}</div>
           <div style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 3 }}>{user.email}</div>
@@ -59,27 +59,27 @@ export default async function ProfilePage() {
         </div>
       </div>
 
-      <Section label="DELIVERY">
+      <Section label="OUTREACH DELIVERY">
         <Row
           icon="i-mail"
-          title="Sending email"
-          desc={user.sendingAccount ? `Outbound email sends from ${user.sendingAccount.email}` : "No outbound sender connected yet"}
+          title="Outreach sender"
+          desc={user.sendingAccount ? `Client and partner outreach sends from ${user.sendingAccount.email}` : "No outbound sender connected for reviewed outreach yet"}
           right={<SendingEmailControls sendingAccount={user.sendingAccount} />}
         />
-        <Row icon="i-truck" title="Postal return details" desc="Default return details for printed outreach" right={<Chev />} last />
+        <Row icon="i-truck" title="Direct mail return details" desc="Default return identity for gifts, print, and physical outreach" right={<Chev />} last />
       </Section>
 
       <CommandChannelsSection channels={channels} />
 
-      <Section label="PREFERENCES">
-        <Row icon="i-bell" title="Reminders" desc="How far ahead ReMaster surfaces follow-ups" right={<><Val>7 days before</Val><Chev /></>} />
-        <Row icon="i-pencil" title="Draft voice" desc="How ReMaster learns to draft like you" right={<><Val>Learning</Val><Chev /></>} />
-        <Row icon="i-palette2" title="Print style" desc="Default look for printed outreach" right={<><Val>Warm</Val><Chev /></>} last />
+      <Section label="OUTREACH WORKFLOW">
+        <Row icon="i-bell" title="Reminder cadence" desc="How far ahead ReMaster surfaces account follow-ups" right={<><Val>7 days before</Val><Chev /></>} />
+        <Row icon="i-pencil" title="Drafting voice" desc="How ReMaster drafts client and partner outreach in your voice" right={<><Val>Learning</Val><Chev /></>} />
+        <Row icon="i-palette2" title="Print style" desc="Default look for gifts, cards, and physical outreach" right={<><Val>Warm</Val><Chev /></>} last />
       </Section>
 
-      <Section label="ACCOUNT">
-        <Row icon="i-crown" title="ReMaster subscription" desc="Renews 14 May 2027 · printed outreach, voice drafting" right={<Chev />} />
-        <Row icon="i-shield" title="Privacy & data" desc="Your contact records stay yours, encrypted" right={<Chev />} />
+      <Section label="PLAN & PRIVACY">
+        <Row icon="i-crown" title="ReMaster subscription" desc="Renews 14 May 2027 · account outreach, voice drafting" right={<Chev />} />
+        <Row icon="i-shield" title="Privacy & data" desc="Your contact, partner, and client records stay yours, encrypted" right={<Chev />} />
         <SignOutRow />
       </Section>
       </div>
@@ -227,7 +227,7 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
                 Command channels are available in DB mode
               </div>
               <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
-                Set <code>KEEPSAKE_DATA_SOURCE=db</code> to link WhatsApp / Telegram / Slack stand-ins for workflow testing.
+                Set <code>KEEPSAKE_DATA_SOURCE=db</code> to link WhatsApp / Telegram / Slack stand-ins as inbound business workflow assistants.
               </div>
             </div>
           </div>
@@ -271,10 +271,10 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>
-                No channels linked yet
+                No command channels linked yet
               </div>
               <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
-                Link a Telegram or mock identity below to test inbound routing end-to-end.
+                Link a Telegram or mock identity so inbound commands can route to this workspace.
               </div>
             </div>
           </div>
@@ -296,15 +296,15 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
           externalUserPlaceholder="e.g. 123456789"
           displayNamePlaceholder="Telegram display name"
           submitLabel="Link Telegram"
-          description="Manual fallback: paste the numeric Telegram user id."
+          description="Operator fallback: paste the numeric Telegram user id for this workspace."
           testIdPrefix="profile-channels-telegram-link"
         />
         <ChannelLinkForm
           provider="mock"
-          title="Link a mock workspace identity"
+          title="Link a mock business assistant identity"
           action={MOCK_CHANNEL_LINK_ACTION}
           externalUserPlaceholder="e.g. mock-user-1"
-          displayNamePlaceholder="What to call this identity"
+          displayNamePlaceholder="Assistant identity label"
           submitLabel="Link mock channel"
           testIdPrefix="profile-channels-link"
         />
@@ -339,7 +339,7 @@ function TelegramStartLinkRow({
         </div>
         <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
           {link?.status === "ready"
-            ? "Opens Telegram with a short-lived link token."
+            ? "Opens Telegram with a short-lived workspace link token."
             : (link?.detail ?? "Telegram start links are not configured.")}
         </div>
       </div>

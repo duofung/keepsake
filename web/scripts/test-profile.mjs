@@ -132,9 +132,12 @@ try {
     !body.includes(">Reconnect Gmail</a>"),
   );
   check("keeps subscription badge", body.includes("ReMaster"));
-  check("keeps Delivery section", body.includes("DELIVERY"));
-  check("keeps Preferences section", body.includes("PREFERENCES"));
-  check("keeps Account section", body.includes("ACCOUNT"));
+  check("renders workspace identity framing", body.includes("REMASTER WORKSPACE"));
+  check("renders outreach delivery section",
+    body.includes("OUTREACH DELIVERY") && body.includes("Outreach sender"));
+  check("renders outreach workflow section",
+    body.includes("OUTREACH WORKFLOW") && body.includes("Reminder cadence"));
+  check("renders plan and privacy section", body.includes("PLAN & PRIVACY"));
 
   // P8-F: Command channels section is always rendered. In mock mode
   // (this smoke) it shows only the "DB mode required" placeholder —
@@ -148,7 +151,8 @@ try {
       && body.includes('data-testid="profile-channels-placeholder"'),
   );
   check("mock-mode channels copy points to DB mode",
-    body.includes("Command channels are available in DB mode"));
+    body.includes("Command channels are available in DB mode")
+      && body.includes("inbound business workflow assistants"));
   check("mock-mode does NOT render any linked channel row",
     !body.includes('data-testid="profile-channels-row"'));
   check("mock-mode does NOT render a link form",

@@ -56,8 +56,9 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             lineHeight: 1.5,
           }}
         >
-          We use Google to identify your ReMaster account. You can connect a
-          Gmail sending address later for outbound outreach.
+          ReMaster is your account/contact workspace for client and partner
+          outreach. Google signs you in; connect Gmail later from Profile when
+          you are ready to send reviewed outreach.
         </p>
       </header>
 
@@ -96,7 +97,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             Continue as dev owner
           </button>
           <p style={{ fontSize: 11, color: "var(--gray-3)", marginTop: 0 }}>
-            Dev-only shortcut. Visible because
+            Dev-only operator shortcut. Visible because
             <code style={{ marginLeft: 4 }}>ENABLE_DEV_SESSION_ROUTES=1</code>
             .
           </p>

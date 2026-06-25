@@ -52,6 +52,7 @@
     "test:drafts": "node scripts/test-drafts.mjs",
     "test:people": "node scripts/test-people.mjs",
     "test:history": "node scripts/test-history.mjs",
+    "test:signin": "node scripts/test-signin.mjs",
     "test:profile": "node scripts/test-profile.mjs",
     "test:workspace": "node scripts/test-workspace.mjs",
     "test": "pnpm test:boundaries && pnpm test:dev-env && pnpm test:env-init && pnpm test:auth && pnpm test:oauth && pnpm test:gmail-disconnect && pnpm test:home && pnpm test:people && pnpm test:drafts && pnpm test:draft-autosave && pnpm test:draft-generator && pnpm test:deliveries && pnpm test:delivery-worker && pnpm test:webhook-deliveries && pnpm test:delivery-runbook && pnpm test:channels && pnpm test:channel-accounts && pnpm test:history && pnpm test:profile && pnpm test:workspace && pnpm test:mvp-demo"
