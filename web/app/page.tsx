@@ -4,7 +4,7 @@ import type { CSSProperties } from "react";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
 import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
-import { getPeoplePayload } from "@/lib/server/people-payload/index.server";
+import { getRemasterDashboardOverview } from "@/lib/server/remaster-overview/index.server";
 import { nodeChipText, occasionIcon, urgencyLevel } from "@/lib/presentation";
 
 const SOON_WINDOW_DAYS = 30;
@@ -24,23 +24,23 @@ export default async function HomePage() {
   // Promise.all would race a `redirect()` against a 500 unauthenticated
   // throw. The redirect must always win.
   const user = await requireSessionUserOrRedirect("/");
-  const { people, relationships, cultures, occasions } = await getPeoplePayload();
+  const overview = await getRemasterDashboardOverview();
 
-  const occasionById = (id: string | null | undefined) =>
-    id ? occasions.find((o) => o.id === id) : undefined;
-  const relationshipById = new Map(relationships.map((relationship) => [relationship.id, relationship]));
-  const cultureById = new Map(cultures.map((culture) => [culture.id, culture]));
-  const personById = new Map(people.map((person) => [person.id, person]));
+  const activityById = new Map(
+    [...overview.upcomingActivities, ...overview.recentActivities].map((activity) => [activity.id, activity]),
+  );
 
-  const peopleCount = people.length;
-  const datesComingUp = occasions.filter(
-    (o) => o.daysUntil >= 0 && o.daysUntil <= SOON_WINDOW_DAYS,
-  ).length;
-  const focusPerson = people.find((p) => p.id === "p-lin") ?? people[0] ?? null;
-  const focusOccasion = focusPerson ? occasionById(focusPerson.nextOccasionId) : undefined;
-  const upcoming = occasions
-    .filter((o) => o.daysUntil >= 0 && o.daysUntil <= SOON_WINDOW_DAYS)
-    .sort((a, b) => a.daysUntil - b.daysUntil)
+  const accountsCount = overview.stats.accountsCount;
+  const contactsCount = overview.stats.contactsCount;
+  const upcomingActivitiesCount = overview.stats.upcomingActivitiesCount;
+  const focusAccount = overview.accounts.find((account) => account.primaryContactId === "p-lin")
+    ?? overview.accounts[0]
+    ?? null;
+  const focusActivity = focusAccount?.nextActivityId
+    ? activityById.get(focusAccount.nextActivityId) ?? null
+    : null;
+  const upcoming = overview.upcomingActivities
+    .filter((activity) => activity.daysUntil !== null && activity.daysUntil <= SOON_WINDOW_DAYS)
     .slice(0, 3);
 
   return (
@@ -53,8 +53,9 @@ export default async function HomePage() {
               Good evening, {user.name}
             </h1>
             <p style={pageSubcopy}>
-              Stay on top of follow-ups, milestone dates, and outreach across {peopleCount} {peopleCount === 1 ? "contact" : "contacts"}.
-              {" "}{datesComingUp} upcoming {datesComingUp === 1 ? "date needs" : "dates need"} attention soon.
+              Stay on top of follow-ups, milestone dates, and outreach across {accountsCount} {accountsCount === 1 ? "account" : "accounts"}
+              {" / "}{contactsCount} {contactsCount === 1 ? "contact" : "contacts"}.
+              {" "}{upcomingActivitiesCount} upcoming {upcomingActivitiesCount === 1 ? "activity needs" : "activities need"} attention soon.
             </p>
           </div>
           <Link href="/people" className="heartline-button" style={{ whiteSpace: "nowrap" }}>
@@ -67,21 +68,23 @@ export default async function HomePage() {
             <div style={heroCopy}>
               <span className="heartline-pill">
                 <Icon name="i-users" />
-                {focusOccasion ? timingText(focusOccasion.daysUntil) : "Priority contact"}
+                {focusActivity?.daysUntil !== null && focusActivity?.daysUntil !== undefined
+                  ? timingText(focusActivity.daysUntil)
+                  : "Priority account"}
               </span>
               <h2 style={heroTitle}>
-                {focusPerson && focusOccasion
-                  ? `Prepare ${focusOccasion.label} outreach for ${focusPerson.name}`
-                  : focusPerson
-                    ? `Plan the next touchpoint with ${focusPerson.name}`
-                    : "Start with a priority contact"}
+                {focusAccount && focusActivity
+                  ? `Prepare ${focusActivity.title} outreach for ${focusAccount.name}`
+                  : focusAccount
+                    ? `Plan the next touchpoint for ${focusAccount.name}`
+                    : "Start with a priority account"}
               </h2>
               <p style={heroBody}>
-                ReMaster keeps contact context, key dates, and draft outreach in one place so
-                client, partner, and key contact follow-up stays consistent.
+                ReMaster now reads a compatibility account/contact/activity model on top of the
+                current runtime so outreach, milestones, and relationship context stay aligned.
               </p>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "auto" }}>
-                <Link href={`/workspace?person=${focusPerson?.id ?? ""}`} className="heartline-button">
+                <Link href={`/workspace?person=${focusAccount?.primaryContactId ?? ""}`} className="heartline-button">
                   <Icon name="i-edit" /> Draft outreach
                 </Link>
                 <Link href="/people" className="heartline-button heartline-button--soft">
@@ -103,26 +106,28 @@ export default async function HomePage() {
 
           <aside style={{ display: "grid", gap: 14 }}>
             <section className="heartline-card" style={sideCard}>
-              <p className="heartline-section-label">UPCOMING FOLLOW-UPS</p>
+              <p className="heartline-section-label">UPCOMING ACTIVITY</p>
               <div style={{ display: "grid", gap: 10 }}>
                 {upcoming.length === 0 ? (
                   <p style={{ margin: 0, fontSize: 12.5, color: "var(--gray-2)", lineHeight: 1.6 }}>
-                    Nothing urgent in the next 30 days. Review your contacts to plan proactive outreach.
+                    Nothing urgent in the next 30 days. Review your accounts to plan proactive outreach.
                   </p>
-                ) : upcoming.map((occasion) => {
-                  const person = personById.get(occasion.personId);
+                ) : upcoming.map((activity) => {
                   return (
                     <Link
-                      key={occasion.id}
-                      href={`/workspace?person=${occasion.personId}`}
+                      key={activity.id}
+                      href={`/workspace?person=${activity.contactId ?? ""}`}
                       style={momentRow}
                     >
                       <span style={momentIcon}>
-                        <Icon name={occasionIcon[occasion.kind]} />
+                        <Icon name={occasionIcon[activity.occasionKind ?? "check-in"]} />
                       </span>
                       <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={momentTitle}>{person?.name ?? "Priority contact"}</span>
-                        <span style={momentMeta}>{occasion.label} · {timingText(occasion.daysUntil)}</span>
+                        <span style={momentTitle}>{activity.subtitle.split(" · ")[0] ?? "Priority account"}</span>
+                        <span style={momentMeta}>
+                          {activity.title}
+                          {activity.daysUntil !== null ? ` · ${timingText(activity.daysUntil)}` : ""}
+                        </span>
                       </span>
                       <span style={momentArrow}><Icon name="i-chev" /></span>
                     </Link>
@@ -142,38 +147,45 @@ export default async function HomePage() {
         </div>
 
         <div style={{ marginTop: 28 }}>
-          <p className="heartline-section-label">CONTACTS TO REVIEW</p>
+          <p className="heartline-section-label">ACCOUNTS TO REVIEW</p>
           <div style={peopleGrid}>
-            {people.map((p) => {
-              const rel = relationshipById.get(p.relationshipId);
-              const culture = cultureById.get(p.cultureId);
-              const occ = occasionById(p.nextOccasionId);
-              const days = occ?.daysUntil ?? -60;
-              const label = occ?.label ?? "Last touchpoint";
-              const text = nodeChipText(label, days);
-              const lvl = urgencyLevel(days);
+            {overview.accounts.map((account) => {
+              const nextActivity = account.nextActivityId
+                ? activityById.get(account.nextActivityId) ?? null
+                : null;
+              const days = nextActivity?.daysUntil ?? -60;
+              const text = nextActivity && nextActivity.daysUntil !== null
+                ? nodeChipText(nextActivity.title, nextActivity.daysUntil)
+                : account.lastDeliveryStatus
+                  ? `Last delivery · ${account.lastDeliveryStatus}`
+                  : "No scheduled activity";
+              const lvl = nextActivity?.daysUntil !== null && nextActivity?.daysUntil !== undefined
+                ? urgencyLevel(nextActivity.daysUntil)
+                : "far";
               return (
-                <Link key={p.id} href={`/workspace?person=${p.id}`} style={personCard}>
+                <Link key={account.id} href={`/workspace?person=${account.primaryContactId}`} style={personCard}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <Avatar name={p.name} bg={p.avatarBg} fg={p.avatarFg} size={44} fontSize={16} />
+                    <Avatar name={account.name} bg={account.avatarBg} fg={account.avatarFg} size={44} fontSize={16} />
                     <div style={{ minWidth: 0 }}>
                       <div style={personName}>
-                        {p.name}
-                        {p.starred && (
+                        {account.name}
+                        {account.starred && (
                           <span style={{ color: "var(--amber)", fontSize: 12, display: "inline-flex" }}>
                             <Icon name="i-star" fill />
                           </span>
                         )}
                       </div>
                       <div style={personTags}>
-                        {rel && <span style={{ ...miniTag, background: rel.paletteBg, color: rel.paletteFg }}>{rel.label}</span>}
-                        <span style={miniTagMuted}>{p.identityTags[0] ?? culture?.label ?? "Contact"}</span>
+                        <span style={{ ...miniTag, background: "var(--heartline-rose-wash)", color: "var(--heartline-purple-deep)" }}>
+                          {account.relationshipLabel}
+                        </span>
+                        <span style={miniTagMuted}>{account.secondaryLabel}</span>
                       </div>
                     </div>
                   </div>
                   <div style={nextNode}>
                     <span style={{ color: metaColor[lvl], fontSize: 14 }}>
-                      <Icon name={occ ? occasionIcon[occ.kind] : "i-bulb"} />
+                      <Icon name={nextActivity?.occasionKind ? occasionIcon[nextActivity.occasionKind] : "i-bulb"} />
                     </span>
                     <span style={{ color: metaColor[lvl] }}>{text}</span>
                   </div>

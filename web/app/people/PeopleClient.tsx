@@ -5,25 +5,44 @@ import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
 import PersonDrawer from "@/components/PersonDrawer";
 import type { FormEvent } from "react";
-import type { CultureId, Person, PeoplePayload, RelationshipGroup } from "@/lib/domain";
-import { nodeChipText, occasionIcon, urgencyLevel } from "@/lib/presentation";
+import type { CultureId, Person, PeoplePayload, Relationship, RelationshipGroup } from "@/lib/domain";
+import type {
+  RemasterDashboardAccount,
+  RemasterDashboardActivity,
+  RemasterDashboardOverview,
+  RemasterRelationshipType,
+} from "@/lib/remaster/read-model";
+import { deliveryStatusBadge, nodeChipText, occasionIcon, urgencyLevel } from "@/lib/presentation";
 
-const groupIcon: Record<RelationshipGroup, string> = {
-  Partner: "i-heart",
-  Family: "i-users",
-  Friends: "i-heart-handshake",
-  Colleagues: "i-users",
+type AccountTab = "All" | "Priority" | RemasterRelationshipType;
+
+const accountTypeIcon: Record<RemasterRelationshipType, string> = {
+  partner: "i-heart",
+  personal: "i-users",
+  network: "i-heart-handshake",
+  colleague: "i-users",
 };
 
-const groupLabel: Record<RelationshipGroup, string> = {
-  Partner: "Partners",
-  Family: "Personal",
-  Friends: "Network",
-  Colleagues: "Colleagues",
+const accountTypeLabel: Record<RemasterRelationshipType, string> = {
+  partner: "Partner",
+  personal: "Personal",
+  network: "Network",
+  colleague: "Colleague",
 };
 
-const TAB_ORDER: ("All" | RelationshipGroup)[] = [
-  "All", "Partner", "Family", "Friends", "Colleagues",
+const relationshipTypeByGroup: Record<RelationshipGroup, RemasterRelationshipType> = {
+  Partner: "partner",
+  Family: "personal",
+  Friends: "network",
+  Colleagues: "colleague",
+};
+
+const TAB_ORDER: AccountTab[] = [
+  "All", "Priority", "personal", "network", "partner", "colleague",
+];
+
+const ACCOUNT_TYPE_ORDER: RemasterRelationshipType[] = [
+  "personal", "network", "partner", "colleague",
 ];
 
 const metaColor: Record<string, string> = {
@@ -44,14 +63,15 @@ const avatarPalette = [
 ];
 
 type Props = {
+  overview: RemasterDashboardOverview;
   payload: PeoplePayload;
 };
 
-export default function PeopleClient({ payload }: Props) {
+export default function PeopleClient({ overview, payload }: Props) {
   const { relationships, cultures, occasions } = payload;
   const [people, setPeople] = useState<Person[]>(() => payload.people);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"All" | RelationshipGroup>("All");
+  const [tab, setTab] = useState<AccountTab>("All");
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
@@ -68,36 +88,76 @@ export default function PeopleClient({ payload }: Props) {
     [cultures],
   );
 
-  const occasionById = useMemo(
-    () => new Map(occasions.map((o) => [o.id, o])),
-    [occasions],
+  const activityById = useMemo(
+    () => new Map(
+      [...overview.upcomingActivities, ...overview.recentActivities]
+        .map((activity) => [activity.id, activity]),
+    ),
+    [overview.recentActivities, overview.upcomingActivities],
   );
 
+  const accounts = useMemo(() => {
+    const serverContactIds = new Set(overview.accounts.map((account) => account.primaryContactId));
+    const projectedAccounts = people.flatMap((person) => {
+      if (serverContactIds.has(person.id)) return [];
+      const relationship = relationshipById.get(person.relationshipId);
+      const culture = cultureById.get(person.cultureId);
+      if (!relationship) return [];
+      return [buildCompatibilityAccount(person, relationship, culture?.label ?? null)];
+    });
+
+    return [...projectedAccounts, ...overview.accounts];
+  }, [cultureById, overview.accounts, people, relationshipById]);
+
   const grouped = useMemo(() => {
-    const out: Record<RelationshipGroup, typeof people> = {
-      Partner: [], Family: [], Friends: [], Colleagues: [],
+    const out: Record<RemasterRelationshipType, RemasterDashboardAccount[]> = {
+      partner: [],
+      personal: [],
+      network: [],
+      colleague: [],
     };
-    for (const p of people) {
-      const rel = relationshipById.get(p.relationshipId);
-      if (rel) out[rel.group].push(p);
+    for (const account of accounts) {
+      out[account.relationshipType].push(account);
     }
     return out;
-  }, [people, relationshipById]);
+  }, [accounts]);
+
+  const priorityAccounts = useMemo(
+    () => accounts.filter((account) => account.starred),
+    [accounts],
+  );
 
   const tabs = useMemo(
     () => TAB_ORDER.map((id) => ({
       id,
-      n: id === "All" ? people.length : grouped[id].length,
+      n: tabCount(id, accounts, priorityAccounts, grouped),
     })),
-    [grouped, people.length],
+    [accounts, grouped, priorityAccounts],
   );
 
   const visibleEntries = useMemo(() => {
-    const all = (["Partner", "Family", "Friends", "Colleagues"] as RelationshipGroup[])
-      .map((g) => [g, grouped[g]] as const)
-      .filter(([, list]) => list.length > 0);
-    return tab === "All" ? all : all.filter(([g]) => g === tab);
-  }, [grouped, tab]);
+    if (tab === "Priority") {
+      return priorityAccounts.length > 0
+        ? [{
+            id: "Priority",
+            title: "PRIORITY ACCOUNTS",
+            icon: "i-star",
+            accounts: priorityAccounts,
+          }]
+        : [];
+    }
+
+    const all = ACCOUNT_TYPE_ORDER
+      .map((type) => ({
+        id: type,
+        title: `${accountTypeLabel[type].toUpperCase()} ACCOUNTS`,
+        icon: accountTypeIcon[type],
+        accounts: grouped[type],
+      }))
+      .filter((entry) => entry.accounts.length > 0);
+
+    return tab === "All" ? all : all.filter((entry) => entry.id === tab);
+  }, [grouped, priorityAccounts, tab]);
 
   const drawerPerson = openId ? people.find((p) => p.id === openId) ?? null : null;
   const drawerRel = drawerPerson ? relationshipById.get(drawerPerson.relationshipId) ?? null : null;
@@ -198,11 +258,11 @@ export default function PeopleClient({ payload }: Props) {
               letterSpacing: "0.09em",
               textTransform: "uppercase",
             }}>
-              ReMaster contacts
+              ReMaster accounts
             </p>
-            <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Contacts</h1>
+            <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Accounts / Contacts</h1>
             <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-              {people.length} {people.length === 1 ? "contact" : "contacts"} in your relationship book of business
+              {accounts.length} {accounts.length === 1 ? "account" : "accounts"} / {people.length} {people.length === 1 ? "contact" : "contacts"} in the ReMaster compatibility view
             </p>
           </div>
           <button
@@ -233,7 +293,7 @@ export default function PeopleClient({ payload }: Props) {
               cursor: "pointer",
             }}
           >
-            {t.id === "All" ? "All contacts" : groupLabel[t.id]}
+            {tabLabel(t.id)}
             <span style={{ fontSize: 11, color: tab === t.id ? "var(--heartline-rose-strong)" : "var(--gray-3)" }}>{t.n}</span>
           </button>
         ))}
@@ -241,32 +301,42 @@ export default function PeopleClient({ payload }: Props) {
 
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 14, width: "min(100%, 1000px)" }}>
-        {visibleEntries.map(([g, list]) => (
-          <div key={g} style={{ marginBottom: 24 }}>
+        {visibleEntries.length === 0 && (
+          <div style={{
+            background: "rgba(255,255,255,0.82)",
+            border: "0.5px solid rgba(239, 224, 218, 0.92)",
+            borderRadius: 18,
+            padding: 18,
+            color: "var(--gray-2)",
+            fontSize: 13,
+          }}>
+            No accounts in this view yet.
+          </div>
+        )}
+        {visibleEntries.map((entry) => (
+          <div key={entry.id} style={{ marginBottom: 24 }}>
             <div style={{
               fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
               letterSpacing: "0.08em", marginBottom: 12,
               display: "flex", alignItems: "center", gap: 7,
             }}>
               <span style={{ fontSize: 14, color: "var(--heartline-rose-strong)" }}>
-                <Icon name={groupIcon[g]} />
+                <Icon name={entry.icon} />
               </span>
-              {groupLabel[g].toUpperCase()}
+              {entry.title}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 13 }}>
-              {list.map((p) => {
-                const rel = relationshipById.get(p.relationshipId);
-                const culture = cultureById.get(p.cultureId);
-                const occ = p.nextOccasionId ? occasionById.get(p.nextOccasionId) : undefined;
-                const days = occ?.daysUntil ?? -60;
-                const text = nodeChipText(occ?.label ?? "Last touchpoint", days);
-                const lvl = urgencyLevel(days);
-                const occIcon = occ ? occasionIcon[occ.kind] : "i-bulb";
-                if (!rel || !culture) return null;
+              {entry.accounts.map((account) => {
+                const nextActivity = account.nextActivityId
+                  ? activityById.get(account.nextActivityId) ?? null
+                  : null;
+                const activitySummary = accountActivitySummary(account, nextActivity);
+                const extraLabel = secondaryAccountLabel(account);
                 return (
-                  <div
-                    key={p.id}
-                    onClick={() => setOpenId(p.id)}
+                  <button
+                    type="button"
+                    key={account.id}
+                    onClick={() => setOpenId(account.primaryContactId)}
                     style={{
                       background: "rgba(255,255,255,0.9)",
                       border: "0.5px solid rgba(239, 224, 218, 0.92)",
@@ -277,44 +347,53 @@ export default function PeopleClient({ payload }: Props) {
                       display: "flex",
                       gap: 13,
                       boxShadow: "0 14px 34px -30px rgba(94, 54, 119, 0.42)",
+                      textAlign: "left",
+                      width: "100%",
+                      fontFamily: "inherit",
                     }}
                   >
-                    <Avatar name={p.name} bg={p.avatarBg} fg={p.avatarFg} size={44} fontSize={16} />
+                    <Avatar name={account.name} bg={account.avatarBg} fg={account.avatarFg} size={44} fontSize={16} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)", display: "flex", alignItems: "center", gap: 5, marginBottom: 3 }}>
-                        {p.name}
-                        {p.starred && (
+                        {account.name}
+                        {account.starred && (
                           <span style={{ color: "var(--amber)", fontSize: 12 }}>
                             <Icon name="i-star" fill />
                           </span>
                         )}
                       </div>
+                      <div style={{ fontSize: 11.5, color: "var(--gray-2)", marginBottom: 8 }}>
+                        Primary contact · {account.contextLabel}
+                      </div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 9 }}>
                         <span style={{
                           fontSize: 10.5, padding: "3px 8px", borderRadius: 999, fontWeight: 650,
-                          background: rel.paletteBg, color: rel.paletteFg,
-                        }}>{rel.label}</span>
+                          background: "var(--heartline-rose-wash)", color: "var(--heartline-purple-deep)",
+                        }}>{account.relationshipLabel}</span>
                         <span style={{
                           fontSize: 10.5, padding: "3px 8px", borderRadius: 999,
                           background: "var(--soft)", color: "var(--gray-1)",
-                          display: "flex", alignItems: "center", gap: 3,
-                        }}>
-                          <span style={{ width: 5, height: 5, borderRadius: "50%", background: culture.dotColor }} />
-                          {culture.label}
-                        </span>
+                        }}>{accountTypeLabel[account.relationshipType]}</span>
+                        {extraLabel && (
+                          <span style={{
+                            fontSize: 10.5, padding: "3px 8px", borderRadius: 999,
+                            background: "rgba(255,255,255,0.74)", color: "var(--gray-2)",
+                            border: "0.5px solid rgba(239, 224, 218, 0.72)",
+                          }}>{extraLabel}</span>
+                        )}
                       </div>
                       <div style={{
                         fontSize: 11.5, display: "flex", alignItems: "center", gap: 6,
-                        color: metaColor[lvl], fontWeight: lvl === "soon" ? 650 : 500,
+                        color: metaColor[activitySummary.level], fontWeight: activitySummary.level === "soon" ? 650 : 500,
                         background: "rgba(255, 248, 245, 0.78)",
                         borderRadius: 13,
                         padding: "8px 9px",
                       }}>
-                        <span style={{ fontSize: 13 }}><Icon name={occIcon} /></span>
-                        {text}
+                        <span style={{ fontSize: 13 }}><Icon name={activitySummary.icon} /></span>
+                        {activitySummary.text}
                       </div>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -341,6 +420,87 @@ export default function PeopleClient({ payload }: Props) {
       />
     </div>
   );
+}
+
+function tabCount(
+  id: AccountTab,
+  accounts: RemasterDashboardAccount[],
+  priorityAccounts: RemasterDashboardAccount[],
+  grouped: Record<RemasterRelationshipType, RemasterDashboardAccount[]>,
+) {
+  if (id === "All") return accounts.length;
+  if (id === "Priority") return priorityAccounts.length;
+  return grouped[id].length;
+}
+
+function tabLabel(id: AccountTab) {
+  if (id === "All") return "All";
+  if (id === "Priority") return "Priority";
+  return accountTypeLabel[id];
+}
+
+function buildCompatibilityAccount(
+  person: Person,
+  relationship: Relationship,
+  cultureLabel: string | null,
+): RemasterDashboardAccount {
+  return {
+    id: `account-${person.id}`,
+    primaryContactId: person.id,
+    name: person.name,
+    mode: "contact-led",
+    relationshipType: relationshipTypeByGroup[relationship.group],
+    relationshipLabel: relationship.label,
+    starred: person.starred,
+    avatarBg: person.avatarBg,
+    avatarFg: person.avatarFg,
+    contextLabel: person.since ?? person.identityTags[0] ?? "contact-led account",
+    secondaryLabel: person.identityTags[0] ?? cultureLabel ?? "Contact",
+    nextActivityId: person.nextOccasionId,
+    lastDeliveryStatus: null,
+    lastDeliveryAtISO: null,
+  };
+}
+
+function accountActivitySummary(
+  account: RemasterDashboardAccount,
+  nextActivity: RemasterDashboardActivity | null,
+) {
+  if (nextActivity && nextActivity.daysUntil !== null) {
+    const level = urgencyLevel(nextActivity.daysUntil);
+    return {
+      text: `Next activity · ${nodeChipText(nextActivity.title, nextActivity.daysUntil)}`,
+      icon: occasionIcon[nextActivity.occasionKind ?? "check-in"],
+      level,
+    };
+  }
+
+  if (account.lastDeliveryStatus) {
+    const badge = deliveryStatusBadge[account.lastDeliveryStatus];
+    return {
+      text: `Last delivery · ${badge.label}${account.lastDeliveryAtISO ? ` · ${account.lastDeliveryAtISO.slice(0, 10)}` : ""}`,
+      icon: badge.icon,
+      level: "far" as const,
+    };
+  }
+
+  return {
+    text: "No scheduled activity",
+    icon: "i-bulb",
+    level: "far" as const,
+  };
+}
+
+function secondaryAccountLabel(account: RemasterDashboardAccount) {
+  const label = account.secondaryLabel.trim();
+  if (!label) return "";
+  const lower = label.toLowerCase();
+  const duplicateLabels = [
+    account.relationshipLabel,
+    accountTypeLabel[account.relationshipType],
+    account.contextLabel,
+  ].map((value) => value.toLowerCase());
+  return duplicateLabels.includes(lower) ? "" : label;
 }
 
 type AddPersonInput = {
@@ -620,7 +780,7 @@ function AddPersonDialog({
             onChange={(event) => setStarred(event.target.checked)}
             style={{ width: 16, height: 16, accentColor: "var(--heartline-purple)" }}
           />
-          Flag as priority contact
+          Flag as priority account
         </label>
 
         {error && (

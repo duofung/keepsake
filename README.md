@@ -4,19 +4,24 @@ This repository contains the current Keepsake runtime and the documentation for
 the ReMaster product pivot.
 
 ReMaster is the business relationship management direction: account-aware,
-contact-aware, and activity-driven. The shipped runtime is still the earlier
-person-centered workflow for drafting thoughtful outreach and sending it through
-a review-first flow.
+contact-aware, and activity-driven. The shipped runtime is still mostly the
+earlier person-centered workflow for drafting thoughtful outreach and sending
+it through a review-first flow, but Home and People now read a compatibility
+account/contact/activity overview on top of the current data.
 
 Today the codebase is still an MVP-quality local web app with DB-backed seams,
 Gmail queue infrastructure, and a provider-agnostic command-channel foundation.
-It has not yet migrated runtime or schema to the planned ReMaster
-account/contact/activity model.
+It has not yet migrated schema or most runtime verticals to the planned
+ReMaster account/contact/activity model.
 
 ## ReMaster Pivot Snapshot
 
 - Product direction: business-first relationship management.
-- Runtime today: `Person`, `OccasionNode`, draft, and delivery centered.
+- Runtime today: storage is still `Person`, `OccasionNode`, draft, and
+  delivery centered; Home and People already read a compatibility
+  account/contact/activity overview.
+- Still not migrated: Workspace and History remain on the person-centered
+  runtime, and there is no ReMaster schema migration yet.
 - Planned evolution: `Account`, `Contact`, stakeholder role, and
   `ActivityEvent` centered.
 - Planning reference: `web/docs/REMASTER_MODEL.md`.
@@ -24,8 +29,10 @@ account/contact/activity model.
 ## What Works Today
 
 - Home dashboard for upcoming follow-ups and relationship milestones.
-- Current People directory (legacy surface) with groups, details, and
-  add-person flow.
+- Compatibility ReMaster overview seam powering Home and People with derived
+  accounts, contacts, and activities over the current runtime payloads.
+- People Accounts / Contacts view with ReMaster account grouping, legacy detail
+  drawer continuity, and the existing add-person flow.
 - Workspace for generating, editing, autosaving, and queueing outreach drafts.
 - History timeline with delivered / opened / failed communication status.
 - Profile page with app session, Google sign-in foundation, Gmail connect /

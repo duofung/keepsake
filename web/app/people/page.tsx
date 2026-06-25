@@ -1,11 +1,11 @@
 import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
-import { getPeoplePayload } from "@/lib/server/people-payload/index.server";
+import { getRemasterPeopleCompatibilityView } from "@/lib/server/remaster-overview/index.server";
 import PeopleClient from "./PeopleClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function PeoplePage() {
   await requireSessionUserOrRedirect("/people");
-  const payload = await getPeoplePayload();
-  return <PeopleClient payload={payload} />;
+  const view = await getRemasterPeopleCompatibilityView();
+  return <PeopleClient overview={view.overview} payload={view.legacyPayload} />;
 }

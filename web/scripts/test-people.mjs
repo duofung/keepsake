@@ -1,7 +1,8 @@
-// Smoke test for /api/people. Boots `next dev` on an isolated port, runs
-// contract assertions against the live HTTP surface, then tears the server
-// down. No DB, no LLM — exercises the mock-backed payload to keep people,
-// relationships, cultures, and occasion wiring from silently drifting.
+// Smoke test for /api/people and /people. Boots `next dev` on an isolated
+// port, runs contract assertions against the live HTTP surface, then checks
+// the People page's ReMaster compatibility framing. No DB, no LLM — exercises
+// the mock-backed payload to keep people, relationships, cultures, occasions,
+// and account/contact rendering from silently drifting.
 //
 // Run via: pnpm test:people
 
@@ -14,6 +15,25 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 const PORT = Number(process.env.TEST_PORT ?? 3132);
 const BASE = `http://localhost:${PORT}`;
+const SESSION_SECRET = "test-people-app-session-secret-min-32-chars-ok";
+
+const testUser = {
+  id: "55555555-5555-4555-8555-555555555555",
+  email: "people-fixture@example.test",
+  name: "People Fixture",
+};
+
+let sessionCookie = "";
+
+function normalize(html) {
+  return html
+    .replace(/<!--\s*-->/g, "")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#x2F;/g, "/")
+    .replace(/&amp;/g, "&");
+}
 
 async function getPeople() {
   const res = await fetch(`${BASE}/api/people`);
@@ -21,6 +41,26 @@ async function getPeople() {
     ? await res.json().catch(() => null)
     : null;
   return { status: res.status, body: json };
+}
+
+async function getPeoplePage() {
+  const res = await fetch(`${BASE}/people`, {
+    headers: sessionCookie ? { cookie: `keepsake_session=${sessionCookie}` } : {},
+  });
+  const text = await res.text();
+  return { status: res.status, body: normalize(text) };
+}
+
+async function mintSession() {
+  const res = await fetch(`${BASE}/api/auth/dev-session/start`, {
+    method: "POST",
+  });
+  if (res.status !== 200) {
+    throw new Error(`dev-session/start failed: status=${res.status}`);
+  }
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  sessionCookie = setCookie.match(/keepsake_session=([^;]+)/)?.[1] ?? "";
+  if (!sessionCookie) throw new Error("dev-session/start did not set a cookie");
 }
 
 async function waitForReady(timeoutMs = 60_000) {
@@ -52,6 +92,11 @@ const child = spawn(nextBin, ["dev", "--port", String(PORT)], {
   env: {
     ...process.env,
     BROWSER: "none",
+    DEV_OWNER_ID: testUser.id,
+    DEV_OWNER_EMAIL: testUser.email,
+    DEV_OWNER_NAME: testUser.name,
+    APP_SESSION_SIGNING_SECRET: SESSION_SECRET,
+    ENABLE_DEV_SESSION_ROUTES: "1",
     KEEPSAKE_DATA_SOURCE: "mock",
     NEXT_TELEMETRY_DISABLED: "1",
   },
@@ -123,6 +168,37 @@ try {
     "occ-lin-anniv.personId = p-lin",
     linAnniv?.personId === "p-lin",
     `got ${linAnniv?.personId}`,
+  );
+
+  await mintSession();
+  const peoplePage = await getPeoplePage();
+
+  check("GET /people → 200", peoplePage.status === 200, `status=${peoplePage.status}`);
+  check("People page renders account/contact title", peoplePage.body.includes("Accounts / Contacts"));
+  check("People page renders Add contact CTA", peoplePage.body.includes("Add contact"));
+  check(
+    "People page renders compatibility counts",
+    peoplePage.body.includes("5 accounts / 5 contacts in the ReMaster compatibility view"),
+  );
+  check(
+    "People page renders ReMaster account tabs",
+    ["All", "Priority", "Personal", "Network", "Partner", "Colleague"].every((label) => (
+      peoplePage.body.includes(label)
+    )),
+  );
+  check(
+    "People page renders account sections",
+    peoplePage.body.includes("PERSONAL ACCOUNTS")
+      && peoplePage.body.includes("NETWORK ACCOUNTS")
+      && peoplePage.body.includes("PARTNER ACCOUNTS"),
+  );
+  check(
+    "People page renders next activity from compatibility model",
+    peoplePage.body.includes("Next activity · Anniversary · in 12 days"),
+  );
+  check(
+    "People page renders account context",
+    peoplePage.body.includes("Primary contact · together 12 years"),
   );
 } catch (err) {
   process.stdout.write(`harness error: ${err?.message ?? err}\n`);

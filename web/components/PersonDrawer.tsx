@@ -97,7 +97,7 @@ function DrawerContent({
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 24px 20px" }}>
-        <Section title="CONTACT PROFILE">
+        <Section title="ACCOUNT / CONTACT CONTEXT">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
             <Tag dot={culture.dotColor}>{relationship.label}</Tag>
             {culture.id !== "none" && <Tag dot={culture.dotColor}>{culture.label}</Tag>}
@@ -105,10 +105,10 @@ function DrawerContent({
           </div>
         </Section>
 
-        <Section title="DATES & FOLLOW-UPS">
+        <Section title="ACTIVITY & FOLLOW-UPS">
           {occasions.length === 0 && (
             <p style={{ fontSize: 12.5, color: "var(--gray-3)" }}>
-              No dates yet - add one to keep this contact on your radar.
+              No activity yet - add a follow-up to keep this contact on your radar.
             </p>
           )}
           {occasions.map((o, i) => {
@@ -147,7 +147,7 @@ function DrawerContent({
           })}
         </Section>
 
-        <Section title="NOTES & CONTEXT">
+        <Section title="CONTACT NOTES">
           <div style={{
             background: "rgba(255, 244, 241, 0.86)", borderRadius: 14, padding: "12px 13px",
             fontSize: 12.5, lineHeight: 1.65, color: "var(--gray-1)",
