@@ -1,159 +1,113 @@
-# Keepsake / ReMaster
+# ReMaster
 
-This repository contains the current Keepsake runtime and the documentation for
-the ReMaster product pivot.
+ReMaster is a relationship master for account, partner, and client relationship
+management. It keeps personal relationship use cases in scope, but the primary
+product direction is business relationships: accounts, contacts, outreach, and
+follow-up workflows.
 
-ReMaster is the business relationship management direction: account-aware,
-contact-aware, and activity-driven. The shipped runtime is still mostly the
-earlier person-centered workflow for drafting thoughtful outreach and sending
-it through a review-first flow, but Home, People, Workspace, and History now
-read a compatibility account/contact/activity overview on top of the current
-data, Profile / Sign-in are framed as ReMaster workspace surfaces, and
-command-channel replies now use ReMaster review-pointer language.
+## Why ReMaster
 
-Today the codebase is still an MVP-quality local web app with DB-backed seams,
-Gmail queue infrastructure, and a ReMaster-framed provider-agnostic
-command-channel foundation. It has not yet migrated schema or most runtime
-verticals to the planned ReMaster account/contact/activity model.
+Important relationships do not live in one place. They are scattered across
+notes, inboxes, calendars, chats, and memory. ReMaster is built to help an
+operator understand who matters, what context matters, and what thoughtful next
+step should happen next.
 
-## ReMaster Pivot Snapshot
+## Product Positioning
 
-- Product direction: business-first relationship management.
-- Runtime today: storage is still `Person`, `OccasionNode`, draft, and
-  delivery centered; Home, People, Workspace, and History already read a
-  compatibility account/contact/activity overview, while Profile / Sign-in use
-  ReMaster-compatible account/contact/outreach wording.
-- Still not migrated: there is no ReMaster schema migration yet, and the
-  draft/send/delivery/webhook contracts remain legacy person-centered storage;
-  auth, Gmail sender connect, and command-channel runtimes keep their current
-  contracts while channel replies point back to ReMaster for review.
-- Planned evolution: `Account`, `Contact`, stakeholder role, and
-  `ActivityEvent` centered.
-- Planning reference: `web/docs/REMASTER_MODEL.md`.
+ReMaster is an account/contact intelligence workspace for relationship-driven
+operators. The current product focuses on:
+
+- Account and contact intelligence.
+- Relationship notes and context.
+- Outreach drafting.
+- Gift, card, and follow-up workflows.
+- Command channels as inbound assistants, with mock and Telegram foundations.
+
+Command channels are review-first: they can route an inbound request to the web
+workspace, but they do not directly send messages.
+
+## Project Status
+
+- Current state: demo-ready locally.
+- Local experience: the core flow can be exercised end to end on a developer
+  machine.
+- Migration state: the product is moving from a Heartline / personal
+  relationship narrative toward ReMaster / business relationship management.
+- Runtime state: several screens use ReMaster compatibility framing while the
+  underlying storage and some contracts are still legacy person-centered
+  runtime surfaces.
 
 ## What Works Today
 
-- Home dashboard for upcoming follow-ups and relationship milestones.
-- Compatibility ReMaster overview seam powering Home, People, Workspace, and
-  History with derived accounts, contacts, and activities over the current
-  runtime payloads; Profile / Sign-in and command-channel replies are
-  ReMaster-framed without changing auth, Gmail, or channel behavior.
-- People Accounts / Contacts view with ReMaster account grouping, legacy detail
-  drawer continuity, and the existing Add contact flow.
-- Workspace account outreach surface for generating, editing, autosaving, and
-  queueing outreach drafts through the existing person-centered draft/send APIs.
-- History account/contact activity timeline with delivered / opened / failed
-  delivery status.
-- ReMaster-framed Profile and Sign-in surfaces with app session, Google
-  identity sign-in, Gmail connect / disconnect, sign-out, and command-channel
-  links.
-- DB-backed Postgres schema with RLS, local fixture seed, repository runtimes,
-  and smoke tests.
-- Gmail delivery queue, bounded worker loop, webhook status ingest, and runbook.
-- Optional OpenAI-compatible draft generator runtime.
-- ReMaster-framed mock / dev command-channel route plus DB-backed identity
-  resolution for future WhatsApp, Telegram, Slack, and similar adapters.
-  Channels act as inbound command assistants and return review pointers into
-  the web app; they do not draft, queue, or send.
+The current codebase supports:
 
-## Repository Layout
+- Home, People, Workspace, History, and Profile product surfaces.
+- Google sign-in.
+- Gmail sender connect / disconnect.
+- Draft generation runtime with mock generation and opt-in OpenAI-compatible
+  runtime.
+- Delivery queue, bounded worker, webhook ingest, and History status surfacing.
+- Command channel foundation.
+- DB-backed mock inbound command route.
+- Telegram adapter foundation, including linking and review-pointer replies.
 
-```text
-.
-├── web/                    # Next.js app and all runtime code
-│   ├── app/                # App Router pages and API routes
-│   ├── components/         # Shared UI primitives
-│   ├── db/                 # Postgres schema, catalog seed, DB README
-│   ├── docs/               # Architecture, API, DB, runbooks, progress docs
-│   ├── lib/                # Domain, repositories, server seams, mock data
-│   └── scripts/            # Smoke, DB, fixture, worker, and env scripts
-└── files/                  # Local business/deck artifacts; not app runtime
-```
+## Tech Stack
 
-## Quick Start
+- Next.js App Router.
+- TypeScript.
+- Tailwind CSS.
+- Postgres.
+- Docker-backed DB smoke tests.
 
-Requirements:
-
-- Node.js with `pnpm`
-- Docker, only for DB-backed tests
-- Optional: real Google / OpenAI credentials for live integrations
-
-Run the app in mock mode:
+## Local Development
 
 ```bash
-cd web
+cd /Users/apple/keepsake/web
 pnpm install
-pnpm env:init
 pnpm dev
 ```
 
-Open:
+The app defaults to a local-friendly mock/dev posture. DB-backed flows require
+the environment and schema setup documented under `web/db` and `web/docs`.
 
-```text
-http://localhost:3000
-```
+## Validation
 
-For local preview, the default mock/dev path is enough. Production-like DB mode
-requires filling `.env.local` from `web/.env.example` and running the schema /
-fixture scripts documented under `web/db/README.md`.
-
-## Useful Commands
+Common checks:
 
 ```bash
-cd web
-
-pnpm test          # default smoke suite, no Docker required
-pnpm test:db       # DB-backed suite, uses Docker Postgres
-pnpm build         # production build check
-pnpm worker:run    # manually drain queued Gmail deliveries
-pnpm db:seed:dev   # seed local dev fixtures after schema/catalog load
+cd /Users/apple/keepsake/web
+pnpm test
+pnpm test:db
+pnpm build
 ```
 
-## Key Docs
+`pnpm test:db` uses Docker-backed Postgres smoke tests.
 
-- `web/docs/REMASTER_MODEL.md` — forward-looking ReMaster entity blueprint and
-  migration posture.
-- `web/docs/CURRENT_ARCHITECTURE.md` — current request flows and layering.
-- `web/docs/DEVELOPMENT_PROGRESS.md` — project board and completed P-slices.
-- `web/docs/API_CONTRACTS.md` — public route contracts.
-- `web/docs/DB_SCHEMA.md` — target Postgres schema design.
-- `web/docs/MVP_DEMO_RUNBOOK.md` — local MVP demo path.
-- `web/docs/DELIVERY_RUNBOOK.md` — Workspace to Gmail worker to webhook loop.
-- `web/lib/server/README.md` — server-only seam responsibilities.
-- `web/lib/repositories/README.md` — repository boundary rules.
+## Repository Map
+
+- `web/app` — Next.js App Router pages and API routes.
+- `web/lib/server` — server-only orchestration seams and runtime dispatchers.
+- `web/lib/repositories` — repository contracts and Postgres implementations.
+- `web/db` — schema, catalog seed, and DB setup notes.
+- `web/docs` — architecture, progress, API, DB, and runbook documentation.
 
 ## Current Boundaries
 
-Completed current engineering loop:
+Not yet complete:
 
-1. Sign in locally / with Google identity foundation through the ReMaster
-   workspace entry point.
-2. Review current relationship records and upcoming follow-up moments.
-3. Generate or edit account outreach in Workspace.
-4. Persist draft edits.
-5. Queue an email delivery.
-6. Drain the queue with the worker.
-7. Ingest provider status by webhook.
-8. See status in the account activity timeline.
-9. Add a new record through the current People flow.
+- Payment and subscription flows are not implemented.
+- Real WhatsApp and Slack adapters are not connected.
+- Command channels are still review pointers first; the web app is the execution
+  surface.
+- Attachments and richer asset workflows remain future product work.
+- Native ReMaster account/contact/activity schema migration is still planned;
+  the current runtime keeps legacy storage/contracts in several places.
 
-Planned beyond the current runtime:
+## Notes For Contributors
 
-- Payments and subscriptions.
-- Production deployment and CI/CD.
-- Mobile-specific layout pass.
-- Native ReMaster account/contact/activity schema migration from the current
-  person/occasion/delivery model.
-- Real WhatsApp / Slack adapters.
-- Gmail push subscription setup.
-- Reminder scheduler and outbound notifications.
-- Rich card / attachment productization beyond the current prototype surface.
-
-## Notes For Collaborators
-
-- Keep server-only code under `web/lib/server/**` or repository
+- Keep server-only runtime code under `web/lib/server` or repository
   `*.server.ts` implementations.
-- Client components must not import server-only seams.
-- Default local mode should stay mock/dev friendly.
-- DB mode must use owner-scoped transactions and RLS.
-- Do not commit local secrets or generated `.next` output.
+- Client components should not import server-only seams.
+- Preserve existing route and API contracts unless a task explicitly changes
+  them.
+- Do not commit local secrets, generated build output, or local business files.
