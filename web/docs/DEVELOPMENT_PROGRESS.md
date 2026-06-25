@@ -26,14 +26,14 @@ Rules:
 | Workstream | Status | What Is Stable | Remaining Work |
 |---|---|---|---|
 | App shell + core UI | MVP demo-ready desktop | Full-screen desktop shell, Home, People, Workspace, History, Profile, preview-safe icon fallback, page smoke tests, and an end-to-end `pnpm test:mvp-demo` flow. | Mobile pass, deeper visual polish, interaction polish. |
-| ReMaster pivot / model blueprint | Compatibility runtime started | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` now derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`, and Home + People + Workspace render through that compatibility runtime without changing storage/schema yet. | Migrate History to the compatibility read model, then plan schema/backfill and route deprecation. |
+| ReMaster pivot / model blueprint | Compatibility runtime started | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` now derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`, and Home + People + Workspace + History render through that compatibility runtime without changing storage/schema yet. | Plan native schema/backfill and route deprecation. |
 | Domain model | Stable current runtime | `domain.ts`, presentation mapping, mock data, API contracts. Current runtime remains person-centered. | ReMaster runtime adoption is still ahead; add fields only when a real product flow needs them. |
 | Mock seams | Stable | People payload, draft context, draft service, delivery history dispatchers default to mock. | Delete mock fallback only after DB mode is default and production-ready. |
 | DB schema/RLS | Stable | Postgres schema, catalog seed, local dev fixtures, RLS, transaction helper. | Future migrations for real auth/session, reminders, send queue details. |
 | Crypto | Stable | AES-256-GCM envelope helper, AAD conventions, tests. | KMS/DEK wrapping hardening for production. |
 | People data | Stable read + create path | DB-backed people payload, repository reads, `PeopleRepository.create`, `POST /api/people`, and People-page Add contact flow. The People page now presents those person-centered rows as ReMaster-compatible accounts/contacts while mock mode still returns a `local-*` person for browser-local preview continuity. | People update/archive/date management, imports, merge semantics, native ReMaster schema/backfill. |
 | Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence + user-edit versioning | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. `PATCH /api/drafts` persists Workspace subject + body + card edits as new canonical versions with `prompt_input_hash = NULL`. | Tone editing, prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
-| Delivery history | Stable read path + status surface | DB-backed history page, deliveries read repository, and status badges for delivered/opened/failed rows. | Pagination, filters, live status refresh. |
+| Delivery history | Stable read path + ReMaster framing | DB-backed delivery-history read repository, History account/contact activity framing, and status badges for delivered/opened/failed rows. The underlying delivery storage, webhook, worker, and send contracts are unchanged. | Pagination, filters, live status refresh, native ReMaster activity storage. |
 | Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + sign-out + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start 303s when given `?returnTo=`. `POST /api/auth/signout` clears the cookie and 303s to `/signin` — no DB, no Google revoke, no Gmail disconnect. Profile's "Sign out" row is now a real form POST. `/api/session` shape unchanged. | Retiring the `DEV_OWNER_*` env fallback from the cookie-first seam; Google grant revoke on signout. |
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
@@ -54,7 +54,7 @@ relationship-first model.
 | Primary anchor | `Person` + upcoming `OccasionNode` | `Account` + `Contact` + `ActivityEvent` |
 | Relationship taxonomy | Personal relationship catalog on the person record | Business relationship type on the account, stakeholder role on the contact/account link |
 | Timeline/history | `Delivery` history plus occasion-derived follow-up prompts | Unified account/contact activity timeline, with delivery as one event family |
-| Product surfaces | Home + People + Workspace through compatibility account/contact/activity views; History and Profile still on current runtime | Account list/detail, contact/stakeholder views, activity timeline, outreach workflow |
+| Product surfaces | Home + People + Workspace + History through compatibility account/contact/activity views; Profile still on current runtime | Account list/detail, contact/stakeholder views, activity timeline, outreach workflow |
 
 Reference:
 
@@ -62,10 +62,41 @@ Reference:
   blueprint.
 - [`CURRENT_ARCHITECTURE.md`](./CURRENT_ARCHITECTURE.md) still describes the
   live code and request flows.
-- The first runtime slices have shipped: Home, People, and Workspace now render
+- The first runtime slices have shipped: Home, People, Workspace, and History now render
   compatibility `Account` / `Contact` / `Activity` views derived from the
   current person-centered storage model. Schema and route contracts remain
-  unchanged; History has not migrated yet.
+  unchanged.
+
+### P10-D. History ReMaster Compatibility View
+
+Status: done. Guarded by `pnpm test:history`, `pnpm test:mvp-demo`,
+`pnpm test`, and `pnpm build`.
+
+Goal: migrate History from a pure delivery timeline to the first ReMaster
+account/contact activity timeline without changing delivery storage, webhook,
+worker, or send contracts.
+
+Shipped:
+
+- History now enters through `getRemasterHistoryCompatibilityView()` in
+  `lib/server/remaster-overview/index.server.ts`, which composes the same
+  derived account/contact/activity overview with the existing `Delivery[]`
+  read path.
+- `app/history/page.tsx` still renders current delivery rows and status badges,
+  but frames rows as account/contact outreach activities with account name,
+  primary contact, activity label, channel, date, and compatibility context.
+- Archived delivery rows whose `personId` no longer maps to a current account
+  keep their denormalized recipient name and render as archived contact
+  activities.
+- Delivered/opened/failed status labels, tone classes, and
+  `data-delivery-status` attributes are unchanged.
+
+Out of scope:
+
+- No DB schema change or migration.
+- No route/API contract change.
+- No worker, webhook, Gmail OAuth, send-boundary, or command-router change.
+- No UI redesign.
 
 ### P10-C. Workspace ReMaster Compatibility View
 
@@ -97,7 +128,6 @@ Out of scope:
 - No DB schema change or migration.
 - No route/API contract change.
 - No worker, webhook, Gmail OAuth, or command-router intent-rule change.
-- No History migration.
 
 ### P10-B. People ReMaster Compatibility View
 
@@ -126,7 +156,7 @@ Out of scope:
 
 - No DB schema change or migration.
 - No route contract change.
-- No History / worker / webhook migration.
+- No worker / webhook migration.
 
 ### P10-A. ReMaster Compatibility Read Model
 
@@ -151,7 +181,7 @@ Out of scope:
 
 - No DB schema change.
 - No route contract change.
-- People and Workspace follow in P10-B/P10-C.
+- People, Workspace, and History follow in P10-B/P10-C/P10-D.
 - No data backfill or repository rename.
 
 ## Execution Log

@@ -1,7 +1,8 @@
 // Smoke test for the History page. Boots `next dev` on an isolated port,
 // requests GET /history, and asserts the rendered HTML matches the mock
-// delivery data. No DB, no LLM — just a regression net so that swapping the
-// delivery-history seam later can't quietly break the History view.
+// delivery data through the ReMaster compatibility framing. No DB, no LLM —
+// just a regression net so that swapping the delivery-history seam later can't
+// quietly break the History view.
 //
 // Run via: pnpm test:history
 
@@ -118,10 +119,11 @@ try {
   check("response is a non-empty HTML string", typeof body === "string" && body.length > 0);
 
   // ── Page header + data-driven subtitle ───────────────────────────────
-  check("contains header 'Activity'", body.includes("Activity"));
+  check("contains activity timeline eyebrow", body.includes("Activity timeline"));
+  check("contains header 'Account activity'", body.includes("Account activity"));
   check(
-    "subtitle: 'Every queued and completed touchpoint · 4 deliveries recorded'",
-    body.includes("Every queued and completed touchpoint · 4 deliveries recorded"),
+    "subtitle: 'Account/contact outreach history · 4 activities recorded'",
+    body.includes("Account/contact outreach history · 4 activities recorded"),
   );
 
   // ── Month groups (mock data spans Mar / Feb / Jan 2026) ──────────────
@@ -129,23 +131,37 @@ try {
   check("contains month group 'FEBRUARY 2026'", body.includes("FEBRUARY 2026"));
   check("contains month group 'JANUARY 2026'",  body.includes("JANUARY 2026"));
 
-  // ── Per-delivery rows (recipient + occasion + channel badge text) ────
+  // ── Per-activity rows (account/contact + outreach + channel badge text) ─
   check(
-    "row: Ah Ma · Lunar New Year · Card",
-    body.includes("Ah Ma") && body.includes("Lunar New Year") && body.includes("Card"),
+    "row: Ah Ma · Primary contact · Lunar New Year · Card",
+    body.includes("Ah Ma")
+      && body.includes("Primary contact: Ah Ma")
+      && body.includes("Outreach: Lunar New Year")
+      && body.includes("Card"),
   );
   check(
-    "row: Lin · Valentine's note · Email",
-    body.includes("Lin") && body.includes("Valentine's note") && body.includes("Email"),
+    "row: Lin account · Primary contact · Valentine's note · Email",
+    body.includes("Lin")
+      && body.includes("Primary contact: Lin")
+      && body.includes("Outreach: Valentine's note")
+      && body.includes("Partner account")
+      && body.includes("Email"),
   );
   check(
-    "row: Jun · Birthday · Email",
-    body.includes("Jun") && body.includes("Birthday") && body.includes("Email"),
+    "row: Jun · Primary contact · Birthday · Email",
+    body.includes("Jun")
+      && body.includes("Primary contact: Jun")
+      && body.includes("Outreach: Birthday")
+      && body.includes("Email"),
   );
   check(
-    "row: Priya · Deepavali · Card",
-    body.includes("Priya") && body.includes("Deepavali") && body.includes("Card"),
+    "row: Priya · Primary contact · Deepavali · Card",
+    body.includes("Priya")
+      && body.includes("Primary contact: Priya")
+      && body.includes("Outreach: Deepavali")
+      && body.includes("Card"),
   );
+  check("archived delivery rows keep account-like context", body.includes("Archived contact"));
 
   // ── Status labels ────────────────────────────────────────────────────
   check("contains status 'Delivered'", body.includes("Delivered"));

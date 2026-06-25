@@ -6,8 +6,9 @@ the ReMaster product pivot.
 ReMaster is the business relationship management direction: account-aware,
 contact-aware, and activity-driven. The shipped runtime is still mostly the
 earlier person-centered workflow for drafting thoughtful outreach and sending
-it through a review-first flow, but Home, People, and Workspace now read a
-compatibility account/contact/activity overview on top of the current data.
+it through a review-first flow, but Home, People, Workspace, and History now
+read a compatibility account/contact/activity overview on top of the current
+data.
 
 Today the codebase is still an MVP-quality local web app with DB-backed seams,
 Gmail queue infrastructure, and a provider-agnostic command-channel foundation.
@@ -18,10 +19,10 @@ ReMaster account/contact/activity model.
 
 - Product direction: business-first relationship management.
 - Runtime today: storage is still `Person`, `OccasionNode`, draft, and
-  delivery centered; Home, People, and Workspace already read a compatibility
-  account/contact/activity overview.
-- Still not migrated: History remains on the person-centered delivery-history
-  runtime, and there is no ReMaster schema migration yet.
+  delivery centered; Home, People, Workspace, and History already read a
+  compatibility account/contact/activity overview.
+- Still not migrated: there is no ReMaster schema migration yet, and the
+  draft/send/delivery/webhook contracts remain legacy person-centered storage.
 - Planned evolution: `Account`, `Contact`, stakeholder role, and
   `ActivityEvent` centered.
 - Planning reference: `web/docs/REMASTER_MODEL.md`.
@@ -29,14 +30,15 @@ ReMaster account/contact/activity model.
 ## What Works Today
 
 - Home dashboard for upcoming follow-ups and relationship milestones.
-- Compatibility ReMaster overview seam powering Home, People, and Workspace
-  with derived accounts, contacts, and activities over the current runtime
-  payloads.
+- Compatibility ReMaster overview seam powering Home, People, Workspace, and
+  History with derived accounts, contacts, and activities over the current
+  runtime payloads.
 - People Accounts / Contacts view with ReMaster account grouping, legacy detail
   drawer continuity, and the existing Add contact flow.
 - Workspace account outreach surface for generating, editing, autosaving, and
   queueing outreach drafts through the existing person-centered draft/send APIs.
-- History timeline with delivered / opened / failed communication status.
+- History account/contact activity timeline with delivered / opened / failed
+  delivery status.
 - Profile page with app session, Google sign-in foundation, Gmail connect /
   disconnect, sign-out, and command-channel links.
 - DB-backed Postgres schema with RLS, local fixture seed, repository runtimes,
@@ -123,7 +125,7 @@ Completed current engineering loop:
 5. Queue an email delivery.
 6. Drain the queue with the worker.
 7. Ingest provider status by webhook.
-8. See status in History.
+8. See status in the account activity timeline.
 9. Add a new record through the current People flow.
 
 Planned beyond the current runtime:
@@ -131,8 +133,8 @@ Planned beyond the current runtime:
 - Payments and subscriptions.
 - Production deployment and CI/CD.
 - Mobile-specific layout pass.
-- Native ReMaster account/contact/activity schema and History migration from
-  the current person/occasion model.
+- Native ReMaster account/contact/activity schema migration from the current
+  person/occasion/delivery model.
 - Real WhatsApp / Slack adapters.
 - Gmail push subscription setup.
 - Reminder scheduler and outbound notifications.

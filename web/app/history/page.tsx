@@ -1,6 +1,6 @@
 import Icon from "@/components/Icon";
 import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
-import { getDeliveryHistory } from "@/lib/server/delivery-history/index.server";
+import { getRemasterHistoryCompatibilityView } from "@/lib/server/remaster-overview/index.server";
 import {
   cardGradientByHint,
   channelBadge,
@@ -8,6 +8,7 @@ import {
   occasionIcon,
 } from "@/lib/presentation";
 import type { Delivery, OccasionKind } from "@/lib/domain";
+import type { RemasterDashboardOverview } from "@/lib/remaster/read-model";
 
 export const dynamic = "force-dynamic";
 
@@ -22,15 +23,24 @@ const gradientByOccasion: Record<OccasionKind, string> = {
   custom: cardGradientByHint.rose,
 };
 
-function groupByMonth(items: Delivery[]): { month: string; items: Delivery[] }[] {
-  const map = new Map<string, Delivery[]>();
-  for (const d of items) {
-    const date = new Date(d.sentAtISO);
+interface HistoryActivityRow {
+  delivery: Delivery;
+  accountName: string;
+  primaryContactName: string;
+  relationshipLabel: string;
+  contextLabel: string;
+  activityLabel: string;
+}
+
+function groupByMonth(items: HistoryActivityRow[]): { month: string; items: HistoryActivityRow[] }[] {
+  const map = new Map<string, HistoryActivityRow[]>();
+  for (const item of items) {
+    const date = new Date(item.delivery.sentAtISO);
     const month = date
       .toLocaleString("en-US", { month: "long", year: "numeric" })
       .toUpperCase();
     if (!map.has(month)) map.set(month, []);
-    map.get(month)!.push(d);
+    map.get(month)!.push(item);
   }
   return Array.from(map.entries()).map(([month, list]) => ({ month, items: list }));
 }
@@ -39,11 +49,42 @@ function shortDate(iso: string): string {
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric" });
 }
 
+function buildHistoryActivityRows(
+  deliveries: Delivery[],
+  overview: RemasterDashboardOverview,
+): HistoryActivityRow[] {
+  const accountByContactId = new Map(
+    overview.accounts.map((account) => [account.primaryContactId, account]),
+  );
+  const contactById = new Map(
+    overview.contacts.map((contact) => [contact.id, contact]),
+  );
+  const activityByDeliveryId = new Map(
+    overview.recentActivities.map((activity) => [activity.id.replace(/^activity-/, ""), activity]),
+  );
+
+  return deliveries.map((delivery) => {
+    const account = delivery.personId ? accountByContactId.get(delivery.personId) ?? null : null;
+    const contact = delivery.personId ? contactById.get(delivery.personId) ?? null : null;
+    const activity = activityByDeliveryId.get(delivery.id) ?? null;
+
+    return {
+      delivery,
+      accountName: account?.name ?? delivery.recipientName,
+      primaryContactName: contact?.displayName ?? delivery.recipientName,
+      relationshipLabel: account ? `${account.relationshipLabel} account` : "Archived contact",
+      contextLabel: account?.contextLabel ?? "Delivery history",
+      activityLabel: activity?.title ?? delivery.occasionLabel,
+    };
+  });
+}
+
 export default async function HistoryPage() {
   await requireSessionUserOrRedirect("/history");
-  const history = await getDeliveryHistory();
-  const groups = groupByMonth(history);
-  const deliveryCount = history.length;
+  const view = await getRemasterHistoryCompatibilityView();
+  const rows = buildHistoryActivityRows(view.deliveries, view.overview);
+  const groups = groupByMonth(rows);
+  const activityCount = rows.length;
 
   return (
     <div className="ks-page">
@@ -57,14 +98,21 @@ export default async function HistoryPage() {
           letterSpacing: "0.09em",
           textTransform: "uppercase",
         }}>
-          Outreach log
+          Activity timeline
         </p>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Activity</h1>
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Account activity</h1>
         <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-          Every queued and completed touchpoint · {deliveryCount} {deliveryCount === 1 ? "delivery" : "deliveries"} recorded
+          Account/contact outreach history · {activityCount} {activityCount === 1 ? "activity" : "activities"} recorded
         </p>
       </div>
-        {groups.map((g) => (
+        {groups.length === 0 ? (
+          <div style={{
+            background: "rgba(255,255,255,0.9)", border: "0.5px solid rgba(239, 224, 218, 0.92)",
+            borderRadius: 17, padding: 18, color: "var(--gray-2)", fontSize: 12.5,
+          }}>
+            No account activity recorded yet. Queued and completed outreach will appear here.
+          </div>
+        ) : groups.map((g) => (
           <div key={g.month}>
             <div style={{
               fontSize: 11.5, fontWeight: 600, color: "var(--gray-2)",
@@ -72,7 +120,8 @@ export default async function HistoryPage() {
             }}>
               {g.month}
             </div>
-            {g.items.map((it) => {
+            {g.items.map((row) => {
+              const it = row.delivery;
               const badge = channelBadge[it.channel];
               const status = deliveryStatusBadge[it.status];
               return (
@@ -91,13 +140,14 @@ export default async function HistoryPage() {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>
-                      {it.recipientName}
+                      {row.accountName}
                     </div>
                     <div style={{
                       fontSize: 12, color: "var(--gray-2)", marginTop: 2,
                       display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
                     }}>
-                      {it.occasionLabel}
+                      <span>Primary contact: {row.primaryContactName}</span>
+                      <span>Outreach: {row.activityLabel}</span>
                       <span style={{
                         fontSize: 10, padding: "2px 8px", borderRadius: 7,
                         display: "flex", alignItems: "center", gap: 4,
@@ -106,6 +156,9 @@ export default async function HistoryPage() {
                         <span style={{ fontSize: 11 }}><Icon name={badge.icon} /></span>
                         {badge.label}
                       </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--gray-3)", marginTop: 3 }}>
+                      {row.relationshipLabel} · {row.contextLabel}
                     </div>
                   </div>
                   <div>
