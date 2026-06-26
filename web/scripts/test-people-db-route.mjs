@@ -260,6 +260,10 @@ try {
 
   const lin = people.find((person) => person.name === "Lin");
   check("Lin present in DB payload", !!lin);
+  check("Lin segment = client", lin?.segment === "client", `got ${lin?.segment}`);
+  check("Lin organization = Lattice Works", lin?.organization === "Lattice Works", `got ${lin?.organization}`);
+  check("Lin roleTitle = Founder", lin?.roleTitle === "Founder", `got ${lin?.roleTitle}`);
+  check("Lin sourceContext = Malaysia launch advisory", lin?.sourceContext === "Malaysia launch advisory", `got ${lin?.sourceContext}`);
   check("Lin has a nextOccasionId", typeof lin?.nextOccasionId === "string" && lin.nextOccasionId.length > 0);
 
   const linAnniv = occasions.find((occasion) => occasion.id === lin?.nextOccasionId);
@@ -269,6 +273,7 @@ try {
 
   const kira = people.find((person) => person.name === "Kira");
   check("Kira lastContactAt survives DB route", kira?.lastContactAt === "2026-04-14", `got ${kira?.lastContactAt}`);
+  check("Kira segment = prospect", kira?.segment === "prospect", `got ${kira?.segment}`);
 
   const malformed = await postPeople("{");
   check("POST /api/people malformed JSON → 400", malformed.status === 400, `status=${malformed.status}`);
@@ -289,17 +294,31 @@ try {
   check("POST /api/people invalid relationship → 400", invalidReference.status === 400, `status=${invalidReference.status}`);
   check("invalid relationship code = invalid_reference", invalidReference.body?.code === "invalid_reference", `body=${JSON.stringify(invalidReference.body)}`);
 
+  const invalidSegment = await postPeople({
+    name: "Bad Segment",
+    segment: "vendor",
+  });
+  check("POST /api/people invalid segment → 400", invalidSegment.status === 400, `status=${invalidSegment.status}`);
+  check("invalid segment code = invalid_request", invalidSegment.body?.code === "invalid_request", `body=${JSON.stringify(invalidSegment.body)}`);
+
   const created = await postPeople({
     name: "Helen",
+    segment: "prospect",
+    organization: "Northstar Labs",
+    roleTitle: "Head of Partnerships",
+    sourceContext: "Warm intro from Malaysia launch",
     relationshipId: "rel-friend",
     cultureId: "none",
-    since: "promoted today",
     note: "Prefers concise celebratory notes.",
     starred: true,
   });
   check("POST /api/people valid create → 201", created.status === 201, `status=${created.status}`);
   check("created person has DB uuid", /^[0-9a-f-]{36}$/i.test(created.body?.id ?? ""), `id=${created.body?.id}`);
   check("created person name = Helen", created.body?.name === "Helen", `got ${created.body?.name}`);
+  check("created person segment = prospect", created.body?.segment === "prospect", `got ${created.body?.segment}`);
+  check("created person organization preserved", created.body?.organization === "Northstar Labs", `got ${created.body?.organization}`);
+  check("created person roleTitle preserved", created.body?.roleTitle === "Head of Partnerships", `got ${created.body?.roleTitle}`);
+  check("created person sourceContext preserved", created.body?.sourceContext === "Warm intro from Malaysia launch", `got ${created.body?.sourceContext}`);
   check("created person starred = true", created.body?.starred === true, `got ${created.body?.starred}`);
   check("created person relationshipId = rel-friend", created.body?.relationshipId === "rel-friend", `got ${created.body?.relationshipId}`);
   check("created person cultureId = none", created.body?.cultureId === "none", `got ${created.body?.cultureId}`);
@@ -309,6 +328,7 @@ try {
   const createdInPayload = afterCreate.body?.people?.find((person) => person.id === created.body?.id);
   check("GET /api/people includes created person", !!createdInPayload);
   check("created person remains decrypted in payload", createdInPayload?.name === "Helen", `got ${createdInPayload?.name}`);
+  check("created business fields remain decrypted in payload", createdInPayload?.organization === "Northstar Labs", `got ${createdInPayload?.organization}`);
   check("people.length becomes 6 after create", afterCreate.body?.people?.length === 6, `got ${afterCreate.body?.people?.length}`);
 
   if (serverError && failures.length) {

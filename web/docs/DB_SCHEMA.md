@@ -241,6 +241,11 @@ CREATE TABLE people (
   owner_id           uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
   name_enc           bytea NOT NULL,                   -- 🔒
+  segment            text NOT NULL DEFAULT 'personal'
+                     CHECK (segment IN ('client','partner','prospect','investor','personal')),
+  organization_enc   bytea,                            -- 🔒
+  role_title_enc     bytea,                            -- 🔒
+  source_context_enc bytea,                            -- 🔒
   starred            boolean NOT NULL DEFAULT false,
   avatar_bg          text NOT NULL,                    -- presentational; reset on rename is fine
   avatar_fg          text NOT NULL,
@@ -262,16 +267,23 @@ CREATE INDEX people_owner_idx           ON people(owner_id);
 CREATE INDEX people_owner_starred_idx   ON people(owner_id, starred)
   WHERE starred;                                          -- "Closest circle" panel
 CREATE INDEX people_owner_relationship_idx
-  ON people(owner_id, relationship_id);                   -- People page tabs/group filter
+  ON people(owner_id, relationship_id);                   -- Legacy relationship lookup/filter
+CREATE INDEX people_owner_segment_idx
+  ON people(owner_id, segment);                           -- Business segment filter
 ```
 
 **Notes**
+- `segment` is the first ReMaster business contact layer on top of the current
+  `Person` table. It is intentionally a checked text column, not a new account
+  table or CRM pipeline. Existing personal/family/friend rows default to
+  `personal`.
 - The avatar palette is generated from `name` once at create time; we keep it
   alongside the encrypted name so the rail/list views can render without
   decrypting. Tradeoff: leaks ~3 bytes of entropy about the first letter.
   Acceptable for a UI affordance; revisit if a stricter threat model lands.
 - `next_occasion_id` is **not** stored. See §6.
-- All free-text user content about another person is encrypted — the brief
+- Organization, role/title, source context, and all other free-text user
+  content about another person are encrypted — the brief
   explicitly treats "your relationships stay yours" as a product promise.
 
 ### 3.6 `occasion_nodes`

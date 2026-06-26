@@ -70,6 +70,10 @@ export const occasions: OccasionNode[] = [
 export const people: Person[] = [
   {
     id: "p-lin", name: "Lin", starred: true,
+    segment: "client",
+    organization: "Lattice Works",
+    roleTitle: "Founder",
+    sourceContext: "Malaysia launch advisory",
     avatarBg: "#DCEAF7", avatarFg: "#5286B8",
     relationshipId: "rel-partner", cultureId: "chinese",
     since: "together 12 years",
@@ -84,6 +88,10 @@ export const people: Person[] = [
   },
   {
     id: "p-mom", name: "Mom", starred: true,
+    segment: "personal",
+    organization: null,
+    roleTitle: null,
+    sourceContext: "Family check-in",
     avatarBg: "#FCE2D6", avatarFg: "#C57A52",
     relationshipId: "rel-mother", cultureId: "chinese",
     since: "Mom",
@@ -98,6 +106,10 @@ export const people: Person[] = [
   },
   {
     id: "p-aisha", name: "Aisha", starred: false,
+    segment: "partner",
+    organization: "Penang Studio",
+    roleTitle: "Operations lead",
+    sourceContext: "KL launch partner",
     avatarBg: "#E3DCF2", avatarFg: "#7E6BB5",
     relationshipId: "rel-close-friend", cultureId: "malay-muslim",
     since: "since 2019",
@@ -114,6 +126,10 @@ export const people: Person[] = [
   },
   {
     id: "p-dad", name: "Dad", starred: false,
+    segment: "investor",
+    organization: "Tan Family Office",
+    roleTitle: "Angel investor",
+    sourceContext: "Family investor conversation",
     avatarBg: "#DCF0E8", avatarFg: "#4E9B7E",
     relationshipId: "rel-father", cultureId: "chinese",
     since: "Dad",
@@ -127,6 +143,10 @@ export const people: Person[] = [
   },
   {
     id: "p-kira", name: "Kira", starred: false,
+    segment: "prospect",
+    organization: "Northstar Labs",
+    roleTitle: "Head of People",
+    sourceContext: "KL event prospect",
     avatarBg: "#F7E2EC", avatarFg: "#B96089",
     relationshipId: "rel-friend", cultureId: "none",
     since: "old friend",

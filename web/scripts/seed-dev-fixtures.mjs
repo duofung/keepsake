@@ -157,6 +157,10 @@ async function seedPeople(client, encrypt, people) {
           id,
           owner_id,
           name_enc,
+          segment,
+          organization_enc,
+          role_title_enc,
+          source_context_enc,
           starred,
           avatar_bg,
           avatar_fg,
@@ -168,11 +172,15 @@ async function seedPeople(client, encrypt, people) {
           personal_taboos_enc,
           last_contact_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         ON CONFLICT (id) DO UPDATE
         SET
           owner_id = EXCLUDED.owner_id,
           name_enc = EXCLUDED.name_enc,
+          segment = EXCLUDED.segment,
+          organization_enc = EXCLUDED.organization_enc,
+          role_title_enc = EXCLUDED.role_title_enc,
+          source_context_enc = EXCLUDED.source_context_enc,
           starred = EXCLUDED.starred,
           avatar_bg = EXCLUDED.avatar_bg,
           avatar_fg = EXCLUDED.avatar_fg,
@@ -189,6 +197,10 @@ async function seedPeople(client, encrypt, people) {
         fixturePersonId(person.id),
         ownerId,
         await encryptedText(encrypt, "people", "name_enc", person.name),
+        person.segment ?? "personal",
+        await encryptedText(encrypt, "people", "organization_enc", person.organization),
+        await encryptedText(encrypt, "people", "role_title_enc", person.roleTitle),
+        await encryptedText(encrypt, "people", "source_context_enc", person.sourceContext),
         person.starred,
         person.avatarBg,
         person.avatarFg,

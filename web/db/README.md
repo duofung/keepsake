@@ -68,7 +68,8 @@ docker rm -f keepsake-pg-test
 `pnpm db:seed:dev` expects `schema.sql` and `seed_catalog.sql` to have already
 run. It connects with `DATABASE_URL`, upserts one dev owner, then upserts:
 
-- 5 people from `lib/mock.ts`
+- 5 people from `lib/mock.ts`, including business contact segment,
+  organization, role/title, and source context fields
 - 7 occasion nodes from `lib/mock.ts`
 - 4 delivery history rows from `lib/mock.ts`
 
@@ -112,7 +113,7 @@ pnpm test:db:fixtures
 |---|---|
 | `users` | `id = current_user_id()` |
 | `gmail_accounts` | `owner_id = current_user_id()` (sender account metadata + encrypted refresh token) |
-| `people` | `owner_id = current_user_id()` |
+| `people` | `owner_id = current_user_id()`; `segment` defaults to `personal` for legacy rows |
 | `occasion_nodes` | `owner_id = current_user_id()`; `(person_id, owner_id)` composite FK prevents cross-owner occasions |
 | `message_drafts` | `owner_id = current_user_id()` |
 | `deliveries` | `owner_id = current_user_id()` |
@@ -161,9 +162,9 @@ at a person owned by another user.
 First-pass verification against `postgres:17-alpine` (PostgreSQL 17.10):
 
 - `schema.sql` — single transaction, **succeeded**. Created: 2 extensions,
-  8 enums, 1 helper function, 9 tables, 20 indexes, 8 RLS-enables, 9 policies.
-  Note: 20 is the number of explicit `CREATE INDEX` statements; `pg_indexes`
-  reports 31 after primary-key and unique-constraint indexes are included.
+  8 enums, 1 helper function, 9 tables, 21 indexes, 8 RLS-enables, 9 policies.
+  Note: 21 is the number of explicit `CREATE INDEX` statements; `pg_indexes`
+  reports 32 after primary-key and unique-constraint indexes are included.
 - `seed_catalog.sql` — **succeeded** twice (idempotency verified): 10
   `relationships` rows, 4 `cultures` rows.
 - RLS isolation — verified that user A sees their own row, user B sees 0,

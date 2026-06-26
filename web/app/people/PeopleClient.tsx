@@ -5,7 +5,7 @@ import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
 import PersonDrawer from "@/components/PersonDrawer";
 import type { FormEvent } from "react";
-import type { CultureId, Person, PeoplePayload, Relationship, RelationshipGroup } from "@/lib/domain";
+import type { ContactSegment, Person, PeoplePayload, Relationship, RelationshipGroup } from "@/lib/domain";
 import type {
   RemasterDashboardAccount,
   RemasterDashboardActivity,
@@ -14,16 +14,33 @@ import type {
 } from "@/lib/remaster/read-model";
 import { deliveryStatusBadge, nodeChipText, occasionIcon, urgencyLevel } from "@/lib/presentation";
 
-type AccountTab = "All" | "Priority" | RemasterRelationshipType;
+type AccountTab = "All" | ContactSegment;
 
-const accountTypeIcon: Record<RemasterRelationshipType, string> = {
+const segmentIcon: Record<ContactSegment, string> = {
+  client: "i-users",
   partner: "i-heart",
+  prospect: "i-heart-handshake",
+  investor: "i-star",
   personal: "i-users",
-  network: "i-heart-handshake",
-  colleague: "i-users",
 };
 
-const accountTypeLabel: Record<RemasterRelationshipType, string> = {
+const segmentLabel: Record<ContactSegment, string> = {
+  client: "Client",
+  partner: "Partner",
+  prospect: "Prospect",
+  investor: "Investor",
+  personal: "Personal",
+};
+
+const segmentPluralLabel: Record<ContactSegment, string> = {
+  client: "Clients",
+  partner: "Partners",
+  prospect: "Prospects",
+  investor: "Investors",
+  personal: "Personal",
+};
+
+const relationshipTypeLabel: Record<RemasterRelationshipType, string> = {
   partner: "Partner",
   personal: "Personal",
   network: "Network",
@@ -37,13 +54,11 @@ const relationshipTypeByGroup: Record<RelationshipGroup, RemasterRelationshipTyp
   Colleagues: "colleague",
 };
 
-const TAB_ORDER: AccountTab[] = [
-  "All", "Priority", "personal", "network", "partner", "colleague",
+const SEGMENT_ORDER: ContactSegment[] = [
+  "client", "partner", "prospect", "investor", "personal",
 ];
 
-const ACCOUNT_TYPE_ORDER: RemasterRelationshipType[] = [
-  "personal", "network", "partner", "colleague",
-];
+const TAB_ORDER: AccountTab[] = ["All", ...SEGMENT_ORDER];
 
 const metaColor: Record<string, string> = {
   soon: "var(--heartline-purple-deep)",
@@ -69,7 +84,7 @@ type Props = {
 
 export default function PeopleClient({ overview, payload }: Props) {
   const { relationships, cultures, occasions } = payload;
-  const [people, setPeople] = useState<Person[]>(() => payload.people);
+  const [people, setPeople] = useState<Person[]>(() => payload.people.map(normalizePerson));
   const [openId, setOpenId] = useState<string | null>(null);
   const [tab, setTab] = useState<AccountTab>("All");
   const [adding, setAdding] = useState(false);
@@ -110,54 +125,39 @@ export default function PeopleClient({ overview, payload }: Props) {
   }, [cultureById, overview.accounts, people, relationshipById]);
 
   const grouped = useMemo(() => {
-    const out: Record<RemasterRelationshipType, RemasterDashboardAccount[]> = {
+    const out: Record<ContactSegment, RemasterDashboardAccount[]> = {
+      client: [],
       partner: [],
+      prospect: [],
+      investor: [],
       personal: [],
-      network: [],
-      colleague: [],
     };
     for (const account of accounts) {
-      out[account.relationshipType].push(account);
+      out[accountSegment(account)].push(account);
     }
     return out;
   }, [accounts]);
 
-  const priorityAccounts = useMemo(
-    () => accounts.filter((account) => account.starred),
-    [accounts],
-  );
-
   const tabs = useMemo(
     () => TAB_ORDER.map((id) => ({
       id,
-      n: tabCount(id, accounts, priorityAccounts, grouped),
+      n: tabCount(id, accounts, grouped),
     })),
-    [accounts, grouped, priorityAccounts],
+    [accounts, grouped],
   );
 
   const visibleEntries = useMemo(() => {
-    if (tab === "Priority") {
-      return priorityAccounts.length > 0
-        ? [{
-            id: "Priority",
-            title: "PRIORITY ACCOUNTS",
-            icon: "i-star",
-            accounts: priorityAccounts,
-          }]
-        : [];
-    }
-
-    const all = ACCOUNT_TYPE_ORDER
+    const all = SEGMENT_ORDER
       .map((type) => ({
         id: type,
-        title: `${accountTypeLabel[type].toUpperCase()} ACCOUNTS`,
-        icon: accountTypeIcon[type],
+        title: segmentPluralLabel[type].toUpperCase(),
+        icon: segmentIcon[type],
         accounts: grouped[type],
       }))
       .filter((entry) => entry.accounts.length > 0);
 
     return tab === "All" ? all : all.filter((entry) => entry.id === tab);
-  }, [grouped, priorityAccounts, tab]);
+  }, [grouped, tab]);
 
   const drawerPerson = openId ? people.find((p) => p.id === openId) ?? null : null;
   const drawerRel = drawerPerson ? relationshipById.get(drawerPerson.relationshipId) ?? null : null;
@@ -166,16 +166,13 @@ export default function PeopleClient({ overview, payload }: Props) {
     ? occasions.filter((o) => o.personId === drawerPerson.id)
     : [];
 
-  const defaultRelationshipId = relationships.find((r) => r.id === "rel-friend")?.id
-    ?? relationships[0]?.id
-    ?? "";
   const defaultCultureId = cultures.find((c) => c.id === "none")?.id
     ?? cultures[0]?.id
     ?? "none";
 
   async function handleAddPerson(input: AddPersonInput) {
-    const relationship = relationshipById.get(input.relationshipId) ?? relationships[0];
-    const culture = cultureById.get(input.cultureId) ?? cultures.find((c) => c.id === "none") ?? cultures[0];
+    const relationship = relationshipById.get(relationshipIdForSegment(input.segment)) ?? relationships[0];
+    const culture = cultureById.get(defaultCultureId) ?? cultures.find((c) => c.id === "none") ?? cultures[0];
     if (!relationship || !culture) return;
 
     const response = await fetch("/api/people", {
@@ -183,9 +180,12 @@ export default function PeopleClient({ overview, payload }: Props) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         name: input.name,
+        segment: input.segment,
+        organization: input.organization,
+        roleTitle: input.roleTitle,
+        sourceContext: input.sourceContext,
         relationshipId: relationship.id,
         cultureId: culture.id,
-        since: input.since,
         note: input.note,
         starred: input.starred,
       }),
@@ -217,28 +217,32 @@ export default function PeopleClient({ overview, payload }: Props) {
   }
 
   function createLocalPerson(input: AddPersonInput): Person {
-    const relationship = relationshipById.get(input.relationshipId) ?? relationships[0];
-    const culture = cultureById.get(input.cultureId) ?? cultures.find((c) => c.id === "none") ?? cultures[0];
+    const relationship = relationshipById.get(relationshipIdForSegment(input.segment)) ?? relationships[0];
+    const culture = cultureById.get(defaultCultureId) ?? cultures.find((c) => c.id === "none") ?? cultures[0];
     if (!relationship || !culture) {
       throw new Error("Choose a contact type and culture first.");
     }
 
     const palette = avatarPalette[people.length % avatarPalette.length];
     const note = input.note.trim();
-    const since = input.since.trim();
+    const sourceContext = input.sourceContext.trim();
     return {
       id: makeLocalPersonId(),
       name: input.name.trim(),
+      segment: input.segment,
+      organization: input.organization.trim() || null,
+      roleTitle: input.roleTitle.trim() || null,
+      sourceContext: sourceContext || null,
       starred: input.starred,
       avatarBg: palette.bg,
       avatarFg: palette.fg,
       relationshipId: relationship.id,
       cultureId: culture.id,
-      since: since || undefined,
-      identityTags: since ? [since] : [],
+      since: sourceContext || undefined,
+      identityTags: sourceContext ? [sourceContext] : [],
       knownFacts: note
         ? [{ text: note, isLead: true }]
-        : [{ text: "New contact to learn about.", isLead: true }],
+        : [{ text: "New business context to learn.", isLead: true }],
       personalTaboos: [],
       nextOccasionId: null,
       lastContactAt: new Date().toISOString().slice(0, 10),
@@ -258,11 +262,11 @@ export default function PeopleClient({ overview, payload }: Props) {
               letterSpacing: "0.09em",
               textTransform: "uppercase",
             }}>
-              ReMaster accounts
+              ReMaster contacts
             </p>
-            <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Accounts / Contacts</h1>
+            <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Business relationships</h1>
             <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-              {accounts.length} {accounts.length === 1 ? "account" : "accounts"} / {people.length} {people.length === 1 ? "contact" : "contacts"} in the ReMaster compatibility view
+              {people.length} {people.length === 1 ? "contact" : "contacts"} across client, partner, prospect, investor, and personal segments
             </p>
           </div>
           <button
@@ -310,7 +314,7 @@ export default function PeopleClient({ overview, payload }: Props) {
             color: "var(--gray-2)",
             fontSize: 13,
           }}>
-            No accounts in this view yet.
+            No contacts in this segment yet.
           </div>
         )}
         {visibleEntries.map((entry) => (
@@ -363,17 +367,17 @@ export default function PeopleClient({ overview, payload }: Props) {
                         )}
                       </div>
                       <div style={{ fontSize: 11.5, color: "var(--gray-2)", marginBottom: 8 }}>
-                        Primary contact · {account.contextLabel}
+                        {businessIdentityLine(account)}
                       </div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 9 }}>
                         <span style={{
                           fontSize: 10.5, padding: "3px 8px", borderRadius: 999, fontWeight: 650,
                           background: "var(--heartline-rose-wash)", color: "var(--heartline-purple-deep)",
-                        }}>{account.relationshipLabel}</span>
+                        }}>{segmentLabel[accountSegment(account)]}</span>
                         <span style={{
                           fontSize: 10.5, padding: "3px 8px", borderRadius: 999,
                           background: "var(--soft)", color: "var(--gray-1)",
-                        }}>{accountTypeLabel[account.relationshipType]}</span>
+                        }}>{account.relationshipLabel}</span>
                         {extraLabel && (
                           <span style={{
                             fontSize: 10.5, padding: "3px 8px", borderRadius: 999,
@@ -411,10 +415,6 @@ export default function PeopleClient({ overview, payload }: Props) {
       />
       <AddPersonDialog
         open={adding}
-        relationships={relationships}
-        cultures={cultures}
-        defaultRelationshipId={defaultRelationshipId}
-        defaultCultureId={defaultCultureId}
         onClose={() => setAdding(false)}
         onAdd={handleAddPerson}
       />
@@ -425,18 +425,15 @@ export default function PeopleClient({ overview, payload }: Props) {
 function tabCount(
   id: AccountTab,
   accounts: RemasterDashboardAccount[],
-  priorityAccounts: RemasterDashboardAccount[],
-  grouped: Record<RemasterRelationshipType, RemasterDashboardAccount[]>,
+  grouped: Record<ContactSegment, RemasterDashboardAccount[]>,
 ) {
   if (id === "All") return accounts.length;
-  if (id === "Priority") return priorityAccounts.length;
   return grouped[id].length;
 }
 
 function tabLabel(id: AccountTab) {
   if (id === "All") return "All";
-  if (id === "Priority") return "Priority";
-  return accountTypeLabel[id];
+  return segmentPluralLabel[id];
 }
 
 function buildCompatibilityAccount(
@@ -450,12 +447,16 @@ function buildCompatibilityAccount(
     name: person.name,
     mode: "contact-led",
     relationshipType: relationshipTypeByGroup[relationship.group],
+    segment: contactSegment(person),
     relationshipLabel: relationship.label,
+    organization: person.organization ?? null,
+    roleTitle: person.roleTitle ?? null,
+    sourceContext: person.sourceContext ?? null,
     starred: person.starred,
     avatarBg: person.avatarBg,
     avatarFg: person.avatarFg,
-    contextLabel: person.since ?? person.identityTags[0] ?? "contact-led account",
-    secondaryLabel: person.identityTags[0] ?? cultureLabel ?? "Contact",
+    contextLabel: person.since ?? person.sourceContext ?? person.identityTags[0] ?? "contact-led account",
+    secondaryLabel: person.organization ?? person.identityTags[0] ?? cultureLabel ?? "Contact",
     nextActivityId: person.nextOccasionId,
     lastDeliveryStatus: null,
     lastDeliveryAtISO: null,
@@ -478,63 +479,82 @@ function accountActivitySummary(
   if (account.lastDeliveryStatus) {
     const badge = deliveryStatusBadge[account.lastDeliveryStatus];
     return {
-      text: `Last delivery · ${badge.label}${account.lastDeliveryAtISO ? ` · ${account.lastDeliveryAtISO.slice(0, 10)}` : ""}`,
+      text: `Last outreach · ${badge.label}${account.lastDeliveryAtISO ? ` · ${account.lastDeliveryAtISO.slice(0, 10)}` : ""}`,
       icon: badge.icon,
       level: "far" as const,
     };
   }
 
+  const context = account.sourceContext ?? account.contextLabel;
   return {
-    text: "No scheduled activity",
+    text: `Relationship context · ${context}`,
     icon: "i-bulb",
     level: "far" as const,
   };
 }
 
 function secondaryAccountLabel(account: RemasterDashboardAccount) {
-  const label = account.secondaryLabel.trim();
+  const label = (account.sourceContext ?? account.secondaryLabel).trim();
   if (!label) return "";
   const lower = label.toLowerCase();
   const duplicateLabels = [
     account.relationshipLabel,
-    accountTypeLabel[account.relationshipType],
+    relationshipTypeLabel[account.relationshipType],
+    segmentLabel[accountSegment(account)],
     account.contextLabel,
+    account.organization ?? "",
+    account.roleTitle ?? "",
   ].map((value) => value.toLowerCase());
   return duplicateLabels.includes(lower) ? "" : label;
 }
 
+function accountSegment(account: RemasterDashboardAccount): ContactSegment {
+  return account.segment ?? "personal";
+}
+
+function contactSegment(person: Person): ContactSegment {
+  return person.segment ?? "personal";
+}
+
+function relationshipIdForSegment(segment: ContactSegment): string {
+  return segment === "partner" ? "rel-partner" : "rel-friend";
+}
+
+function businessIdentityLine(account: RemasterDashboardAccount): string {
+  const organization = account.organization?.trim() ?? "";
+  const roleTitle = account.roleTitle?.trim() ?? "";
+  if (organization && roleTitle) return `${organization} / ${roleTitle}`;
+  if (organization) return organization;
+  if (roleTitle) return roleTitle;
+  return account.sourceContext ?? account.contextLabel;
+}
+
 type AddPersonInput = {
   name: string;
-  relationshipId: string;
-  cultureId: CultureId;
-  since: string;
+  organization: string;
+  roleTitle: string;
+  segment: ContactSegment;
+  sourceContext: string;
   note: string;
   starred: boolean;
 };
 
 type AddPersonDialogProps = {
   open: boolean;
-  relationships: PeoplePayload["relationships"];
-  cultures: PeoplePayload["cultures"];
-  defaultRelationshipId: string;
-  defaultCultureId: CultureId;
   onClose: () => void;
   onAdd: (input: AddPersonInput) => Promise<void>;
 };
 
 function AddPersonDialog({
   open,
-  relationships,
-  cultures,
-  defaultRelationshipId,
-  defaultCultureId,
   onClose,
   onAdd,
 }: AddPersonDialogProps) {
   const [name, setName] = useState("");
-  const [relationshipId, setRelationshipId] = useState(defaultRelationshipId);
-  const [cultureId, setCultureId] = useState<CultureId>(defaultCultureId);
-  const [since, setSince] = useState("");
+  const [organization, setOrganization] = useState("");
+  const [roleTitle, setRoleTitle] = useState("");
+  const [segment, setSegment] = useState<ContactSegment>("client");
+  const [sourceContext, setSourceContext] = useState("");
   const [note, setNote] = useState("");
   const [starred, setStarred] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -543,14 +563,15 @@ function AddPersonDialog({
   useEffect(() => {
     if (!open) return;
     setName("");
-    setRelationshipId(defaultRelationshipId);
-    setCultureId(defaultCultureId);
-    setSince("");
+    setOrganization("");
+    setRoleTitle("");
+    setSegment("client");
+    setSourceContext("");
     setNote("");
     setStarred(false);
     setError(null);
     setSaving(false);
-  }, [defaultCultureId, defaultRelationshipId, open]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -566,9 +587,10 @@ function AddPersonDialog({
     try {
       await onAdd({
         name: trimmedName,
-        relationshipId,
-        cultureId,
-        since,
+        organization,
+        roleTitle,
+        segment,
+        sourceContext,
         note,
         starred,
       });
@@ -656,14 +678,14 @@ function AddPersonDialog({
                 marginBottom: 12,
               }}
             >
-              <Icon name="i-heart" />
-              New contact
+              <Icon name="i-users" />
+              New business contact
             </span>
             <h2 style={{ fontSize: 20, fontWeight: 650, color: "var(--ink)", margin: 0 }}>
-              Add contact
+              Add business contact
             </h2>
             <p style={{ margin: "6px 0 0", color: "var(--gray-2)", fontSize: 13, lineHeight: 1.45 }}>
-              Capture the minimum context you need for the next follow-up. You can fill in the rest later.
+              Capture the business context ReMaster should remember for the next follow-up.
             </p>
           </div>
           <button
@@ -714,48 +736,57 @@ function AddPersonDialog({
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <label style={fieldWrapStyle}>
-            <span style={fieldLabelStyle}>Contact type</span>
+            <span style={fieldLabelStyle}>Organization</span>
+            <input
+              value={organization}
+              onChange={(event) => setOrganization(event.target.value)}
+              placeholder="Northstar Labs"
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={fieldWrapStyle}>
+            <span style={fieldLabelStyle}>Role / Title</span>
+            <input
+              value={roleTitle}
+              onChange={(event) => setRoleTitle(event.target.value)}
+              placeholder="Head of Partnerships"
+              style={inputStyle}
+            />
+          </label>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "0.86fr 1.14fr", gap: 10 }}>
+          <label style={fieldWrapStyle}>
+            <span style={fieldLabelStyle}>Segment</span>
             <select
-              value={relationshipId}
-              onChange={(event) => setRelationshipId(event.target.value)}
+              value={segment}
+              onChange={(event) => setSegment(event.target.value as ContactSegment)}
               style={selectStyle}
             >
-              {relationships.map((relationship) => (
-                <option key={relationship.id} value={relationship.id}>{relationship.label}</option>
+              {SEGMENT_ORDER.map((item) => (
+                <option key={item} value={item}>{segmentLabel[item]}</option>
               ))}
             </select>
           </label>
 
           <label style={fieldWrapStyle}>
-            <span style={fieldLabelStyle}>Culture</span>
-            <select
-              value={cultureId}
-              onChange={(event) => setCultureId(event.target.value as CultureId)}
-              style={selectStyle}
-            >
-              {cultures.map((culture) => (
-                <option key={culture.id} value={culture.id}>{culture.label}</option>
-              ))}
-            </select>
+            <span style={fieldLabelStyle}>Context / Source</span>
+            <input
+              value={sourceContext}
+              onChange={(event) => setSourceContext(event.target.value)}
+              placeholder="Warm intro from Malaysia launch"
+              style={inputStyle}
+            />
           </label>
         </div>
 
-        <label style={fieldWrapStyle}>
-          <span style={fieldLabelStyle}>Where you know them from</span>
-          <input
-            value={since}
-            onChange={(event) => setSince(event.target.value)}
-            placeholder="Met through the Malaysia launch"
-            style={inputStyle}
-          />
-        </label>
-
         <label style={{ ...fieldWrapStyle, flex: 1, minHeight: 0 }}>
-          <span style={fieldLabelStyle}>What matters for follow-up?</span>
+          <span style={fieldLabelStyle}>What should I remember?</span>
           <textarea
             value={note}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="A preference, open workstream, key date, or anything that helps with the next touchpoint."
+            placeholder="A preference, open workstream, buying signal, key date, or anything that helps with the next touchpoint."
             style={{
               ...inputStyle,
               minHeight: 120,
@@ -780,7 +811,7 @@ function AddPersonDialog({
             onChange={(event) => setStarred(event.target.checked)}
             style={{ width: 16, height: 16, accentColor: "var(--heartline-purple)" }}
           />
-          Flag as priority account
+          Prioritize this contact
         </label>
 
         {error && (
@@ -858,15 +889,27 @@ function makeLocalPersonId() {
 }
 
 function mergePeople(base: Person[], extras: Person[]) {
-  const seen = new Set(base.map((person) => person.id));
+  const normalizedBase = base.map(normalizePerson);
+  const normalizedExtras = extras.map(normalizePerson);
+  const seen = new Set(normalizedBase.map((person) => person.id));
   return [
-    ...extras.filter((person) => {
+    ...normalizedExtras.filter((person) => {
       if (seen.has(person.id)) return false;
       seen.add(person.id);
       return true;
     }),
-    ...base,
+    ...normalizedBase,
   ];
+}
+
+function normalizePerson(person: Person): Person {
+  return {
+    ...person,
+    segment: person.segment ?? "personal",
+    organization: person.organization ?? null,
+    roleTitle: person.roleTitle ?? null,
+    sourceContext: person.sourceContext ?? null,
+  };
 }
 
 function readLocalPeople(): Person[] {

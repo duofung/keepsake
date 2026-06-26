@@ -12,6 +12,10 @@ export async function createMockPerson(input: PreviewPersonCreateInput): Promise
   const person: Person = {
     id: input.previewId ?? `local-${Date.now().toString(36)}`,
     name: input.name,
+    segment: input.segment ?? "personal",
+    organization: input.organization ?? null,
+    roleTitle: input.roleTitle ?? null,
+    sourceContext: input.sourceContext ?? null,
     starred: input.starred ?? false,
     avatarBg: input.avatarBg,
     avatarFg: input.avatarFg,

@@ -1,4 +1,5 @@
 import type {
+  ContactSegment,
   Delivery,
   DeliveryStatus,
   ID,
@@ -19,7 +20,11 @@ export interface RemasterDashboardAccount {
   name: string;
   mode: RemasterAccountMode;
   relationshipType: RemasterRelationshipType;
+  segment: ContactSegment;
   relationshipLabel: string;
+  organization: string | null;
+  roleTitle: string | null;
+  sourceContext: string | null;
   starred: boolean;
   avatarBg: string;
   avatarFg: string;
@@ -34,6 +39,10 @@ export interface RemasterDashboardContact {
   id: ID;
   accountId: ID;
   displayName: string;
+  segment: ContactSegment;
+  organization: string | null;
+  roleTitle: string | null;
+  sourceContext: string | null;
   cultureLabel: string | null;
   contextLines: string[];
 }
@@ -104,11 +113,18 @@ export function buildRemasterDashboardOverview(
       id: person.id,
       accountId: accountIdForPerson(person.id),
       displayName: person.name,
+      segment: contactSegment(person),
+      organization: person.organization ?? null,
+      roleTitle: person.roleTitle ?? null,
+      sourceContext: person.sourceContext ?? null,
       cultureLabel: culture?.label ?? null,
       contextLines: [
+        person.organization,
+        person.roleTitle,
+        person.sourceContext,
         ...person.identityTags,
         ...person.knownFacts.map((fact) => fact.text),
-      ].filter(Boolean).slice(0, 4),
+      ].filter((line): line is string => Boolean(line)).slice(0, 4),
     } satisfies RemasterDashboardContact;
   });
 
@@ -164,12 +180,16 @@ function buildAccount(
     name: person.name,
     mode: "contact-led",
     relationshipType: relationshipTypeByGroup[relationshipGroup],
+    segment: contactSegment(person),
     relationshipLabel,
+    organization: person.organization ?? null,
+    roleTitle: person.roleTitle ?? null,
+    sourceContext: person.sourceContext ?? null,
     starred: person.starred,
     avatarBg: person.avatarBg,
     avatarFg: person.avatarFg,
-    contextLabel: person.since ?? person.identityTags[0] ?? "contact-led account",
-    secondaryLabel: person.identityTags[0] ?? options.cultureLabel ?? "Contact",
+    contextLabel: person.since ?? person.sourceContext ?? person.identityTags[0] ?? "contact-led account",
+    secondaryLabel: person.organization ?? person.identityTags[0] ?? options.cultureLabel ?? "Contact",
     nextActivityId: person.nextOccasionId,
     lastDeliveryStatus: options.latestDelivery?.status ?? null,
     lastDeliveryAtISO: options.latestDelivery?.sentAtISO ?? null,
@@ -225,4 +245,8 @@ function buildDeliveryActivity(
 
 function accountIdForPerson(personId: ID): ID {
   return `account-${personId}`;
+}
+
+function contactSegment(person: Person): ContactSegment {
+  return person.segment ?? "personal";
 }

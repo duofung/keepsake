@@ -2,6 +2,7 @@ import "server-only";
 
 import type { QueryResultRow } from "pg";
 import type {
+  ContactSegment,
   CultureId,
   OccasionKind,
   OccasionNode,
@@ -24,6 +25,10 @@ import type {
 type PeopleRow = QueryResultRow & {
   id: string;
   name_enc: Uint8Array;
+  segment: ContactSegment | null;
+  organization_enc: Uint8Array | null;
+  role_title_enc: Uint8Array | null;
+  source_context_enc: Uint8Array | null;
   starred: boolean;
   avatar_bg: string;
   avatar_fg: string;
@@ -100,6 +105,10 @@ async function personFromRow(ownerId: OwnerId, row: PeopleRow): Promise<Person> 
   return {
     id: row.id,
     name: (await decryptText(ownerId, "people", "name_enc", row.name_enc)) ?? "",
+    segment: row.segment ?? "personal",
+    organization: (await decryptText(ownerId, "people", "organization_enc", row.organization_enc)) ?? null,
+    roleTitle: (await decryptText(ownerId, "people", "role_title_enc", row.role_title_enc)) ?? null,
+    sourceContext: (await decryptText(ownerId, "people", "source_context_enc", row.source_context_enc)) ?? null,
     starred: row.starred,
     avatarBg: row.avatar_bg,
     avatarFg: row.avatar_fg,
@@ -140,6 +149,10 @@ export class PgPeopleRepository implements PeopleRepository {
           SELECT
             p.id::text,
             p.name_enc,
+            p.segment,
+            p.organization_enc,
+            p.role_title_enc,
+            p.source_context_enc,
             p.starred,
             p.avatar_bg,
             p.avatar_fg,
@@ -188,6 +201,10 @@ export class PgPeopleRepository implements PeopleRepository {
           SELECT
             p.id::text,
             p.name_enc,
+            p.segment,
+            p.organization_enc,
+            p.role_title_enc,
+            p.source_context_enc,
             p.starred,
             p.avatar_bg,
             p.avatar_fg,
@@ -227,6 +244,10 @@ export class PgPeopleRepository implements PeopleRepository {
           INSERT INTO people (
             owner_id,
             name_enc,
+            segment,
+            organization_enc,
+            role_title_enc,
+            source_context_enc,
             starred,
             avatar_bg,
             avatar_fg,
@@ -250,11 +271,19 @@ export class PgPeopleRepository implements PeopleRepository {
             $9,
             $10,
             $11,
-            $12
+            $12,
+            $13,
+            $14,
+            $15,
+            $16
           )
           RETURNING
             id::text,
             name_enc,
+            segment,
+            organization_enc,
+            role_title_enc,
+            source_context_enc,
             starred,
             avatar_bg,
             avatar_fg,
@@ -270,6 +299,16 @@ export class PgPeopleRepository implements PeopleRepository {
         [
           ownerId,
           await encryptText(ownerId, "people", "name_enc", input.name),
+          input.segment ?? "personal",
+          input.organization
+            ? await encryptText(ownerId, "people", "organization_enc", input.organization)
+            : null,
+          input.roleTitle
+            ? await encryptText(ownerId, "people", "role_title_enc", input.roleTitle)
+            : null,
+          input.sourceContext
+            ? await encryptText(ownerId, "people", "source_context_enc", input.sourceContext)
+            : null,
           input.starred ?? false,
           input.avatarBg,
           input.avatarFg,

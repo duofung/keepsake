@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import type { CultureId, Person, PersonKnownFact } from "@/lib/domain";
+import type { ContactSegment, CultureId, Person, PersonKnownFact } from "@/lib/domain";
 import type { PersonCreateInput } from "@/lib/repositories";
 import { dataSource } from "@/lib/server/auth/current-user.server";
 import { createDbPerson } from "./db.server";
@@ -12,6 +12,14 @@ const CULTURE_IDS = new Set<CultureId>([
   "malay-muslim",
   "indian-hindu",
   "none",
+]);
+
+const CONTACT_SEGMENTS = new Set<ContactSegment>([
+  "client",
+  "partner",
+  "prospect",
+  "investor",
+  "personal",
 ]);
 
 const avatarPalette = [
@@ -57,14 +65,18 @@ function normalizePersonCreate(input: unknown): NormalizeResult {
   }
 
   const name = stringField(input.name).trim();
-  const relationshipId = stringField(input.relationshipId).trim();
-  const cultureId = stringField(input.cultureId).trim();
-  const since = optionalString(input.since, 140);
+  const segment = normalizeSegment(input.segment);
+  const organization = optionalString(input.organization, 140);
+  const roleTitle = optionalString(input.roleTitle, 140);
+  const sourceContext = optionalString(input.sourceContext ?? input.since, 220);
+  const cultureId = stringField(input.cultureId).trim() || "none";
   const note = optionalString(input.note, 700);
   const starred = input.starred === undefined ? false : input.starred === true;
 
   if (!name) return invalid("name is required.");
   if (name.length > 100) return invalid("name is too long.");
+  if (!segment) return invalid("segment is not supported.");
+  const relationshipId = stringField(input.relationshipId).trim() || relationshipForSegment(segment);
   if (!relationshipId) return invalid("relationshipId is required.");
   if (!cultureId) return invalid("cultureId is required.");
   if (!CULTURE_IDS.has(cultureId as CultureId)) {
@@ -84,13 +96,17 @@ function normalizePersonCreate(input: unknown): NormalizeResult {
     input: {
       previewId: `local-${randomUUID()}`,
       name,
+      segment,
+      organization: organization || null,
+      roleTitle: roleTitle || null,
+      sourceContext: sourceContext || null,
       starred,
       avatarBg: palette.bg,
       avatarFg: palette.fg,
       relationshipId,
       cultureId: cultureId as CultureId,
-      since: since || undefined,
-      identityTags: since ? [since] : [],
+      since: sourceContext || undefined,
+      identityTags: sourceContext ? [sourceContext] : [],
       knownFacts,
       personalTaboos: [],
       lastContactAt: new Date().toISOString().slice(0, 10),
@@ -108,6 +124,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringField(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function normalizeSegment(value: unknown): ContactSegment | null {
+  if (value === undefined || value === null || value === "") return "personal";
+  if (typeof value !== "string") return null;
+  const segment = value.trim();
+  return CONTACT_SEGMENTS.has(segment as ContactSegment) ? segment as ContactSegment : null;
+}
+
+function relationshipForSegment(segment: ContactSegment): string {
+  return segment === "partner" ? "rel-partner" : "rel-friend";
 }
 
 function optionalString(value: unknown, maxLength: number): string {

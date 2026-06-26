@@ -43,6 +43,18 @@ async function getPeople() {
   return { status: res.status, body: json };
 }
 
+async function postPeople(body) {
+  const res = await fetch(`${BASE}/api/people`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
 async function getPeoplePage() {
   const res = await fetch(`${BASE}/people`, {
     headers: sessionCookie ? { cookie: `keepsake_session=${sessionCookie}` } : {},
@@ -156,6 +168,8 @@ try {
   // ── Lin's primary occasion ────────────────────────────────────────────
   const lin = people.find((p) => p.id === "p-lin");
   check("Lin present in payload", !!lin);
+  check("Lin segment = client", lin?.segment === "client", `got ${lin?.segment}`);
+  check("Lin organization = Lattice Works", lin?.organization === "Lattice Works", `got ${lin?.organization}`);
   check(
     "Lin nextOccasionId = occ-lin-anniv",
     lin?.nextOccasionId === "occ-lin-anniv",
@@ -170,35 +184,51 @@ try {
     `got ${linAnniv?.personId}`,
   );
 
+  const created = await postPeople({
+    name: "Helen Zhang",
+    segment: "client",
+    organization: "Northstar Labs",
+    roleTitle: "Head of Partnerships",
+    sourceContext: "Warm intro from Malaysia launch",
+    note: "Prefers concise next-step emails.",
+    starred: true,
+  });
+  check("POST /api/people mock create → 201", created.status === 201, `status=${created.status}`);
+  check("mock created person has local id", /^local-/.test(created.body?.id ?? ""), `id=${created.body?.id}`);
+  check("mock created segment preserved", created.body?.segment === "client", `got ${created.body?.segment}`);
+  check("mock created organization preserved", created.body?.organization === "Northstar Labs", `got ${created.body?.organization}`);
+
   await mintSession();
   const peoplePage = await getPeoplePage();
 
   check("GET /people → 200", peoplePage.status === 200, `status=${peoplePage.status}`);
-  check("People page renders account/contact title", peoplePage.body.includes("Accounts / Contacts"));
+  check("People page renders business relationship title", peoplePage.body.includes("Business relationships"));
   check("People page renders Add contact CTA", peoplePage.body.includes("Add contact"));
   check(
-    "People page renders compatibility counts",
-    peoplePage.body.includes("5 accounts / 5 contacts in the ReMaster compatibility view"),
+    "People page renders business segment counts",
+    peoplePage.body.includes("5 contacts across client, partner, prospect, investor, and personal segments"),
   );
   check(
-    "People page renders ReMaster account tabs",
-    ["All", "Priority", "Personal", "Network", "Partner", "Colleague"].every((label) => (
+    "People page renders business segment tabs",
+    ["All", "Clients", "Partners", "Prospects", "Investors", "Personal"].every((label) => (
       peoplePage.body.includes(label)
     )),
   );
   check(
-    "People page renders account sections",
-    peoplePage.body.includes("PERSONAL ACCOUNTS")
-      && peoplePage.body.includes("NETWORK ACCOUNTS")
-      && peoplePage.body.includes("PARTNER ACCOUNTS"),
+    "People page renders business sections",
+    peoplePage.body.includes("CLIENTS")
+      && peoplePage.body.includes("PARTNERS")
+      && peoplePage.body.includes("PROSPECTS")
+      && peoplePage.body.includes("INVESTORS")
+      && peoplePage.body.includes("PERSONAL"),
   );
   check(
     "People page renders next activity from compatibility model",
     peoplePage.body.includes("Next activity · Anniversary · in 12 days"),
   );
   check(
-    "People page renders account context",
-    peoplePage.body.includes("Primary contact · together 12 years"),
+    "People page renders organization and role",
+    peoplePage.body.includes("Lattice Works / Founder"),
   );
 } catch (err) {
   process.stdout.write(`harness error: ${err?.message ?? err}\n`);

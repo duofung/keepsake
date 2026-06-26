@@ -15,6 +15,7 @@ import type {
   PersonKnownFact,
   Tone,
   CultureId,
+  ContactSegment,
 } from "../domain";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,6 +79,10 @@ export interface RepoError extends Error {
 
 export interface PersonCreateInput {
   name: string;
+  segment?: ContactSegment;
+  organization?: string | null;
+  roleTitle?: string | null;
+  sourceContext?: string | null;
   starred?: boolean;
   avatarBg: string;
   avatarFg: string;

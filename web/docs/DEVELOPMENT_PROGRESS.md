@@ -26,12 +26,12 @@ Rules:
 | Workstream | Status | What Is Stable | Remaining Work |
 |---|---|---|---|
 | App shell + core UI | MVP demo-ready desktop | Full-screen desktop shell, Home, People, Workspace, History, Profile, preview-safe icon fallback, page smoke tests, and an end-to-end `pnpm test:mvp-demo` flow. | Mobile pass, deeper visual polish, interaction polish. |
-| ReMaster pivot / model blueprint | Compatibility runtime started | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` now derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`, and Home + People + Workspace + History render through that compatibility runtime without changing storage/schema yet. Profile + Sign-in and command-channel replies are also ReMaster-framed while keeping the current auth, Gmail, channel, worker, webhook, and send contracts. | Plan native schema/backfill and route deprecation. |
-| Domain model | Stable current runtime | `domain.ts`, presentation mapping, mock data, API contracts. Current runtime remains person-centered. | ReMaster runtime adoption is still ahead; add fields only when a real product flow needs them. |
+| ReMaster pivot / model blueprint | Compatibility runtime + business contact foundation started | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`. People now has the first native business contact fields (`segment`, `organization`, `roleTitle`, `sourceContext`) while Home + Workspace + History keep compatibility reads. Profile + Sign-in and command-channel replies are also ReMaster-framed while keeping the current auth, Gmail, channel, worker, webhook, and send contracts. | Plan native account/activity schema, backfill, and route deprecation later. |
+| Domain model | Stable current runtime with contact segments | `domain.ts`, presentation mapping, mock data, API contracts. `Person` remains the storage/API anchor but now carries business contact fields for client/partner/prospect/investor/personal classification. | Native account/contact split, stakeholder roles, imports, merge semantics. |
 | Mock seams | Stable | People payload, draft context, draft service, delivery history dispatchers default to mock. | Delete mock fallback only after DB mode is default and production-ready. |
 | DB schema/RLS | Stable | Postgres schema, catalog seed, local dev fixtures, RLS, transaction helper. | Future migrations for real auth/session, reminders, send queue details. |
 | Crypto | Stable | AES-256-GCM envelope helper, AAD conventions, tests. | KMS/DEK wrapping hardening for production. |
-| People data | Stable read + create path | DB-backed people payload, repository reads, `PeopleRepository.create`, `POST /api/people`, and People-page Add contact flow. The People page now presents those person-centered rows as ReMaster-compatible accounts/contacts while mock mode still returns a `local-*` person for browser-local preview continuity. | People update/archive/date management, imports, merge semantics, native ReMaster schema/backfill. |
+| People data | Stable read + create path, business-first surface | DB-backed people payload, repository reads, `PeopleRepository.create`, `POST /api/people`, and People-page Add contact flow now round-trip `segment`, `organization`, `roleTitle`, and `sourceContext` in mock and DB modes. The People page groups by Clients / Partners / Prospects / Investors / Personal while mock mode still returns a `local-*` person for browser-local preview continuity. | People update/archive/date management, imports, merge semantics, native account/activity schema/backfill. |
 | Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence + user-edit versioning | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. `PATCH /api/drafts` persists Workspace subject + body + card edits as new canonical versions with `prompt_input_hash = NULL`. | Tone editing, prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
 | Delivery history | Stable read path + ReMaster framing | DB-backed delivery-history read repository, History account/contact activity framing, and status badges for delivered/opened/failed rows. The underlying delivery storage, webhook, worker, and send contracts are unchanged. | Pagination, filters, live status refresh, native ReMaster activity storage. |
 | Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + sign-out + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start 303s when given `?returnTo=`. `POST /api/auth/signout` clears the cookie and 303s to `/signin` — no DB, no Google revoke, no Gmail disconnect. Profile's "Sign out" row is now a real form POST. `/api/session` shape unchanged. | Retiring the `DEV_OWNER_*` env fallback from the cookie-first seam; Google grant revoke on signout. |
@@ -52,7 +52,7 @@ relationship-first model.
 | Area | Current runtime | Planned ReMaster direction |
 |---|---|---|
 | Primary anchor | `Person` + upcoming `OccasionNode` | `Account` + `Contact` + `ActivityEvent` |
-| Relationship taxonomy | Personal relationship catalog on the person record | Business relationship type on the account, stakeholder role on the contact/account link |
+| Relationship taxonomy | Business `segment` on `Person` plus legacy relationship catalog for compatibility | Business relationship type on a future account, stakeholder role on the contact/account link |
 | Timeline/history | `Delivery` history plus occasion-derived follow-up prompts | Unified account/contact activity timeline, with delivery as one event family |
 | Product surfaces | Home + People + Workspace + History through compatibility account/contact/activity views; Profile + Sign-in and command-channel replies compatibility-framed on top of the current auth/Gmail/channel runtime | Account list/detail, contact/stakeholder views, activity timeline, outreach workflow |
 
@@ -68,6 +68,42 @@ Reference:
   ReMaster framing, and command-channel replies now use ReMaster review-pointer
   language, but their auth, Gmail, channel, worker, webhook, and send contracts
   remain unchanged.
+
+### P12-A. Business Contact Foundation
+
+Status: done. Guarded by `pnpm test:people`, `pnpm test:db:people`,
+`pnpm test:db:people-route`, `pnpm test`, `pnpm test:db`,
+`pnpm build`, and `git diff --check`.
+
+Goal: move People and Add contact from personal-relationship-first toward
+ReMaster's business contact model while preserving personal contacts and the
+existing draft, delivery, worker, webhook, Gmail, WhatsApp, and Telegram paths.
+
+Shipped:
+
+- `Person` now carries `segment: client | partner | prospect | investor |
+  personal`, plus encrypted DB-backed `organization`, `roleTitle`, and
+  `sourceContext` fields. DB rows default `segment` to `personal`, so legacy
+  rows and existing insert paths keep working.
+- `PeopleRepository` reads and creates the new fields under the existing
+  owner-scoped transaction/RLS seam. Mock fixtures and encrypted dev fixture
+  seeding carry business examples for client, partner, prospect, investor, and
+  personal contacts.
+- `POST /api/people` accepts the business Add contact payload, still maps
+  legacy relationship/culture defaults internally, and returns the same `Person`
+  JSON shape extended with the new fields.
+- `/people` now uses business tabs (`All`, `Clients`, `Partners`, `Prospects`,
+  `Investors`, `Personal`), business-first title/copy, and cards that prioritize
+  name, organization / role title, then next activity, last outreach, or
+  relationship context.
+- The existing drawer, Workspace deep link (`/workspace?person=...`), command
+  flow, drafts, deliveries, worker, webhook, Gmail, WhatsApp, and Telegram
+  route contracts were not changed.
+
+Out of scope:
+
+- No account table, CRM pipeline, deals, payment/subscription, provider
+  integration, delivery/draft contract migration, or large refactor.
 
 ### P11-B. WhatsApp Link / Revoke Flow
 
@@ -274,10 +310,9 @@ Shipped:
   `lib/server/remaster-overview/index.server.ts`, which reuses the same
   compatibility overview as Home and keeps the legacy payload only for drawer
   details and Add contact form options.
-- `app/people/PeopleClient.tsx` groups cards by `Account` relationship type
-  (`All`, `Priority`, `Personal`, `Network`, `Partner`, `Colleague`) and shows
-  account name, relationship label/type, context, secondary label, and next
-  activity or last delivery status.
+- At this stage `app/people/PeopleClient.tsx` grouped cards by derived
+  compatibility relationship type. P12-A later superseded the visible People
+  tabs with business contact segments.
 - `PersonDrawer` remains the detail drawer and Workspace links still use
   `primaryContactId` through the existing `/workspace?person=...` route.
 - The `/api/people` GET/POST contract and mock-mode `local-*` continuity are

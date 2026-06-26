@@ -335,6 +335,24 @@ try {
 
     await client.query(
       `
+        UPDATE people
+        SET
+          segment = 'client',
+          organization_enc = $1,
+          role_title_enc = $2,
+          source_context_enc = $3
+        WHERE id = $4
+      `,
+      [
+        await encryptedText(encrypt, ownerA, "people", "organization_enc", "Lattice Works"),
+        await encryptedText(encrypt, ownerA, "people", "role_title_enc", "Founder"),
+        await encryptedText(encrypt, ownerA, "people", "source_context_enc", "Malaysia launch advisory"),
+        linId,
+      ],
+    );
+
+    await client.query(
+      `
         INSERT INTO occasion_nodes (
           id,
           owner_id,
@@ -376,12 +394,20 @@ try {
 
   const lin = ownerAPeople.find((person) => person.id === linId);
   assert(lin?.name === "Lin", "decrypts person name");
+  assertEqual(lin?.segment, "client", "maps explicit business segment");
+  assertEqual(lin?.organization, "Lattice Works", "decrypts organization");
+  assertEqual(lin?.roleTitle, "Founder", "decrypts role title");
+  assertEqual(lin?.sourceContext, "Malaysia launch advisory", "decrypts source context");
   assert(lin?.since === "together 12 years", "decrypts optional since");
   assert(lin?.identityTags.includes("met at university"), "decrypts identity tags JSON");
   assert(lin?.knownFacts[0]?.isLead === true, "decrypts known facts JSON");
   assert(lin?.personalTaboos.includes("Avoid public jokes."), "decrypts personal taboos JSON");
   assert(lin?.nextOccasionId === linAnniversaryId, "hydrates nextOccasionId from earliest future occasion");
   assert(lin?.lastContactAt === dates.last_contact, "maps lastContactAt as ISO date");
+
+  const kira = ownerAPeople.find((person) => person.id === kiraId);
+  assertEqual(kira?.segment, "personal", "defaults legacy people rows to personal segment");
+  assert(kira?.organization === null, "legacy people rows have null organization");
 
   const foundLin = await people.findById(ownerA, linId);
   const hiddenLin = await people.findById(ownerB, linId);
@@ -418,6 +444,10 @@ try {
 
   const created = await people.create(ownerA, {
     name: "Helen",
+    segment: "prospect",
+    organization: "Northstar Labs",
+    roleTitle: "Head of Partnerships",
+    sourceContext: "Warm intro from Malaysia launch",
     starred: true,
     avatarBg: "#D9EAFA",
     avatarFg: "#4F83BA",
@@ -432,6 +462,10 @@ try {
   assert(created.id && created.id !== linId, "create returns a fresh person id");
   assertEqual(created.name, "Helen", "create returns decrypted name");
   assert(created.starred === true, "create preserves starred");
+  assertEqual(created.segment, "prospect", "create preserves segment");
+  assertEqual(created.organization, "Northstar Labs", "create decrypts organization");
+  assertEqual(created.roleTitle, "Head of Partnerships", "create decrypts role title");
+  assertEqual(created.sourceContext, "Warm intro from Malaysia launch", "create decrypts source context");
   assertEqual(created.relationshipId, "rel-friend", "create preserves relationshipId");
   assertEqual(created.cultureId, "none", "create preserves cultureId");
   assertEqual(created.since, "promoted today", "create decrypts since");

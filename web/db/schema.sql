@@ -203,6 +203,11 @@ CREATE TABLE people (
   owner_id              uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
   name_enc              bytea NOT NULL,
+  segment               text NOT NULL DEFAULT 'personal'
+                        CHECK (segment IN ('client', 'partner', 'prospect', 'investor', 'personal')),
+  organization_enc      bytea,
+  role_title_enc        bytea,
+  source_context_enc    bytea,
   starred               boolean NOT NULL DEFAULT false,
   avatar_bg             text NOT NULL,
   avatar_fg             text NOT NULL,
@@ -232,9 +237,15 @@ CREATE INDEX people_owner_starred_idx
 CREATE INDEX people_owner_relationship_idx
   ON people (owner_id, relationship_id);
 
+CREATE INDEX people_owner_segment_idx
+  ON people (owner_id, segment);
+
 COMMENT ON COLUMN people.avatar_bg IS
   'Generated from name at create-time. Kept in clear so list views render '
   'without decrypting. Acceptable initial-letter entropy leak.';
+
+COMMENT ON COLUMN people.segment IS
+  'Business contact segment. Existing personal/family/friend rows default to personal.';
 
 -- Note: Person.nextOccasionId from domain.ts is NOT stored. Derived per-read,
 -- see docs/DB_SCHEMA.md §6.

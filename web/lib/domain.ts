@@ -4,6 +4,17 @@
 export type ID = string;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Business contact layer
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ContactSegment =
+  | "client"
+  | "partner"
+  | "prospect"
+  | "investor"
+  | "personal";
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Relationship — partner / mother / friend / colleague…
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -87,6 +98,10 @@ export interface PersonKnownFact {
 export interface Person {
   id: ID;
   name: string;
+  segment: ContactSegment; // business-first segment; legacy rows default to personal
+  organization: string | null;
+  roleTitle: string | null;
+  sourceContext: string | null;
   starred: boolean;        // "closest circle"
   avatarBg: string;
   avatarFg: string;

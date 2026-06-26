@@ -134,10 +134,12 @@ user-custom rows.
 ### PeopleRepository
 
 Runtime implementation: `people.server.ts` for owner-scoped reads and person
-creation. It backs `/api/people` and `/api/drafts` context resolution when
+creation, including encrypted business contact fields (`organization`,
+`roleTitle`, `sourceContext`) and a cleartext checked `segment` with legacy
+rows defaulting to `personal`. It backs `/api/people` and `/api/drafts` context resolution when
 `KEEPSAKE_DATA_SOURCE=db`; mock-backed server seams remain the default.
 `pnpm test:db:people` verifies decryption, RLS behavior,
-derived `nextOccasionId` / `isPrimary`, person creation, and
+derived `nextOccasionId` / `isPrimary`, business field defaults, person creation, and
 `PeoplePayload` shape against temporary Postgres.
 
 Per-user. All methods take `ownerId: OwnerId` as the first argument and
@@ -224,8 +226,8 @@ provider output never grows the row unbounded.
 
 ## What stays in `domain.ts` vs `types.ts`
 
-`domain.ts` is the persistent + API contract: `Person`, `OccasionNode`,
-`MessageDraft`, `Delivery`, `Relationship`, `CultureRule`.
+`domain.ts` is the persistent + API contract: `Person`, `ContactSegment`,
+`OccasionNode`, `MessageDraft`, `Delivery`, `Relationship`, `CultureRule`.
 
 `lib/repositories/types.ts` is repo-internal plumbing:
 

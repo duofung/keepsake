@@ -62,6 +62,7 @@ function DrawerContent({
   const prepareLabel = primary
     ? `Draft outreach for ${primary.label}`
     : "Draft outreach";
+  const businessLine = drawerBusinessLine(person, relationship);
 
   return (
     <>
@@ -89,16 +90,19 @@ function DrawerContent({
               )}
             </div>
             <div style={{ fontSize: 12, color: "var(--gray-2)", marginTop: 2 }}>
-              {relationship.label}
-              {person.since ? ` · ${person.since}` : ""}
+              {businessLine}
             </div>
           </div>
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 24px 20px" }}>
-        <Section title="ACCOUNT / CONTACT CONTEXT">
+        <Section title="BUSINESS CONTEXT">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+            <Tag>{segmentLabel(person)}</Tag>
+            {person.organization && <Tag>{person.organization}</Tag>}
+            {person.roleTitle && <Tag>{person.roleTitle}</Tag>}
+            {person.sourceContext && <Tag>{person.sourceContext}</Tag>}
             <Tag dot={culture.dotColor}>{relationship.label}</Tag>
             {culture.id !== "none" && <Tag dot={culture.dotColor}>{culture.label}</Tag>}
             {person.identityTags.map((t, i) => <Tag key={i}>{t}</Tag>)}
@@ -225,4 +229,28 @@ function Tag({ children, dot }: { children: React.ReactNode; dot?: string }) {
       {children}
     </span>
   );
+}
+
+function drawerBusinessLine(person: Person, relationship: Relationship): string {
+  const organization = person.organization?.trim() ?? "";
+  const roleTitle = person.roleTitle?.trim() ?? "";
+  const sourceContext = person.sourceContext?.trim() ?? "";
+  const legacyContext = person.since?.trim() ?? "";
+  const business = [organization, roleTitle].filter(Boolean).join(" / ");
+  return business || sourceContext || `${relationship.label}${legacyContext ? ` · ${legacyContext}` : ""}`;
+}
+
+function segmentLabel(person: Person): string {
+  switch (person.segment ?? "personal") {
+    case "client":
+      return "Client";
+    case "partner":
+      return "Partner";
+    case "prospect":
+      return "Prospect";
+    case "investor":
+      return "Investor";
+    default:
+      return "Personal";
+  }
 }
