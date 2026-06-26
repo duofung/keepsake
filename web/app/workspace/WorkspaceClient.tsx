@@ -6,6 +6,7 @@ import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
 import type {
   Channel,
+  ContactSegment,
   CultureRule,
   DeliveryRequest,
   DraftParagraph,
@@ -20,7 +21,6 @@ import type {
   RemasterDashboardAccount,
   RemasterDashboardActivity,
   RemasterDashboardOverview,
-  RemasterRelationshipType,
 } from "@/lib/remaster/read-model";
 import {
   cardGradientByHint,
@@ -35,6 +35,25 @@ import {
 } from "@/lib/workspace/draft-autosave";
 
 type Msg = { who: "ai" | "me"; text: string };
+type OutreachPresetId =
+  | "follow-up"
+  | "recap"
+  | "check-in"
+  | "congratulations"
+  | "intro"
+  | "personal";
+
+interface OutreachPreset {
+  readonly id: OutreachPresetId;
+  readonly label: string;
+  readonly instruction: string;
+  readonly helperCopy: string;
+  readonly quickActions: {
+    readonly label: string;
+    readonly prompt: string;
+    readonly iconHint: string;
+  }[];
+}
 
 export interface WorkspaceCurrentUser {
   readonly id: string;
@@ -124,6 +143,9 @@ export default function WorkspaceClient({
     () => payload.people.find((p) => p.id === personId) ?? null,
     [payload, personId],
   );
+  const [selectedPresetId, setSelectedPresetId] = useState<OutreachPresetId>(
+    () => defaultPresetForSegment(person?.segment ?? "client"),
+  );
   const relationship: Relationship | null = useMemo(
     () => person ? payload.relationships.find((r) => r.id === person.relationshipId) ?? null : null,
     [payload, person],
@@ -170,6 +192,14 @@ export default function WorkspaceClient({
       )) ?? null;
     },
     [account, activityById, remasterOverview.upcomingActivities],
+  );
+  const selectedPreset = useMemo(
+    () => outreachPresetById(selectedPresetId),
+    [selectedPresetId],
+  );
+  const segmentFrame = useMemo(
+    () => workspaceSegmentFrame(person?.segment ?? "personal"),
+    [person?.segment],
   );
 
   const applyDraft = useCallback((
@@ -255,6 +285,7 @@ export default function WorkspaceClient({
     setSubject("");
     setBodyText("");
     setHasCard(true);
+    setSelectedPresetId(defaultPresetForSegment(person.segment));
     setLog([]);
     // Send-time recipient identity is per-person; never carry over to a new
     // person/occasion branch. The same applies to any inline error from the
@@ -309,8 +340,16 @@ export default function WorkspaceClient({
   }, [log]);
 
   function sendInstruction(text: string) {
-    setLog((prev) => [...prev, { who: "me", text }]);
-    void requestDraft(text);
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setLog((prev) => [...prev, { who: "me", text: trimmed }]);
+    void requestDraft(instructionWithPreset(trimmed, selectedPreset));
+  }
+
+  function choosePreset(preset: OutreachPreset) {
+    if (preset.id === selectedPresetId) return;
+    setSelectedPresetId(preset.id);
+    setLog((prev) => [...prev, { who: "ai", text: preset.helperCopy }]);
   }
 
   const clearTimers = useCallback(() => {
@@ -449,25 +488,31 @@ export default function WorkspaceClient({
 
   const accountName = account?.name ?? person.name;
   const primaryContactName = contact?.displayName ?? person.name;
-  const accountTypeLabel = account
-    ? remasterRelationshipTypeLabel[account.relationshipType]
-    : relationship.label;
+  const businessSegmentLabel = contactSegmentLabel[person.segment];
+  const accountTypeLabel = account ? businessSegmentLabel : relationship.label;
   const relationshipDetail = account?.relationshipLabel && account.relationshipLabel !== accountTypeLabel
-    ? `${account.relationshipLabel} · ${accountTypeLabel} account`
-    : `${accountTypeLabel} account`;
-  const accountContextLabel = account?.contextLabel ?? person.since ?? "contact-led account";
+    ? `${businessSegmentLabel} contact · ${account.relationshipLabel}`
+    : `${businessSegmentLabel} contact`;
+  const accountContextLabel =
+    account?.sourceContext
+    ?? contact?.sourceContext
+    ?? person.sourceContext
+    ?? person.since
+    ?? segmentFrame.contextFallback;
   const secondaryLabel = account?.secondaryLabel
     && account.secondaryLabel !== account.contextLabel
     && account.secondaryLabel !== account.relationshipLabel
+    && account.secondaryLabel !== account.organization
     ? account.secondaryLabel
     : "";
   const accountMetaText = [
+    workspaceIdentityLine(account, contact, person),
     `Primary contact: ${primaryContactName}`,
     relationshipDetail,
     accountContextLabel,
     secondaryLabel,
   ].filter(Boolean).join(" · ");
-  const activitySummary = workspaceActivitySummary(account, currentActivity, occasion);
+  const activitySummary = workspaceActivitySummary(account, currentActivity, occasion, segmentFrame);
   const nodeText = activitySummary.text;
   const nodeIcon = activitySummary.icon;
   const activeVersionId = selectedVersionId ?? draft?.id ?? null;
@@ -493,7 +538,7 @@ export default function WorkspaceClient({
             <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
               <Avatar name={accountName} bg={person.avatarBg} fg={person.avatarFg} size={30} fontSize={12} />
               <div>
-                <h3 style={{ fontSize: 14, fontWeight: 600 }}>Account outreach for {accountName}</h3>
+                <h3 style={{ fontSize: 14, fontWeight: 600 }}>{segmentFrame.title} for {accountName}</h3>
                 <p style={{ fontSize: 11, color: "var(--gray-3)" }}>
                   {accountMetaText}
                 </p>
@@ -513,6 +558,23 @@ export default function WorkspaceClient({
         {/* assist panel */}
         <div style={{ width: "30%", minWidth: 286, maxWidth: 330, background: "var(--rail)", display: "flex", flexDirection: "column" }}>
           <div ref={logRef} style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{
+              background: "#fff", borderRadius: 8, padding: "11px 12px",
+              border: "0.5px solid var(--line)", color: "var(--gray-1)",
+              fontSize: 12, lineHeight: 1.55,
+            }}>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 7,
+                color: "var(--blue-deep)", fontWeight: 600, marginBottom: 4,
+              }}>
+                <Icon name="i-heart-handshake" />
+                <span>ReMaster outreach assistant</span>
+              </div>
+              <div>{segmentFrame.assistantCopy}</div>
+              <div style={{ marginTop: 6, color: "var(--gray-3)" }}>
+                {selectedPreset.helperCopy}
+              </div>
+            </div>
             {log.map((m, i) => (
               <div
                 key={i}
@@ -560,6 +622,20 @@ export default function WorkspaceClient({
             )}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 14px 8px" }}>
+            {selectedPreset.quickActions.map((q, i) => (
+              <button
+                key={`${selectedPreset.id}-${i}`}
+                onClick={() => sendInstruction(q.prompt)}
+                style={{
+                  fontSize: 11, padding: "5px 10px", background: "var(--blue-wash)", borderRadius: 12,
+                  color: "var(--blue-deep)", display: "flex", alignItems: "center", gap: 5,
+                  cursor: "pointer", border: "none",
+                }}
+              >
+                <span style={{ fontSize: 13 }}><Icon name={q.iconHint} /></span>
+                {q.label}
+              </button>
+            ))}
             {draft?.quickActions.map((q, i) => (
               <button
                 key={i}
@@ -619,6 +695,34 @@ export default function WorkspaceClient({
           <div style={{
             width: "min(100%, 640px)",
             padding: "12px 16px 8px",
+            display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
+          }}>
+            <span style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 500 }}>Intent:</span>
+            {OUTREACH_PRESETS.map((preset) => {
+              const active = preset.id === selectedPresetId;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => choosePreset(preset)}
+                  style={{
+                    fontSize: 11.5, fontWeight: active ? 600 : 500,
+                    color: active ? "var(--blue-deep)" : "var(--gray-2)",
+                    background: active ? "var(--blue-wash)" : "#fff",
+                    padding: "5px 10px", borderRadius: 10, cursor: "pointer",
+                    border: active ? "0.5px solid var(--blue)" : "0.5px solid #E1E6EB",
+                  }}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{
+            width: "min(100%, 640px)",
+            padding: "0 16px 8px",
             display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
           }}>
             <span style={{ fontSize: 11, color: "var(--gray-3)", fontWeight: 500 }}>Tone:</span>
@@ -755,14 +859,14 @@ export default function WorkspaceClient({
             <div className="ks-mail-body">
               <section>
                 <div style={{ fontSize: 10.5, color: "var(--gray-3)", fontWeight: 600, letterSpacing: "0.03em", marginBottom: 8 }}>
-                  ACCOUNT OUTREACH DRAFT
+                  {segmentFrame.draftLabel}
                 </div>
                 <textarea
                   value={bodyText}
                   onChange={(e) => setBodyText(e.target.value)}
                   data-testid="message-body-editor"
                   aria-label="Email body"
-                  placeholder="Write the outreach body..."
+                  placeholder={segmentFrame.bodyPlaceholder}
                   style={{
                     width: "100%", minHeight: 210, resize: "vertical",
                     border: "none", borderRadius: 0, background: "transparent",
@@ -858,7 +962,7 @@ export default function WorkspaceClient({
             <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 11, color: "var(--gray-3)" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 14 }}><Icon name="i-clock" /></span>
-                Queue now, or hold for the right day
+                Queue when ready, or hold for the right moment
               </span>
               <span
                 role="status"
@@ -952,21 +1056,192 @@ function saveStatusLabel(status: "idle" | "saving" | "saved" | "error"): string 
   }
 }
 
-const remasterRelationshipTypeLabel: Record<RemasterRelationshipType, string> = {
+const contactSegmentLabel: Record<ContactSegment, string> = {
+  client: "Client",
   partner: "Partner",
+  prospect: "Prospect",
+  investor: "Investor",
   personal: "Personal",
-  network: "Network",
-  colleague: "Colleague",
 };
+
+interface WorkspaceSegmentFrame {
+  readonly title: string;
+  readonly draftLabel: string;
+  readonly activityLabel: string;
+  readonly lastDeliveryLabel: string;
+  readonly noActivityText: string;
+  readonly assistantCopy: string;
+  readonly contextFallback: string;
+  readonly bodyPlaceholder: string;
+}
+
+const workspaceSegmentFrames: Record<ContactSegment, WorkspaceSegmentFrame> = {
+  client: {
+    title: "Client follow-up",
+    draftLabel: "CLIENT FOLLOW-UP DRAFT",
+    activityLabel: "Next follow-up",
+    lastDeliveryLabel: "Last outreach",
+    noActivityText: "No client follow-up scheduled",
+    assistantCopy: "Use this space to prepare client follow-ups, account recaps, and next-step outreach before queueing anything.",
+    contextFallback: "Business context not set",
+    bodyPlaceholder: "Write the client follow-up body...",
+  },
+  partner: {
+    title: "Partner outreach",
+    draftLabel: "PARTNER TOUCHPOINT DRAFT",
+    activityLabel: "Next partnership touchpoint",
+    lastDeliveryLabel: "Last partner outreach",
+    noActivityText: "No partner touchpoint scheduled",
+    assistantCopy: "Shape a partnership check-in, recap, or collaborative next step while keeping the existing contact context intact.",
+    contextFallback: "Partnership context not set",
+    bodyPlaceholder: "Write the partner outreach body...",
+  },
+  prospect: {
+    title: "Prospect outreach",
+    draftLabel: "PROSPECT OUTREACH DRAFT",
+    activityLabel: "Next outreach",
+    lastDeliveryLabel: "Last prospect outreach",
+    noActivityText: "No prospect outreach scheduled",
+    assistantCopy: "Prepare a concise intro, nudge, or follow-up for a prospect without turning this into a sales pipeline.",
+    contextFallback: "Prospect context not set",
+    bodyPlaceholder: "Write the prospect outreach body...",
+  },
+  investor: {
+    title: "Investor update",
+    draftLabel: "INVESTOR UPDATE DRAFT",
+    activityLabel: "Next investor update",
+    lastDeliveryLabel: "Last investor update",
+    noActivityText: "No investor update scheduled",
+    assistantCopy: "Draft an investor update or relationship touchpoint for review before anything is queued.",
+    contextFallback: "Investor context not set",
+    bodyPlaceholder: "Write the investor update body...",
+  },
+  personal: {
+    title: "Personal note",
+    draftLabel: "PERSONAL NOTE DRAFT",
+    activityLabel: "Next note",
+    lastDeliveryLabel: "Last personal note",
+    noActivityText: "No personal note scheduled",
+    assistantCopy: "Personal contacts still work here; the assistant keeps the note warm while preserving the same review-first flow.",
+    contextFallback: "Personal context not set",
+    bodyPlaceholder: "Write the personal note body...",
+  },
+};
+
+function workspaceSegmentFrame(segment: ContactSegment): WorkspaceSegmentFrame {
+  return workspaceSegmentFrames[segment] ?? workspaceSegmentFrames.personal;
+}
+
+function defaultPresetForSegment(segment: ContactSegment): OutreachPresetId {
+  switch (segment) {
+    case "client":
+      return "follow-up";
+    case "partner":
+      return "check-in";
+    case "prospect":
+      return "intro";
+    case "investor":
+      return "recap";
+    default:
+      return "personal";
+  }
+}
+
+const OUTREACH_PRESETS: readonly [OutreachPreset, ...OutreachPreset[]] = [
+  {
+    id: "follow-up",
+    label: "Follow up",
+    instruction: "Use a business follow-up intent: be specific, useful, and clear about the next step.",
+    helperCopy: "Follow up keeps the draft focused on context, value, and one clear next step.",
+    quickActions: [
+      { label: "Clarify next step", prompt: "Make the next step clearer and practical", iconHint: "i-bulb" },
+      { label: "Add context", prompt: "Add a brief context line before the ask", iconHint: "i-pencil" },
+    ],
+  },
+  {
+    id: "recap",
+    label: "Recap",
+    instruction: "Use a recap intent: summarize what happened, what matters, and what should happen next.",
+    helperCopy: "Recap frames the outreach around what was discussed and what needs attention now.",
+    quickActions: [
+      { label: "Summarize sharply", prompt: "Make this a sharper recap with bullets in prose", iconHint: "i-edit" },
+      { label: "Add decision", prompt: "Call out the decision or next milestone", iconHint: "i-check-plain" },
+    ],
+  },
+  {
+    id: "check-in",
+    label: "Check-in",
+    instruction: "Use a check-in intent: warm, low-friction, and relationship-aware without overclaiming.",
+    helperCopy: "Check-in keeps the message warm and low-pressure while still business-aware.",
+    quickActions: [
+      { label: "Softer ask", prompt: "Make the ask softer and easier to answer", iconHint: "i-heart-handshake" },
+      { label: "Shorter", prompt: "Shorter", iconHint: "i-edit" },
+    ],
+  },
+  {
+    id: "congratulations",
+    label: "Congratulations",
+    instruction: "Use a congratulations intent: acknowledge the milestone, then bridge naturally to the relationship.",
+    helperCopy: "Congratulations centers the milestone first, then keeps the outreach grounded.",
+    quickActions: [
+      { label: "Add milestone", prompt: "Mention the milestone more directly", iconHint: "i-star" },
+      { label: "Less formal", prompt: "Make it less formal but still professional", iconHint: "i-pencil" },
+    ],
+  },
+  {
+    id: "intro",
+    label: "Intro",
+    instruction: "Use an intro intent: establish relevance quickly, keep it concise, and avoid a hard sell.",
+    helperCopy: "Intro helps with prospect outreach: relevance first, light ask second.",
+    quickActions: [
+      { label: "Lead with relevance", prompt: "Open with why this is relevant to them", iconHint: "i-bulb" },
+      { label: "Tighter intro", prompt: "Make the intro tighter and more direct", iconHint: "i-edit" },
+    ],
+  },
+  {
+    id: "personal",
+    label: "Personal",
+    instruction: "Use a personal note intent: warm, human, and specific to the relationship.",
+    helperCopy: "Personal keeps the same drafting and queue flow, but softens the business framing.",
+    quickActions: [
+      { label: "Warmer", prompt: "Make it warmer", iconHint: "i-heart" },
+      { label: "Add memory", prompt: "Add a small specific memory", iconHint: "i-pencil" },
+    ],
+  },
+];
+
+function outreachPresetById(id: OutreachPresetId): OutreachPreset {
+  return OUTREACH_PRESETS.find((preset) => preset.id === id) ?? OUTREACH_PRESETS[0];
+}
+
+function instructionWithPreset(text: string, preset: OutreachPreset): string {
+  return `${preset.instruction}\n\n${text}`;
+}
+
+function workspaceIdentityLine(
+  account: RemasterDashboardAccount | null,
+  contact: { organization: string | null; roleTitle: string | null } | null,
+  person: Person,
+): string {
+  const organization = account?.organization ?? contact?.organization ?? person.organization;
+  const roleTitle = account?.roleTitle ?? contact?.roleTitle ?? person.roleTitle;
+
+  if (organization && roleTitle) return `${roleTitle} at ${organization}`;
+  if (organization) return organization;
+  if (roleTitle) return roleTitle;
+  if (person.sourceContext) return person.sourceContext;
+  return person.segment === "personal" ? "Personal contact" : "Business context not set";
+}
 
 function workspaceActivitySummary(
   account: RemasterDashboardAccount | null,
   currentActivity: RemasterDashboardActivity | null,
   occasion: OccasionNode | null,
+  frame: WorkspaceSegmentFrame,
 ): { text: string; icon: string } {
   if (currentActivity && currentActivity.daysUntil !== null) {
     return {
-      text: `Next activity · ${nodeChipText(currentActivity.title, currentActivity.daysUntil)}`,
+      text: `${frame.activityLabel} · ${nodeChipText(currentActivity.title, currentActivity.daysUntil)}`,
       icon: occasionIcon[currentActivity.occasionKind ?? "check-in"],
     };
   }
@@ -975,19 +1250,19 @@ function workspaceActivitySummary(
     const badge = deliveryStatusBadge[account.lastDeliveryStatus];
     const deliveryDate = account.lastDeliveryAtISO ? ` · ${account.lastDeliveryAtISO.slice(0, 10)}` : "";
     return {
-      text: `Last delivery · ${badge.label}${deliveryDate}`,
+      text: `${frame.lastDeliveryLabel} · ${badge.label}${deliveryDate}`,
       icon: badge.icon,
     };
   }
 
   if (occasion) {
     return {
-      text: `Next activity · ${nodeChipText(occasion.label, occasion.daysUntil)}`,
+      text: `${frame.activityLabel} · ${nodeChipText(occasion.label, occasion.daysUntil)}`,
       icon: occasionIcon[occasion.kind],
     };
   }
 
-  return { text: "No scheduled activity", icon: "i-bulb" };
+  return { text: frame.noActivityText, icon: "i-bulb" };
 }
 
 // Mirrors the server-side `EMAIL_RE` in `lib/server/delivery-send/mock.server.ts`.

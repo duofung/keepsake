@@ -113,13 +113,25 @@ try {
   const { status, body } = await getWorkspace();
 
   check("GET /workspace?person=p-lin -> 200", status === 200, `status=${status}`);
-  check("renders account outreach header", body.includes("Account outreach for Lin"));
+  check("renders client follow-up header", body.includes("Client follow-up for Lin"));
   check("renders account/contact subtitle",
     body.includes("Primary contact: Lin")
-      && body.includes("Partner account")
-      && body.includes("together 12 years"));
-  check("renders next account activity", body.includes("Next activity · Anniversary · in 12 days"));
-  check("renders account outreach draft label", body.includes("ACCOUNT OUTREACH DRAFT"));
+      && body.includes("Founder at Lattice Works")
+      && body.includes("Client contact")
+      && body.includes("Malaysia launch advisory"));
+  check("renders next client follow-up", body.includes("Next follow-up · Anniversary · in 12 days"));
+  check("renders business outreach assistant", body.includes("ReMaster outreach assistant"));
+  check("renders client helper copy", body.includes("client follow-ups, account recaps"));
+  check("renders intent presets",
+    body.includes("Intent:")
+      && body.includes("Follow up")
+      && body.includes("Recap")
+      && body.includes("Check-in")
+      && body.includes("Congratulations")
+      && body.includes("Intro")
+      && body.includes("Personal"));
+  check("renders selected preset helper", body.includes("Follow up keeps the draft focused"));
+  check("renders client follow-up draft label", body.includes("CLIENT FOLLOW-UP DRAFT"));
   check("renders compose To row", body.includes("To") && body.includes("Lin"));
   check("renders sender From row", body.includes("From"));
   check("renders sender name", body.includes(testUser.name));
@@ -127,7 +139,7 @@ try {
   check("renders sender initials", body.includes(testUser.initials));
   check("renders missing sender configuration", body.includes("sender not configured"));
   check("keeps tone controls", body.includes("Tone:"));
-  check("keeps send footer", body.includes("Queue now, or hold for the right day"));
+  check("keeps send footer", body.includes("Queue when ready, or hold for the right moment"));
   check("renders Queue email button", body.includes("Queue email"));
   check("renders Queue print card button", body.includes("Queue print card"));
   check("renders direct message editor", body.includes('data-testid="message-body-editor"'));

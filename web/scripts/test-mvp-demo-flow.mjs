@@ -151,7 +151,7 @@ try {
   const pages = [
     { path: "/", label: "Home", expected: "MVP Demo" },
     { path: "/people", label: "People", expected: "5 contacts across client, partner, prospect, investor, and personal segments" },
-    { path: "/workspace?person=p-lin", label: "Workspace", expected: "Account outreach for Lin" },
+    { path: "/workspace?person=p-lin", label: "Workspace", expected: "Client follow-up for Lin" },
     { path: "/history", label: "History", expected: "Account/contact outreach history" },
     { path: "/profile", label: "Profile", expected: "OUTREACH WORKFLOW" },
   ];
