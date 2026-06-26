@@ -38,7 +38,7 @@ Rules:
 | Gmail OAuth | Stable start + callback | Full HMAC state cookie, native-fetch token exchange, account upsert on success, cookie cleared on every response. | Token refresh + markExpired on send failure, Google revoke on disconnect. |
 | Sending account UI | Connect/Disconnect wired | ReMaster-framed Profile shows Not connected / Connected / Expired with Connect / Reconnect / Disconnect CTAs that drive `/api/oauth/gmail/start` and `POST /api/gmail/disconnect`. Idempotent + cross-owner safe. | Auto-repair on expired refresh, Google revoke on disconnect, multi-account support. |
 | Email send | Stable end-to-end (enqueue + bounded loop runtime + Gmail send + stale-recovery + webhook status ingest + History surfaces status + runbook documents manual lifecycle and troubleshooting) | `POST /api/deliveries` queues a row with `recipientEmail` encrypted; `pnpm worker:run` drives `runWorkerLoop({ maxTicks, recovery, stopOnFailure })`, which optionally requeues stuck `'sending'` rows then drains the queue one tick at a time via `processNextQueuedEmail()`. SELECT FOR UPDATE SKIP LOCKED + `sending` state prevents double-send in healthy operation; stale recovery is operator-gated with explicit duplicate-send risk. `POST /api/webhooks/deliveries` accepts provider-agnostic delivered/opened/failed events behind a shared-secret gate and advances `deliveries.status` monotonically (no downgrade). `/history` reads the row's current status and surfaces it as one of three tone families (neutral / success / warn) — failed bounces render as a red alert badge instead of borrowing the delivered green. `docs/DELIVERY_RUNBOOK.md` walks an operator through the full Workspace→worker→webhook→History loop with grouped env vars and per-step troubleshooting. | Real Gmail push subscription, retry/backoff queue, cron/daemon, concurrent worker pool, post-channel worker, `Person.email` / `person_contacts` model, live status updates (polling / SSE). |
-| Command Channel Platform | Foundation + identity-link schema + repository runtime + DB-backed mock inbound + owner-scoped read path + Profile mock/Telegram link UI + review URLs + first Telegram adapter + Telegram start-link binding (P8-A → P8-J), now ReMaster-framed | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner`, `link`, `markRevoked`; `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. P8-D: `POST /api/channels/mock/inbound` runs DB-only mock provider identity resolution (`externalUserId → owner_id`) through a worker transaction, returns `needs_link` for missing/revoked links, and only then calls the shared router. P8-E: `handleOwnerCommand(ownerId, event)` opens `transaction(ownerId, …)` and enriches a follow-up reply with that owner's real people + upcoming occasions (≤30 days, top 3 by daysUntil). P8-F: Profile gains a "Command channels" section with `POST /api/channels/mock/{link,revoke}` form actions; DB mode shows real linked rows + a link form, mock mode shows a DB-mode-required placeholder. P8-G: `CommandResponse.reviewUrl` gives adapters a relative ReMaster review link (`/people`, `/workspace?...`, `/profile#command-channels`) while preserving the no-execution invariant. P8-H: `POST /api/channels/telegram` verifies Telegram's webhook secret, normalises private text messages, resolves Telegram user ids through `channel_accounts`, and replies through Telegram Bot API with ReMaster review-pointer copy. P8-I: Profile DB mode can manually link/revoke Telegram user ids. P8-J: Profile renders a signed `https://t.me/<bot>?start=<token>` link; Telegram `/start <token>` verifies the stateless token and links that Telegram user to the owner. P10-F reframes mock, DB-backed inbound, and Telegram replies as account/contact outreach review without changing `CommandIntent`, `SuggestedAction`, `reviewUrl`, route, schema, draft/send, worker, webhook, or Gmail contracts. Still no WhatsApp/Slack adapter; still no draft creation, no enqueue, no Gmail send. | WhatsApp / Slack adapters, dedupe/persistence of provider update ids, one-time nonce table if needed, notification + reminder outbound, LLM intent classifier behind the same router seam. |
+| Command Channel Platform | Foundation + identity-link schema + repository runtime + DB-backed mock inbound + owner-scoped read path + Profile mock/Telegram/WhatsApp link/revoke UI + review URLs + Telegram adapter/start-link binding + WhatsApp inbound foundation (P8-A → P11-B), now ReMaster-framed | P8-A: provider-agnostic `CommandEvent` / `CommandIntent` / `CommandResponse` contract + deterministic keyword router + `POST /api/channels/mock`. Channel layer never sends mail, never enqueues, never creates a draft. P8-B: `channel_accounts` schema + RLS policy + `ChannelAccountRepository` interface design. P8-C: `PgChannelAccountRepository` Postgres runtime — `findByProviderUser` (worker tx required, no fallback), `listForOwner`, `link`, `markRevoked`; `display_name_enc` encrypted with AAD `owner_id ‖ channel_accounts ‖ display_name_enc`. P8-D: `POST /api/channels/mock/inbound` runs DB-only mock provider identity resolution (`externalUserId → owner_id`) through a worker transaction, returns `needs_link` for missing/revoked links, and only then calls the shared router. P8-E: `handleOwnerCommand(ownerId, event)` opens `transaction(ownerId, …)` and enriches a follow-up reply with that owner's real people + upcoming occasions (≤30 days, top 3 by daysUntil). P8-F: Profile gains a "Command channels" section with `POST /api/channels/mock/{link,revoke}` form actions; DB mode shows real linked rows + a link form, mock mode shows a DB-mode-required placeholder. P8-G: `CommandResponse.reviewUrl` gives adapters a relative ReMaster review link (`/people`, `/workspace?...`, `/profile#command-channels`) while preserving the no-execution invariant. P8-H: `POST /api/channels/telegram` verifies Telegram's webhook secret, normalises private text messages, resolves Telegram user ids through `channel_accounts`, and replies through Telegram Bot API with ReMaster review-pointer copy. P8-I: Profile DB mode can manually link/revoke Telegram user ids. P8-J: Profile renders a signed `https://t.me/<bot>?start=<token>` link; Telegram `/start <token>` verifies the stateless token and links that Telegram user to the owner. P10-F reframes mock, DB-backed inbound, and Telegram replies as account/contact outreach review without changing `CommandIntent`, `SuggestedAction`, `reviewUrl`, route, schema, draft/send, worker, webhook, or Gmail contracts. P11-A adds a DB-only WhatsApp text webhook that verifies a shared secret, resolves `provider="whatsapp"` through `channel_accounts`, and returns the same review-first JSON response. P11-B adds Profile `wa.me` link-token generation, WhatsApp token consumption, cross-owner conflict handling, and `/api/channels/whatsapp/revoke`. Still no WhatsApp outbound send/templates/media, no Slack adapter, no draft creation, no enqueue, no Gmail send. | Slack adapter, WhatsApp outbound/template-aware replies, dedupe/persistence of provider update ids, one-time nonce table if needed, notification + reminder outbound, LLM intent classifier behind the same router seam. |
 | Reminders/scheduler | Not started | Occasion data exists. | Reminder jobs, notification strategy, due-date windows. |
 | MVP demo / release readiness | Close-out in progress | `docs/MVP_DEMO_RUNBOOK.md`, `pnpm test:mvp-demo`, `pnpm test`, `pnpm build`, and `git diff --check` define the close-out gate. P9 adds the last product-critical create path found during user testing. | Final verification and deployment checklist. |
 | Deployment/ops | Local only | Local env guard/init, Docker DB tests, delivery lifecycle runbook, and MVP demo runbook. | Production env, CI, hosting, logs, secrets, migrations. |
@@ -68,6 +68,74 @@ Reference:
   ReMaster framing, and command-channel replies now use ReMaster review-pointer
   language, but their auth, Gmail, channel, worker, webhook, and send contracts
   remain unchanged.
+
+### P11-B. WhatsApp Link / Revoke Flow
+
+Status: done. Guarded by `pnpm test:profile`,
+`pnpm test:db:channel-profile`, `pnpm test:db`, `pnpm test`, and
+`pnpm build`.
+
+Goal: make WhatsApp a bindable and revocable command channel beside mock and
+Telegram without changing the command router, drafts, deliveries, worker,
+webhook, Gmail, schema, or outbound messaging contracts.
+
+Shipped:
+
+- Profile's Command Channels section now renders a WhatsApp `wa.me` link CTA
+  in DB mode when `WHATSAPP_LINK_PHONE_NUMBER` and
+  `APP_SESSION_SIGNING_SECRET` are configured.
+- `lib/server/channels/whatsapp-link-token.server.ts` issues a stateless
+  15-minute HMAC-signed ReMaster link token and verifies WhatsApp token
+  messages before linking `(provider="whatsapp", message.from)`.
+- `lib/server/channels/whatsapp.server.ts` consumes link-token messages before
+  normal owner-command routing, maps cross-owner conflicts to `already_linked`,
+  and still returns review-first JSON without echoing internal `ownerId`.
+- `app/api/channels/whatsapp/revoke/route.ts` lets Profile revoke linked
+  WhatsApp rows through the shared channel-account metadata seam.
+- `scripts/test-channel-accounts-profile-db-route.mjs` covers link CTA
+  presence, token generation/use, already-linked conflict, revoke,
+  linked/unlinked Profile rendering, and no-session revoke protection.
+
+Out of scope:
+
+- No WhatsApp outbound send/reply, campaign, template handling,
+  media/attachment handling, draft creation, delivery enqueue, Gmail call,
+  command intent change, worker change, or schema change.
+
+### P11-A. WhatsApp Inbound Webhook Foundation
+
+Status: done. Guarded by `pnpm test:db:channels-whatsapp`,
+`pnpm test:db`, `pnpm test`, and `pnpm build`.
+
+Goal: add a DB-backed WhatsApp inbound provider adapter that reuses the
+existing command-channel foundation without changing drafts, deliveries,
+worker, webhook, Gmail, schema, UI, or route contracts elsewhere.
+
+Shipped:
+
+- `app/api/channels/whatsapp/route.ts` is a thin POST route that parses JSON
+  and delegates to the server-only WhatsApp seam.
+- `lib/server/channels/whatsapp.server.ts` verifies
+  `WHATSAPP_WEBHOOK_SECRET` via `x-whatsapp-webhook-secret`, requires
+  `KEEPSAKE_DATA_SOURCE=db`, normalises WhatsApp Cloud API text messages into
+  `CommandEvent`, and resolves `(provider="whatsapp", externalUserId)` through
+  `ChannelAccountRepository.findByProviderUser()` inside a worker transaction.
+- Missing or revoked WhatsApp links return `needs_link` with
+  `reviewUrl: "/profile#command-channels"`; active links delegate to
+  `handleOwnerCommand(ownerId, event)` and return the same ReMaster
+  review-first response used by mock/Telegram paths.
+- `scripts/test-channels-whatsapp-db-route.mjs` covers missing/wrong secret,
+  malformed JSON, ignored non-text payloads, unlinked, active follow-up,
+  active compose, revoked, review URL presence, no internal `ownerId` echo, and
+  no sent/delivered/queued execution claim.
+- `package.json` adds `test:db:channels-whatsapp` and includes it in
+  `pnpm test:db`.
+
+Out of scope:
+
+- No WhatsApp outbound send/reply, template handling, media/attachment
+  handling, webhook verification challenge, provider message-id dedupe table,
+  draft creation, delivery enqueue, Gmail call, worker change, or schema change.
 
 ### P10-F. Command Channels ReMaster Framing
 

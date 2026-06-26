@@ -13,6 +13,7 @@ const DISCONNECT_ACTION = "/api/gmail/disconnect";
 const SIGNOUT_ACTION = "/api/auth/signout";
 const MOCK_CHANNEL_LINK_ACTION = "/api/channels/mock/link";
 const TELEGRAM_CHANNEL_LINK_ACTION = "/api/channels/telegram/link";
+const WHATSAPP_CHANNEL_REVOKE_ACTION = "/api/channels/whatsapp/revoke";
 
 const channelProviderLabel: Record<string, string> = {
   mock: "Mock",
@@ -22,9 +23,9 @@ const channelProviderLabel: Record<string, string> = {
 };
 
 function channelRevokeAction(provider: string) {
-  return provider === "telegram"
-    ? "/api/channels/telegram/revoke"
-    : "/api/channels/mock/revoke";
+  if (provider === "telegram") return "/api/channels/telegram/revoke";
+  if (provider === "whatsapp") return WHATSAPP_CHANNEL_REVOKE_ACTION;
+  return "/api/channels/mock/revoke";
 }
 
 export default async function ProfilePage() {
@@ -274,7 +275,7 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
                 No command channels linked yet
               </div>
               <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
-                Link a Telegram or mock identity so inbound commands can route to this workspace.
+                Link WhatsApp, Telegram, or a mock identity so inbound commands can route to this workspace.
               </div>
             </div>
           </div>
@@ -288,6 +289,7 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
             />
           ))
         )}
+        <WhatsAppLinkRow link={channels.whatsappLink} />
         <TelegramStartLinkRow link={channels.telegramStartLink} />
         <ChannelLinkForm
           provider="telegram"
@@ -309,6 +311,61 @@ function CommandChannelsSection({ channels }: { channels: ProfileChannelAccounts
           testIdPrefix="profile-channels-link"
         />
       </div>
+    </div>
+  );
+}
+
+function WhatsAppLinkRow({
+  link,
+}: {
+  link: ProfileChannelAccountsView["whatsappLink"];
+}) {
+  return (
+    <div
+      data-testid="profile-channels-whatsapp-link"
+      style={{
+        display: "flex", alignItems: "center", gap: 13, padding: "14px 16px",
+        borderTop: "0.5px solid var(--line)", background: "rgba(255, 248, 245, 0.78)",
+      }}
+    >
+      <div style={{
+        width: 34, height: 34, borderRadius: 11, background: "var(--heartline-rose-wash)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: "var(--heartline-purple-deep)", fontSize: 17, flexShrink: 0,
+      }}>
+        <Icon name="i-send" />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>
+          Link WhatsApp
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--gray-3)", marginTop: 1 }}>
+          {link?.status === "ready"
+            ? "Opens WhatsApp with a short-lived workspace link message."
+            : (link?.detail ?? "WhatsApp links are not configured.")}
+        </div>
+      </div>
+      {link?.status === "ready" ? (
+        <a
+          href={link.url}
+          data-testid="profile-channels-whatsapp-link-cta"
+          data-whatsapp-link-message={link.message}
+          style={{
+            fontSize: 11, fontWeight: 650, color: "var(--heartline-purple-deep)",
+            background: "var(--heartline-rose-wash)", padding: "5px 11px", borderRadius: 999,
+            textDecoration: "none", whiteSpace: "nowrap",
+          }}
+        >
+          Open WhatsApp
+        </a>
+      ) : (
+        <span
+          data-testid="profile-channels-whatsapp-link-unavailable"
+          style={{ fontSize: 11, color: "var(--gray-2)", fontWeight: 500 }}
+        >
+          Not configured
+        </span>
+      )}
     </div>
   );
 }

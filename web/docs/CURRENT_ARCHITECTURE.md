@@ -847,10 +847,10 @@ through `channel_accounts`, then the same router. P8-E adds an
 people + upcoming occasions (read-only, top 3 within 30 days), so
 the channel reply names real names while framing them as outreach review
 for accounts/contacts. ReMaster web stays the place where the user actually
-drafts and sends — the channel only points back. Real provider
-webhooks land in later slices; each will verify its provider
-signature, normalise its payload into the same `CommandEvent`, and
-delegate to the same router / owner-command path.
+drafts and sends — the channel only points back. Real provider webhook
+foundations now exist for Telegram and WhatsApp: each verifies a provider
+secret, normalises its payload into the same `CommandEvent`, and delegates to
+the same router / owner-command path.
 P8-G adds a concrete `reviewUrl` to channel responses: follow-up
 queries point to `/people`, compose requests point to `/workspace`
 with encoded recipient/context hints, and link-needed responses point
@@ -879,6 +879,24 @@ When `POST /api/channels/telegram` receives `/start <token>`, it verifies the
 token, links `message.from.id` to the token owner in `channel_accounts`, and
 then future messages from that Telegram user resolve through the normal
 provider identity path.
+
+P11-A adds the WhatsApp inbound webhook foundation:
+`POST /api/channels/whatsapp` verifies a shared
+`x-whatsapp-webhook-secret` header, requires DB mode, normalises WhatsApp
+Cloud API text messages into the same `CommandEvent`, resolves
+`(provider="whatsapp", message.from)` through `channel_accounts`, and returns
+the shared review-first JSON response. It does not send WhatsApp messages,
+create drafts, enqueue deliveries, call Gmail, handle media, or add provider
+message-id dedupe persistence.
+
+P11-B adds the WhatsApp link/revoke flow on top of that foundation. Profile
+renders a short-lived `wa.me` CTA when `WHATSAPP_LINK_PHONE_NUMBER` and
+`APP_SESSION_SIGNING_SECRET` are configured. The message carries a signed
+ReMaster link token; the WhatsApp webhook consumes that token before normal
+command routing and links `message.from` to the token owner in
+`channel_accounts`. Profile revokes WhatsApp rows through
+`POST /api/channels/whatsapp/revoke`. This still does not send WhatsApp
+messages or create drafts/deliveries.
 
 ```text
 WhatsApp webhook ┐                                    ┌─ ChannelAccountRepository
@@ -949,10 +967,10 @@ curl -sS -X POST http://localhost:3000/api/channels/mock \
 
 The route is local-only; it accepts `provider: "mock"` (or omitted),
 does NOT authenticate the caller, does NOT verify signatures. Real
-provider webhooks will arrive at their own routes (`/api/channels/whatsapp`,
-etc.) once those adapters land — each will verify provider signatures,
-dedupe by provider message id, and call the same `routeCommandEvent`
-seam.
+provider webhooks arrive at their own routes (`/api/channels/whatsapp`,
+etc.) — each verifies provider signatures/secrets, normalises payloads, and
+calls the same `routeCommandEvent` seam. Dedupe by provider message id remains
+a later persistence slice for adapters that need it.
 
 `POST /api/channels/mock/inbound` is the DB-backed mock provider-adapter
 shape. It exists only for local/dev proof of the provider identity chain:
@@ -985,10 +1003,36 @@ real provider adapters should render that as the account-link CTA.
 - Non-goals: no draft creation, no queue/send, no Gmail, no update-id
   dedupe persistence, no one-time nonce table for start tokens yet.
 
+`POST /api/channels/whatsapp` is the DB-backed WhatsApp inbound foundation:
+
+- Gate: requires `WHATSAPP_WEBHOOK_SECRET` and validates the
+  `x-whatsapp-webhook-secret` header before any identity lookup.
+- Runtime config: requires `KEEPSAKE_DATA_SOURCE=db`. There is no WhatsApp
+  outbound token/config in this slice because the adapter does not send back
+  through WhatsApp.
+- Normalisation: WhatsApp Cloud API text messages become `CommandEvent` with
+  `provider: "whatsapp"`, `externalUserId = message.from`, and a
+  WhatsApp thread id derived from `metadata.phone_number_id` + `message.from`.
+- Linking: if the text contains a signed ReMaster link token, the adapter
+  verifies it with the WhatsApp-specific token seam and binds
+  `(provider="whatsapp", message.from)` to the token owner. Conflicts return
+  `already_linked`; expired/tampered tokens return link-needed responses.
+- Identity: active `channel_accounts` rows delegate to
+  `handleOwnerCommand(ownerId, event)`; missing or revoked rows return
+  `needs_link` with `reviewUrl: "/profile#command-channels"`.
+- Reply: the HTTP response is the shared ReMaster review-first JSON response.
+  It does **not** echo internal `ownerId`.
+- Profile: `/profile#command-channels` renders the `wa.me` link CTA and
+  revokes WhatsApp rows through `POST /api/channels/whatsapp/revoke`.
+- Non-goals: no WhatsApp outbound reply, no media/attachment handling, no draft
+  creation, no queue/send, no Gmail, no webhook verification challenge, and no
+  provider message-id dedupe persistence yet.
+
 Provider adapters MUST:
 
 - Verify webhook signatures / shared secrets before calling the router.
-- Dedupe provider message ids.
+- Dedupe provider message ids before execution-capable paths; current
+  review-pointer adapters remain stateless until a persistence slice lands.
 - Normalise into `CommandEvent` — the router shouldn't see provider
   payloads.
 - Delegate intent execution to owner-explicit server seams (future
@@ -1007,13 +1051,14 @@ on a `keepsake_session` cookie, a `DEV_OWNER_*` env value, or the
 request-path user. The `ChannelAccountRepository.findByProviderUser`
 contract pins this — see `lib/repositories/channel-accounts.ts`.
 
-Provider notes (still future):
+Provider notes:
 
-- **WhatsApp** — the important long-term command inbox for user tasks
-  and notifications, but it has provider policy constraints: inbound
-  user messages can be answered as service messages during the
-  customer-service window, while proactive reminders outside that
-  window require template-aware notification logic.
+- **WhatsApp** — inbound foundation plus link/revoke (P11-A/P11-B): DB-only
+  text webhook handling is wired through the shared command path and returns
+  ReMaster review-pointer JSON; Profile can generate a short-lived `wa.me`
+  link token and revoke linked WhatsApp identities. Real outbound WhatsApp
+  replies, templates, media, verification challenge handling, and dedupe
+  persistence remain future work.
 - **Telegram** — first real adapter (P8-H): private text webhook
   handling is wired through the shared command path and replies via
   Bot API `sendMessage`. P8-I adds a manual Profile link/revoke form
@@ -1029,14 +1074,14 @@ Provider notes (still future):
 | Layer | Path | Job today | Touches HTTP? | Touches DB? | Touches LLM? |
 |---|---|---|---|---|---|
 | Pages | `app/page.tsx`, `app/people/`, `app/workspace/`, `app/history/`, `app/profile/`, `app/signin/` | Render. Home, People, Workspace, and History now call the ReMaster compatibility overview seam, which derives account/contact/activity cards from people payload + delivery history while the underlying schema remains person-centered; People receives the same seam's legacy payload only for drawer details, Add contact options, and mock-mode `local-*` browser continuity, posts "Add contact" to `/api/people`, and keeps Workspace links on `/workspace?person=<primaryContactId>`; Workspace receives the same legacy payload only for existing draft context and uses the overview to frame the header/context chip as account outreach while draft restore/generate/version interactions stay behind `/api/drafts`, autosave stays behind `PATCH /api/drafts`, and the send buttons still POST to `/api/deliveries` for queue-boundary enqueue after flushing pending edits; History receives the same overview plus the existing `Delivery[]` rows and frames them as account/contact outreach activity while preserving delivery status rendering; Profile and Sign-in are ReMaster-framed account/contact/outreach entry surfaces on top of the current auth, Gmail, and command-channel seams, so Profile keeps Gmail connect/disconnect, sign-out, and channel link forms while Sign-in keeps Google/dev CTA and returnTo behavior. | yes (People create, Workspace draft fetches + autosave PATCH + delivery enqueue, Profile forms, Sign-in auth links) | via server helper when DB mode is enabled | no |
-| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts`, `app/api/webhooks/deliveries/route.ts`, `app/api/channels/mock/route.ts`, `app/api/channels/mock/inbound/route.ts`, `app/api/channels/mock/link/route.ts`, `app/api/channels/mock/revoke/route.ts`, `app/api/channels/telegram/route.ts`, `app/api/channels/telegram/link/route.ts`, `app/api/channels/telegram/revoke/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` GET returns `PeoplePayload` and POST creates a `Person` through the people-create seam; draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + body + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail; `/api/webhooks/deliveries` is the provider-agnostic delivery-status callback (shared-secret gate, never reads current user); `/api/channels/mock` exercises the pure router; `/api/channels/mock/inbound` exercises DB-backed provider identity resolution and returns a review pointer only; `/api/channels/mock/{link,revoke}` and `/api/channels/telegram/{link,revoke}` are owner-scoped Profile mutations that manage `channel_accounts` rows inbound routes then resolve against; `/api/channels/telegram` is the first real provider adapter and now also consumes `/start <token>` link commands: Telegram secret header → optional start-token link → DB identity lookup → owner-scoped command reply → Telegram `sendMessage` with review URL. The ReMaster compatibility overview is still page-only for Home + People + Workspace + History; Profile / Sign-in and command-channel replies are copy/framing-only ReMaster surfaces. None of this adds a new API route or changes `/api/people`, `/api/drafts`, `/api/deliveries`, auth, Gmail, worker, or webhook contracts. | yes | people create/read + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only, delivery status updates from webhook in DB mode only, channel-account lookup for mock/Telegram inbound in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
+| API routes | `app/api/session/route.ts`, `app/api/auth/signout/route.ts`, `app/api/oauth/gmail/*/route.ts`, `app/api/people/route.ts`, `app/api/drafts/route.ts`, `app/api/drafts/versions/route.ts`, `app/api/deliveries/route.ts`, `app/api/gmail/disconnect/route.ts`, `app/api/webhooks/deliveries/route.ts`, `app/api/channels/mock/route.ts`, `app/api/channels/mock/inbound/route.ts`, `app/api/channels/mock/link/route.ts`, `app/api/channels/mock/revoke/route.ts`, `app/api/channels/telegram/route.ts`, `app/api/channels/telegram/link/route.ts`, `app/api/channels/telegram/revoke/route.ts`, `app/api/channels/whatsapp/route.ts`, `app/api/channels/whatsapp/revoke/route.ts` | Parse/return JSON and delegate. `/api/session` exposes the stable `{ user }` contract and maps auth errors; `/api/auth/signout` clears `keepsake_session` and 303s to `/signin` (no DB, no Google revoke, no Gmail disconnect); Gmail OAuth routes own the connect flow; `/api/people` GET returns `PeoplePayload` and POST creates a `Person` through the people-create seam; draft routes can be mock- or DB-backed behind `KEEPSAKE_DATA_SOURCE`; `/api/drafts` POST swaps between mock and LLM behind `KEEPSAKE_DRAFT_SOURCE` (default mock) and PATCH persists Workspace subject + body + card edits as new canonical draft versions; `/api/deliveries` is the send-boundary contract that returns 202 `QueuedDelivery` without calling Gmail; `/api/webhooks/deliveries` is the provider-agnostic delivery-status callback (shared-secret gate, never reads current user); `/api/channels/mock` exercises the pure router; `/api/channels/mock/inbound` exercises DB-backed provider identity resolution and returns a review pointer only; `/api/channels/mock/{link,revoke}` and `/api/channels/telegram/{link,revoke}` are owner-scoped Profile mutations that manage `channel_accounts` rows inbound routes then resolve against; `/api/channels/whatsapp/revoke` revokes a linked WhatsApp channel row from Profile; `/api/channels/telegram` consumes Telegram webhook updates and `/start <token>` link commands; `/api/channels/whatsapp` consumes DB-only WhatsApp text webhook payloads behind a shared-secret header, including signed ReMaster link-token messages, and returns the same review-first JSON response. The ReMaster compatibility overview is still page-only for Home + People + Workspace + History; Profile / Sign-in and command-channel replies are ReMaster-framed surfaces on top of the same auth, Gmail, and channel contracts. None of this changes `/api/people`, `/api/drafts`, `/api/deliveries`, auth, Gmail, worker, delivery webhook, or send contracts. | yes | people create/read + draft persistence/cache/latest/version reads + edited-version inserts, gmail-account read for sender precondition, delivery enqueue in DB mode only, delivery status updates from webhook in DB mode only, channel-account lookup/link/revoke for mock/Telegram/WhatsApp in DB mode only | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Server services | `lib/server/remaster-overview/index.server.ts`, `lib/server/people-payload/{index,db,mock}.server.ts`, `lib/server/people-create/{index,db,mock}.server.ts`, `lib/server/draft-service/{index,db,mock,generator-errors}.server.ts`, `lib/server/draft-context/{index,db,mock}.server.ts`, `lib/server/draft-generator/{index,mock,openai}.server.ts`, `lib/server/delivery-history/{index,db,mock}.server.ts`, `lib/server/delivery-send/{index,db,mock,types}.server.ts`, `lib/server/auth/current-user.server.ts`, `lib/server/oauth/gmail.server.ts`, `lib/server/db/transaction.server.ts`, `lib/server/crypto/envelope.server.ts` | Server-only orchestration. `auth/current-user` is the only current-user / owner resolver; `oauth/gmail` owns the Gmail provider boundary; people payload/create, drafts, draft context, delivery history, and delivery send are DB-capable runtime verticals; `remaster-overview/index.server.ts` is the compatibility migration seam for Home + People + Workspace + History, composing people payload + delivery history into derived account/contact/activity read models and returning the legacy payload only where People still needs drawer/add compatibility and Workspace still needs person/occasion draft compatibility; History gets delivery rows through the same seam only for activity-timeline framing; Profile / Sign-in framing stays in the pages and existing auth/channel/Gmail seams, with no new compatibility seam; `draft-generator/index.server.ts` dispatches `mock` vs `openai` behind `KEEPSAKE_DRAFT_SOURCE` so the route contract stays unchanged; `delivery-send` is the queue boundary (validate → ownership → sender precondition → latest draft → enqueue, no Gmail call). | no | yes in DB mode | optional via `KEEPSAKE_DRAFT_SOURCE=openai` |
 | Mock store | `lib/mock.ts` | In-memory data: 5 people, 7 occasions, 4 cultures, 5 relationships, 4 deliveries + finder helpers. | no | no | no |
 | Domain | `lib/domain.ts` | Canonical TypeScript types — the contract between layers and over the wire. No HTML in message content. Card/icon hints are explicit structured fields, not rendered markup. | no | no | no |
 | Presentation | `lib/presentation.ts` | Maps `OccasionKind`/`Tone`/`Channel` → icon names, gradients, chip text. UI only. | no | no | no |
 | Repository implementations | `lib/repositories/catalog.server.ts`, `lib/repositories/people.server.ts`, `lib/repositories/drafts.server.ts`, `lib/repositories/deliveries.server.ts`, `lib/repositories/gmail-accounts.server.ts`, `lib/repositories/channel-accounts.server.ts` | Postgres implementations for catalog, people/occasion reads, person create, message draft persistence/cache, delivery history reads, delivery enqueue/worker/webhook status updates, Gmail account metadata/token storage, and command-channel account identity. People update/delete and occasion writes remain future work. | no | yes | no |
 | DB scripts | `db/schema.sql`, `db/seed_catalog.sql`, `scripts/seed-dev-fixtures.mjs` | Postgres 17 schema + catalog seed + encrypted local-dev fixture seed. | no | yes (manual/dev) | no |
-| Dev env helpers + smoke tests | `scripts/init-dev-env.mjs`, `scripts/check-dev-env.mjs`, `scripts/test-env-init.mjs`, `scripts/test-dev-env.mjs`, `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-gmail-oauth-routes.mjs`, `scripts/test-home.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, `scripts/test-workspace.mjs`, DB Docker tests | `pnpm env:init` creates `.env.local` from `.env.example` without overwriting. `pnpm dev` first checks the local env needed by Home/Profile/session and, in DB mode, the DB/encryption vars. Default `pnpm test` covers both env helpers plus auth/session, OAuth stubs, mock HTTP/page contracts, command-channel contracts, and the full MVP demo smoke. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed people, drafts, deliveries, Gmail accounts, auth, history, webhook, worker, and channel identity paths. | yes (HTTP/page smoke) | DB suite only | no |
+| Dev env helpers + smoke tests | `scripts/init-dev-env.mjs`, `scripts/check-dev-env.mjs`, `scripts/test-env-init.mjs`, `scripts/test-dev-env.mjs`, `scripts/test-auth-current-user.mjs`, `scripts/test-session-route.mjs`, `scripts/test-gmail-oauth-routes.mjs`, `scripts/test-home.mjs`, `scripts/test-people.mjs`, `scripts/test-drafts.mjs`, `scripts/test-history.mjs`, `scripts/test-profile.mjs`, `scripts/test-workspace.mjs`, DB Docker tests | `pnpm env:init` creates `.env.local` from `.env.example` without overwriting. `pnpm dev` first checks the local env needed by Home/Profile/session and, in DB mode, the DB/encryption vars. Default `pnpm test` covers both env helpers plus auth/session, OAuth stubs, mock HTTP/page contracts, command-channel contracts, and the full MVP demo smoke. `pnpm test:db` boots Docker Postgres and covers transaction/repository/fixture/DB-route paths, including DB-backed people, drafts, deliveries, Gmail accounts, auth, history, webhook, worker, and channel identity paths, including DB-backed mock, Telegram, and WhatsApp inbound routes. | yes (HTTP/page smoke) | DB suite only | no |
 | MVP demo close-out | `scripts/test-mvp-demo-flow.mjs`, `docs/MVP_DEMO_RUNBOOK.md` | `pnpm test:mvp-demo` boots the mock-mode app, signs in via the dev-session route, visits every product page, checks the Workspace icon fallback, drafts, queues a delivery, exercises command-channel review URLs, signs out, and verifies guarded-page redirects. The runbook freezes the desktop MVP demo and lists deferred work. | yes | no | no |
 
 ---
@@ -1189,9 +1234,9 @@ These seams are the only places that move when the back end goes real.
 | `lib/server/delivery-send/mock.server.ts` | Shared `validateRequest` (UUIDs + channel) and `enqueueMockDelivery` that returns a synthetic `QueuedDelivery`. | Kept as fallback until all runtime paths are DB-backed. |
 | `lib/server/delivery-send/db.server.ts` | `enqueueDbDelivery` resolves the owner, opens one transaction, reuses `resolveDbDraftContextInTx` for person/occasion ownership, enforces the email sender precondition via `GmailAccountRepository.getPrimary`, looks up the latest draft, and calls `DeliveryRepository.enqueue`. No Gmail call; row inserted with `status='queued'` and `sent_at=NULL`. | Same orchestration with real auth; a future Gmail worker drains queued rows and updates status. |
 | `lib/server/delivery-webhook/ingest.server.ts` | `ingestDeliveryWebhookEvent(input)` validates the provider-agnostic event (provider ∈ {gmail, mock}; event ∈ {delivered, opened, failed}) and dispatches by `KEEPSAKE_DATA_SOURCE`. Identity = `providerMessageId`; never reads current user. | A future Gmail push subscription wires `provider: "gmail"` directly into this seam; no route signature change. |
-| `lib/server/channels/mock-inbound.server.ts` | DB-backed mock provider adapter. Validates `externalUserId` + `text`, requires `KEEPSAKE_DATA_SOURCE=db`, resolves the active `channel_accounts` row with `workerTransaction` + `ChannelAccountRepository.findByProviderUser("mock", externalUserId)`, returns `needs_link` + `reviewUrl: "/profile#command-channels"` for missing/revoked accounts, and (after owner resolution) hands off to `handleOwnerCommand(ownerId, event)` for the actual reply. Dev-only response echoes `ownerId`; real provider routes must not. | WhatsApp / Telegram / Slack routes add provider signature verification + dedupe, then normalise into the same service/router pattern and render `reviewUrl` as the web execution link. |
+| `lib/server/channels/mock-inbound.server.ts` | DB-backed mock provider adapter. Validates `externalUserId` + `text`, requires `KEEPSAKE_DATA_SOURCE=db`, resolves the active `channel_accounts` row with `workerTransaction` + `ChannelAccountRepository.findByProviderUser("mock", externalUserId)`, returns `needs_link` + `reviewUrl: "/profile#command-channels"` for missing/revoked accounts, and (after owner resolution) hands off to `handleOwnerCommand(ownerId, event)` for the actual reply. Dev-only response echoes `ownerId`; real provider routes must not. | Telegram and WhatsApp routes already add provider signature/secret gates before the same service handoff. Slack still needs provider verification, normalisation, and dedupe persistence. |
 | `lib/server/channels/command-service.server.ts` | Owner-scoped channel read path (P8-E). `handleOwnerCommand(ownerId, event)` calls `routeCommandEvent` for intent classification; for `relationship_followup_query` it opens `transaction(ownerId, …)`, calls `PeopleRepository.listWithRelations`, filters upcoming occasions (`daysUntil >= 0 && <= 30`, top 3 ascending), and renders a real-name ReMaster outreach-review reply that points back to the web app. All other intents pass through untouched. Read-only on owner data; **never** creates a draft, enqueues a delivery, calls Gmail, or talks to a real provider. | Future LLM intent classifier slots in behind `routeCommandEvent`; future reminder outbound calls a parallel `handleOwnerReminder(ownerId, …)` that shares the same `transaction(ownerId, …)` shape. |
-| `lib/server/channel-accounts/profile.server.ts` | Profile-facing read + mock/Telegram mutation seam for `channel_accounts` (P8-F/P8-I/P8-J). `getProfileChannelAccounts()` returns `{ dataSource: "mock"|"db", accounts, telegramStartLink }` — mock mode is an empty list so the UI renders a placeholder rather than fabricating rows. DB mode renders a signed Telegram start link when configured, and keeps `linkMockChannelAccount({ externalUserId, externalThreadId?, displayName? })`, `linkTelegramChannelAccount({ externalUserId, externalThreadId?, displayName? })`, and `revokeChannelAccount({ accountId })` as manual fallback/operator routes. All mutations are DB-mode only and resolve the caller with `currentUserIdOrThrow()` BEFORE any DB call (no sessionless mutation). Transaction model: `getProfileChannelAccounts` + `revokeChannelAccount` use `transaction(ownerId, …)` (request-path pool under RLS, with explicit `WHERE owner_id` in SQL as defence in depth); manual link delegates to `ChannelAccountRepository.link`, whose runtime elevates to `workerTransaction` (BYPASSRLS) so the cross-owner conflict on the unique `(provider, external_user_id)` index can be detected atomically — owner_id is enforced in SQL via `ON CONFLICT … DO UPDATE … WHERE owner_id = $caller`. Maps repo `cross_owner_conflict` → 409, unknown / cross-owner revoke → 404, unexpected errors → 500 with a generic detail (raw causes go to `console.error`). Read/write on metadata only — never creates a draft, enqueues a delivery, calls Gmail, or talks to a real provider. | Real WhatsApp / Slack link flows and Telegram one-time nonce persistence are future; the manual Telegram form stays as the local/early ops fallback. |
+| `lib/server/channel-accounts/profile.server.ts` | Profile-facing read + mock/Telegram mutation seam plus WhatsApp token/revoke support for `channel_accounts` (P8-F/P8-I/P8-J/P11-B). `getProfileChannelAccounts()` returns `{ dataSource: "mock"|"db", accounts, telegramStartLink, whatsappLink }` — mock mode is an empty list so the UI renders a placeholder rather than fabricating rows. DB mode renders signed Telegram and WhatsApp link CTAs when configured, and keeps `linkMockChannelAccount({ externalUserId, externalThreadId?, displayName? })`, `linkTelegramChannelAccount({ externalUserId, externalThreadId?, displayName? })`, and `revokeChannelAccount({ accountId })` as metadata routes. All mutations are DB-mode only and resolve the caller with `currentUserIdOrThrow()` BEFORE any DB call (no sessionless mutation). Transaction model: `getProfileChannelAccounts` + `revokeChannelAccount` use `transaction(ownerId, …)` (request-path pool under RLS, with explicit `WHERE owner_id` in SQL as defence in depth); manual link delegates to `ChannelAccountRepository.link`, whose runtime elevates to `workerTransaction` (BYPASSRLS) so the cross-owner conflict on the unique `(provider, external_user_id)` index can be detected atomically — owner_id is enforced in SQL via `ON CONFLICT … DO UPDATE … WHERE owner_id = $caller`. Maps repo `cross_owner_conflict` → 409, unknown / cross-owner revoke → 404, unexpected errors → 500 with a generic detail (raw causes go to `console.error`). Read/write on metadata only — never creates a draft, enqueues a delivery, calls Gmail, or talks to a real provider. | Slack link UI and Telegram one-time nonce persistence are future; the manual Telegram form stays as the local/early ops fallback. |
 | `lib/server/delivery-webhook/mock.server.ts` | Mock dispatch — no `deliveries` rows exist, so every well-formed event resolves to `delivery_not_found`. Keeps the contract exercisable without Postgres. | Deleted when DB is the only source. |
 | `lib/server/delivery-webhook/db.server.ts` | `ingestWebhookEventDb` runs under `workerTransaction` (BYPASSRLS), looks up the row via `DeliveryRepository.findByProviderMessageId(providerMessageId)`, maps the event to a target `DeliveryStatus`, and calls `DeliveryRepository.markStatus({ deliveryId, status, providerStatus?, deliveredAtISO?, openedAtISO?, failureReason? })`. `opened` events also pass `deliveredAtISO` so the row picks up a delivered timestamp even when the provider skipped the delivered event. | Future per-provider HMAC verification + retry queue layer on top; the seam contract stays. |
 

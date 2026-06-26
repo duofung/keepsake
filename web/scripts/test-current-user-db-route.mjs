@@ -344,7 +344,7 @@ try {
     await client.query(`GRANT CONNECT ON DATABASE keepsake TO ${appRole}`);
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
     await client.query(`GRANT USAGE ON TYPE gmail_account_status, channel_provider, channel_account_status TO ${appRole}`);
-    await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes TO ${appRole}`);
+    await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes, deliveries TO ${appRole}`);
     await client.query(`GRANT SELECT, DELETE ON gmail_accounts TO ${appRole}`);
     // P8-F: /profile reads channel_accounts in DB mode for the
     // "Command channels" section. Even with zero linked rows, the
@@ -426,7 +426,10 @@ try {
 
     const profile = await fetchHtml(base, "/profile", sessionCookie);
     check("connected /profile -> 200", profile.status === 200, `status=${profile.status}`);
-    check("profile renders sender email", profile.body.includes(`Emails send from ${connectedOwner.sender}`));
+    check(
+      "profile renders sender email",
+      profile.body.includes(`Client and partner outreach sends from ${connectedOwner.sender}`),
+    );
     check("profile renders Connected", profile.body.includes("Connected"));
     check("connected profile renders Disconnect button", profile.body.includes(">Disconnect</button>"));
     check(
@@ -465,7 +468,10 @@ try {
 
     const profile = await fetchHtml(base, "/profile", sessionCookie);
     check("expired /profile -> 200", profile.status === 200, `status=${profile.status}`);
-    check("profile renders expired sender email", profile.body.includes(`Emails send from ${expiredOwner.sender}`));
+    check(
+      "profile renders expired sender email",
+      profile.body.includes(`Client and partner outreach sends from ${expiredOwner.sender}`),
+    );
     check("profile renders Expired", profile.body.includes("Expired"));
     check("expired profile renders Reconnect Gmail CTA", profile.body.includes(">Reconnect Gmail</a>"));
     check(

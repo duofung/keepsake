@@ -432,7 +432,10 @@ try {
   });
   const profileBody = normalizeHtml(await profileRes.text());
   check("/profile -> 200", profileRes.status === 200);
-  check("/profile renders sender email", profileBody.includes(`Emails send from ${senderEmail}`));
+  check(
+    "/profile renders sender email",
+    profileBody.includes(`Client and partner outreach sends from ${senderEmail}`),
+  );
   check("/profile renders Connected", profileBody.includes("Connected"));
 
   // 6. Replay attack: reuse the (now-cleared) cookie + same code

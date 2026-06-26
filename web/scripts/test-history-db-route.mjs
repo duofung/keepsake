@@ -196,7 +196,17 @@ try {
     await client.query(`CREATE ROLE ${appRole} LOGIN PASSWORD '${appPassword}' NOBYPASSRLS`);
     await client.query(`GRANT CONNECT ON DATABASE keepsake TO ${appRole}`);
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
-    await client.query(`GRANT SELECT ON deliveries TO ${appRole}`);
+    await client.query(`
+      GRANT USAGE ON TYPE
+        relationship_kind,
+        relationship_group,
+        occasion_kind,
+        tone,
+        channel,
+        delivery_status
+      TO ${appRole}
+    `);
+    await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes, deliveries TO ${appRole}`);
     // P6-A's `currentSessionUserOrThrow` hydrates `sendingAccount` from the
     // owner's primary Gmail row, even on /history. Give the app role read
     // access so the page can load.
@@ -258,8 +268,8 @@ try {
   check("GET /history -> 200", status === 200, `status=${status}`);
   check("contains Activity", normalizedText.includes("Activity"));
   check(
-    "contains 4 deliveries subtitle",
-    normalizedText.includes("Every queued and completed touchpoint · 4 deliveries recorded"),
+    "contains 4 activities subtitle",
+    normalizedText.includes("Account/contact outreach history · 4 activities recorded"),
   );
   check("contains MARCH 2026", normalizedText.includes("MARCH 2026"));
   check("contains FEBRUARY 2026", normalizedText.includes("FEBRUARY 2026"));

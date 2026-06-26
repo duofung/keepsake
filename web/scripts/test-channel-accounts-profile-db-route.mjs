@@ -8,19 +8,24 @@
 // and drives the round-trip:
 //
 //   1. Profile renders the channels section in DB mode + empty state.
-//   2. POST /api/channels/telegram/link links a Telegram identity → 303.
-//   3. Profile renders the Telegram row + provider-specific revoke form.
-//   4. POST /api/channels/telegram/revoke revokes that identity → 303.
-//   5. POST /api/channels/mock/link links a new mock identity → 303.
-//   6. Profile renders the linked row + accountId, no fake "Sending"
+//   2. Profile renders a WhatsApp link CTA; sending that token through
+//      POST /api/channels/whatsapp links a WhatsApp identity.
+//   3. Profile renders the WhatsApp row + provider-specific revoke form.
+//   4. A different owner's WhatsApp identity cannot be linked by token.
+//   5. POST /api/channels/whatsapp/revoke revokes that identity → 303.
+//   6. POST /api/channels/telegram/link links a Telegram identity → 303.
+//   7. Profile renders the Telegram row + provider-specific revoke form.
+//   8. POST /api/channels/telegram/revoke revokes that identity → 303.
+//   9. POST /api/channels/mock/link links a new mock identity → 303.
+//   10. Profile renders the linked row + accountId, no fake "Sending"
 //      regressions.
-//   7. POST /api/channels/mock/inbound with the linked externalUserId
+//   11. POST /api/channels/mock/inbound with the linked externalUserId
 //      resolves owner_id and returns the owner-scoped follow-up text.
-//   8. POST /api/channels/mock/revoke (cross-owner) → 404 not_found.
-//   9. POST /api/channels/mock/revoke (owner) → 303.
-//   10. Profile now shows the row as Revoked.
-//   11. POST inbound with the now-revoked externalUserId → needs_link.
-//   12. Body-shape errors: empty externalUserId → 400; bogus accountId
+//   12. POST /api/channels/mock/revoke (cross-owner) → 404 not_found.
+//   13. POST /api/channels/mock/revoke (owner) → 303.
+//   14. Profile now shows the row as Revoked.
+//   15. POST inbound with the now-revoked externalUserId → needs_link.
+//   16. Body-shape errors: empty externalUserId → 400; bogus accountId
 //      → 400; unauthenticated revoke → 401.
 
 import { spawn } from "node:child_process";
@@ -47,6 +52,8 @@ const base = `http://localhost:${port}`;
 // nor env fallback and the link/revoke routes must answer 401.
 const port401 = port + 1;
 const base401 = `http://localhost:${port401}`;
+const whatsappSecret = "whatsapp-secret-token-test";
+const whatsappLinkPhoneNumber = "15551234567";
 
 let containerStarted = false;
 let nextChild = null;
@@ -238,6 +245,59 @@ async function postInbound(body) {
   return { status: res.status, body: json };
 }
 
+async function postWhatsApp(body, { secret = whatsappSecret } = {}) {
+  const headers = { "content-type": "application/json" };
+  if (secret !== null) headers["x-whatsapp-webhook-secret"] = secret;
+  const res = await fetch(`${base}/api/channels/whatsapp`, {
+    method: "POST",
+    headers,
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+  let json = null;
+  try { json = await res.json(); } catch {}
+  return { status: res.status, body: json };
+}
+
+function whatsappText({
+  from,
+  text,
+  phoneNumberId = "phone-number-1",
+  timestamp = "1782000000",
+}) {
+  return {
+    object: "whatsapp_business_account",
+    entry: [{
+      id: "waba-1",
+      changes: [{
+        field: "messages",
+        value: {
+          messaging_product: "whatsapp",
+          metadata: {
+            display_phone_number: "15550000000",
+            phone_number_id: phoneNumberId,
+          },
+          contacts: [{
+            wa_id: from,
+            profile: { name: "WhatsApp Contact" },
+          }],
+          messages: [{
+            from,
+            id: `wamid.${from}`,
+            timestamp,
+            type: "text",
+            text: { body: text },
+          }],
+        },
+      }],
+    }],
+  };
+}
+
+function extractWhatsAppToken(profileHtml) {
+  const message = profileHtml.match(/data-whatsapp-link-message="([^"]+)"/)?.[1] ?? "";
+  return message.match(/([A-Za-z0-9_-]{52})/)?.[1] ?? "";
+}
+
 const failures = [];
 function check(name, cond, detail = "") {
   if (cond) process.stdout.write(`  ✓ ${name}\n`);
@@ -321,6 +381,12 @@ try {
     externalUserId: "mock-b-1",
     displayName: "Owner B's channel",
   });
+  const ownerBWhatsAppLink = await repo.link(ownerB, {
+    provider: "whatsapp",
+    externalUserId: "15559999",
+    externalThreadId: "phone-number-1:15559999",
+    displayName: "Owner B WhatsApp",
+  });
   process.stdout.write("  ✓ pre-linked ownerB mock identity\n");
 
   const nextBin = resolve(projectRoot, "node_modules/.bin/next");
@@ -339,6 +405,8 @@ try {
       DEV_OWNER_NAME: "Profile Owner A",
       KEEPSAKE_DATA_SOURCE: "db",
       TELEGRAM_BOT_USERNAME: "KeepsakeTestBot",
+      WHATSAPP_LINK_PHONE_NUMBER: whatsappLinkPhoneNumber,
+      WHATSAPP_WEBHOOK_SECRET: whatsappSecret,
       NEXT_TELEMETRY_DISABLED: "1",
       APP_SESSION_SIGNING_SECRET: APP_SESSION_SECRET,
       ENABLE_DEV_SESSION_ROUTES: "1",
@@ -353,6 +421,7 @@ try {
   process.stdout.write("server ready, running assertions:\n");
 
   // 1. Empty-state Profile render
+  let whatsappToken = "";
   {
     const { status, body } = await getProfile();
     check("/profile -> 200", status === 200, `status=${status}`);
@@ -374,6 +443,17 @@ try {
       body.includes('action="/api/channels/telegram/link"'));
     check("Telegram form is marked with provider hook",
       body.includes('data-channel-link-provider="telegram"'));
+    check("renders the WhatsApp link row",
+      body.includes('data-testid="profile-channels-whatsapp-link"'));
+    check("renders the WhatsApp link CTA",
+      body.includes('data-testid="profile-channels-whatsapp-link-cta"'));
+    check("WhatsApp CTA points to configured phone",
+      body.includes(`href="https://wa.me/${whatsappLinkPhoneNumber}?text=`),
+      "missing wa.me link");
+    whatsappToken = extractWhatsAppToken(body);
+    check("WhatsApp link token is present",
+      /^[A-Za-z0-9_-]{52}$/.test(whatsappToken),
+      `token=${whatsappToken}`);
     check("renders the Telegram start-link row",
       body.includes('data-testid="profile-channels-telegram-start"'));
     check("renders the Telegram start link",
@@ -390,9 +470,118 @@ try {
     check("does NOT leak ownerB id into the page",
       !body.includes(ownerB),
       "ownerB id appeared in /profile HTML");
+    check("does NOT leak ownerB WhatsApp id into the page",
+      !body.includes("15559999"));
   }
 
-  // 2. POST Telegram link → 303
+  // 2. WhatsApp token message links the provider identity.
+  let whatsappAccountId = "";
+  {
+    const res = await postWhatsApp(whatsappText({
+      from: "15550001",
+      text: `Link ReMaster ${whatsappToken}`,
+    }));
+    check("WhatsApp token use -> 200",
+      res.status === 200,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("WhatsApp token links the account",
+      res.body?.status === "ok" && res.body?.code === "linked",
+      JSON.stringify(res.body));
+    check("WhatsApp token response points to Profile",
+      res.body?.reviewUrl === "/profile#command-channels",
+      JSON.stringify(res.body));
+    check("WhatsApp token response does NOT echo ownerId",
+      res.body?.ownerId === undefined,
+      JSON.stringify(res.body));
+  }
+
+  // 3. /profile now shows the WhatsApp row + provider-specific revoke.
+  {
+    const { body } = await getProfile();
+    check("renders the WhatsApp row",
+      /data-channel-provider="whatsapp"/.test(body));
+    check("renders the WhatsApp displayName",
+      body.includes("WhatsApp Contact"));
+    check("renders the WhatsApp externalUserId",
+      body.includes("15550001"));
+    check("WhatsApp row posts revoke to /api/channels/whatsapp/revoke",
+      /data-channel-provider="whatsapp"[\s\S]{0,2400}?action="\/api\/channels\/whatsapp\/revoke"/
+        .test(body));
+    const idMatch = body.match(
+      /data-channel-provider="whatsapp"[\s\S]{0,2400}?name="accountId"\s+value="([0-9a-f-]{36})"/i,
+    );
+    whatsappAccountId = idMatch?.[1] ?? "";
+    check("can extract WhatsApp accountId from the rendered revoke form",
+      /^[0-9a-f-]{36}$/i.test(whatsappAccountId),
+      `accountId=${whatsappAccountId}`);
+  }
+
+  // 4. A WhatsApp identity owned by another workspace cannot be linked.
+  {
+    const res = await postWhatsApp(whatsappText({
+      from: "15559999",
+      text: `Link ReMaster ${whatsappToken}`,
+    }));
+    check("already-linked WhatsApp token use -> 200",
+      res.status === 200,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("already-linked WhatsApp reports needs_link/already_linked",
+      res.body?.status === "needs_link" && res.body?.code === "already_linked",
+      JSON.stringify(res.body));
+    check("already-linked WhatsApp response does NOT echo ownerId",
+      res.body?.ownerId === undefined,
+      JSON.stringify(res.body));
+    const row = await withClient(adminUrl, async (client) => {
+      const result = await client.query(
+        `SELECT owner_id, status
+           FROM channel_accounts
+          WHERE id = $1::uuid`,
+        [ownerBWhatsAppLink.id],
+      );
+      return result.rows[0];
+    });
+    check("already-linked WhatsApp did NOT rebind ownerB row",
+      row?.owner_id === ownerB && row?.status === "active",
+      JSON.stringify(row));
+  }
+
+  // 5. Same-owner WhatsApp revoke → 303
+  {
+    const res = await postForm("/api/channels/whatsapp/revoke", {
+      accountId: whatsappAccountId,
+    });
+    check("same-owner WhatsApp revoke -> 303", res.status === 303,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("WhatsApp revoke redirects to /profile#command-channels",
+      (res.location ?? "").endsWith("/profile#command-channels"));
+  }
+
+  // 6. /profile now shows the WhatsApp row as revoked.
+  {
+    const { body } = await getProfile();
+    check("revoked WhatsApp row still present in /profile",
+      body.includes(`data-channel-account-id="${whatsappAccountId}"`));
+    check("revoked WhatsApp row status pill = revoked",
+      new RegExp(`data-channel-account-id="${whatsappAccountId}"[^>]*data-channel-status="revoked"`)
+        .test(body),
+      "WhatsApp row did not flip to revoked");
+  }
+
+  // 7. revoked WhatsApp identity is no longer command-active.
+  {
+    const res = await postWhatsApp(whatsappText({
+      from: "15550001",
+      text: "Anyone I should follow up with?",
+    }));
+    check("WhatsApp inbound after revoke -> 200",
+      res.status === 200,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("WhatsApp inbound after revoke status=needs_link",
+      res.body?.status === "needs_link" && res.body?.code === "needs_link",
+      JSON.stringify(res.body));
+  }
+
+  // 8. POST Telegram link → 303
   let telegramAccountId = "";
   {
     const res = await postForm("/api/channels/telegram/link", {
@@ -405,7 +594,7 @@ try {
       `location=${res.location}`);
   }
 
-  // 3. /profile now shows the Telegram row + provider-specific revoke
+  // 9. /profile now shows the Telegram row + provider-specific revoke
   {
     const { body } = await getProfile();
     check("renders the Telegram row",
@@ -426,7 +615,7 @@ try {
       `accountId=${telegramAccountId}`);
   }
 
-  // 4. Same-owner Telegram revoke → 303
+  // 10. Same-owner Telegram revoke → 303
   {
     const res = await postForm("/api/channels/telegram/revoke", {
       accountId: telegramAccountId,
@@ -437,7 +626,7 @@ try {
       (res.location ?? "").endsWith("/profile#command-channels"));
   }
 
-  // 5. /profile now shows the Telegram row as revoked
+  // 11. /profile now shows the Telegram row as revoked
   {
     const { body } = await getProfile();
     check("revoked Telegram row still present in /profile",
@@ -448,7 +637,7 @@ try {
       "Telegram row did not flip to revoked");
   }
 
-  // 6. POST mock link → 303
+  // 12. POST mock link → 303
   {
     const res = await postForm("/api/channels/mock/link", {
       externalUserId: "mock-a-1",
@@ -460,7 +649,7 @@ try {
       `location=${res.location}`);
   }
 
-  // 7. /profile now shows the linked mock row
+  // 13. /profile now shows the linked mock row
   let linkedAccountId = "";
   {
     const { body } = await getProfile();
@@ -596,6 +785,14 @@ try {
       `status=${res.status} body=${JSON.stringify(res.body)}`);
   }
   {
+    const res = await postForm("/api/channels/whatsapp/revoke", {
+      accountId: "not-a-uuid",
+    });
+    check("WhatsApp revoke with non-uuid accountId -> 400",
+      res.status === 400 && res.body?.code === "invalid_request",
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+  }
+  {
     // Sanity pin for the env-fallback path (cookie missing, but
     // DEV_OWNER_* IS set on this dev server): the route should
     // still authenticate via the env fallback and reach the seam,
@@ -631,6 +828,7 @@ try {
       KEEPSAKE_WORKER_DATABASE_URL: adminUrl,
       DEV_ENCRYPTION_KEY_BASE64: encryptionKey,
       KEEPSAKE_DATA_SOURCE: "db",
+      WHATSAPP_WEBHOOK_SECRET: whatsappSecret,
       NEXT_TELEMETRY_DISABLED: "1",
       APP_SESSION_SIGNING_SECRET: APP_SESSION_SECRET,
       // DEV_OWNER_ID / DEV_OWNER_EMAIL / DEV_OWNER_NAME deliberately
@@ -681,6 +879,17 @@ try {
       res.status === 401,
       `status=${res.status} body=${JSON.stringify(res.body)}`);
     check("no-session POST /telegram/link code=unauthenticated",
+      res.body?.code === "unauthenticated",
+      JSON.stringify(res.body));
+  }
+  {
+    const res = await postNoSession("/api/channels/whatsapp/revoke", {
+      accountId: "00000000-0000-4000-8000-000000000000",
+    });
+    check("no-session POST /whatsapp/revoke -> 401",
+      res.status === 401,
+      `status=${res.status} body=${JSON.stringify(res.body)}`);
+    check("no-session POST /whatsapp/revoke code=unauthenticated",
       res.body?.code === "unauthenticated",
       JSON.stringify(res.body));
   }

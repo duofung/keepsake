@@ -5,9 +5,11 @@ import "server-only";
 // The Profile page reads `getProfileChannelAccounts()` to render the
 // owner's linked command channels. The POST routes
 // `/api/channels/{mock,telegram}/link` and
-// `/api/channels/{mock,telegram}/revoke` delegate to
+// `/api/channels/{mock,telegram,whatsapp}/revoke` delegate to
 // `linkMockChannelAccount()` / `linkTelegramChannelAccount()` /
-// `revokeChannelAccount()` here. The
+// `revokeChannelAccount()` here. WhatsApp linking is token-based
+// through `channels/whatsapp-link-token.server.ts`, while Profile still
+// owns its link CTA and revoke flow. The
 // seam:
 //
 //   - gates everything on `KEEPSAKE_DATA_SOURCE=db` (mock mode short-
@@ -57,6 +59,10 @@ import {
   createTelegramStartLinkForOwner,
   type TelegramStartLinkView,
 } from "@/lib/server/channels/telegram-start-token.server";
+import {
+  createWhatsAppLinkForOwner,
+  type WhatsAppLinkView,
+} from "@/lib/server/channels/whatsapp-link-token.server";
 import { transaction } from "@/lib/server/db/transaction.server";
 
 const UUID_RE =
@@ -79,6 +85,7 @@ export interface ProfileChannelAccountsView {
   readonly dataSource: "mock" | "db";
   readonly accounts: readonly ProfileChannelAccount[];
   readonly telegramStartLink: TelegramStartLinkView | null;
+  readonly whatsappLink: WhatsAppLinkView | null;
 }
 
 /**
@@ -93,7 +100,12 @@ export interface ProfileChannelAccountsView {
  */
 export async function getProfileChannelAccounts(): Promise<ProfileChannelAccountsView> {
   if (dataSource() !== "db") {
-    return { dataSource: "mock", accounts: [], telegramStartLink: null };
+    return {
+      dataSource: "mock",
+      accounts: [],
+      telegramStartLink: null,
+      whatsappLink: null,
+    };
   }
   const ownerId = await currentUserIdOrThrow();
   const accounts = await transaction(ownerId, (tx) =>
@@ -103,6 +115,7 @@ export async function getProfileChannelAccounts(): Promise<ProfileChannelAccount
     dataSource: "db",
     accounts: accounts.map(toProfileChannelAccount),
     telegramStartLink: createTelegramStartLinkForOwner(ownerId),
+    whatsappLink: createWhatsAppLinkForOwner(ownerId),
   };
 }
 
@@ -194,7 +207,7 @@ async function linkProfileChannelAccount(
         status: 409,
         code: "cross_owner_conflict",
         detail:
-          `That ${provider} identity is already linked to a different Keepsake account.`,
+          `That ${provider} identity is already linked to a different ReMaster workspace.`,
       };
     }
     // Unexpected branch. Log the raw cause for operators but do NOT
