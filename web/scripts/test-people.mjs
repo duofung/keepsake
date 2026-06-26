@@ -223,8 +223,12 @@ try {
       && peoplePage.body.includes("PERSONAL"),
   );
   check(
-    "People page renders next activity from compatibility model",
-    peoplePage.body.includes("Next activity · Anniversary · in 12 days"),
+    "People page renders next follow-up from compatibility model",
+    peoplePage.body.includes("Next follow-up · Anniversary · in 12 days"),
+  );
+  check(
+    "People page renders last touch from compatibility model",
+    peoplePage.body.includes("Last touch · Opened · 2026-02-14"),
   );
   check(
     "People page renders organization and role",

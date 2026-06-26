@@ -5,7 +5,7 @@ import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
 import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
 import { getRemasterDashboardOverview } from "@/lib/server/remaster-overview/index.server";
-import { nodeChipText, occasionIcon, urgencyLevel } from "@/lib/presentation";
+import { deliveryStatusBadge, occasionIcon, urgencyLevel } from "@/lib/presentation";
 
 const SOON_WINDOW_DAYS = 30;
 
@@ -42,6 +42,10 @@ export default async function HomePage() {
   const upcoming = overview.upcomingActivities
     .filter((activity) => activity.daysUntil !== null && activity.daysUntil <= SOON_WINDOW_DAYS)
     .slice(0, 3);
+  const recentOutreach = overview.recentActivities.slice(0, 2);
+  const needsFollowUp = overview.accounts
+    .filter((account) => !account.nextActivityId)
+    .slice(0, 2);
 
   return (
     <div className="ks-page">
@@ -53,7 +57,7 @@ export default async function HomePage() {
               Good evening, {user.name}
             </h1>
             <p style={pageSubcopy}>
-              Stay on top of follow-ups, milestone dates, and outreach across {accountsCount} {accountsCount === 1 ? "account" : "accounts"}
+              Track upcoming milestones, recent outreach, and follow-up gaps across {accountsCount} {accountsCount === 1 ? "account" : "accounts"}
               {" / "}{contactsCount} {contactsCount === 1 ? "contact" : "contacts"}.
               {" "}{upcomingActivitiesCount} upcoming {upcomingActivitiesCount === 1 ? "activity needs" : "activities need"} attention soon.
             </p>
@@ -74,14 +78,15 @@ export default async function HomePage() {
               </span>
               <h2 style={heroTitle}>
                 {focusAccount && focusActivity
-                  ? `Prepare ${focusActivity.title} outreach for ${focusAccount.name}`
+                  ? `Prepare ${focusActivity.touchpointLabel.toLowerCase()} for ${focusAccount.name}`
                   : focusAccount
                     ? `Plan the next touchpoint for ${focusAccount.name}`
                     : "Start with a priority account"}
               </h2>
               <p style={heroBody}>
-                ReMaster now reads a compatibility account/contact/activity model on top of the
-                current runtime so outreach, milestones, and relationship context stay aligned.
+                {focusAccount
+                  ? focusAccount.touchpointSummary
+                  : "Use ReMaster to turn static contacts into an ongoing touchpoint rhythm."}
               </p>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "auto" }}>
                 <Link href={`/workspace?person=${focusAccount?.primaryContactId ?? ""}`} className="heartline-button">
@@ -106,8 +111,9 @@ export default async function HomePage() {
 
           <aside style={{ display: "grid", gap: 14 }}>
             <section className="heartline-card" style={sideCard}>
-              <p className="heartline-section-label">UPCOMING ACTIVITY</p>
-              <div style={{ display: "grid", gap: 10 }}>
+              <p className="heartline-section-label">FOLLOW-UP DASHBOARD</p>
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={touchpointGroupLabel}>Upcoming milestone</div>
                 {upcoming.length === 0 ? (
                   <p style={{ margin: 0, fontSize: 12.5, color: "var(--gray-2)", lineHeight: 1.6 }}>
                     Nothing urgent in the next 30 days. Review your accounts to plan proactive outreach.
@@ -125,7 +131,7 @@ export default async function HomePage() {
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <span style={momentTitle}>{activity.subtitle.split(" · ")[0] ?? "Priority account"}</span>
                         <span style={momentMeta}>
-                          {activity.title}
+                          {activity.touchpointLabel} · {activity.title}
                           {activity.daysUntil !== null ? ` · ${timingText(activity.daysUntil)}` : ""}
                         </span>
                       </span>
@@ -133,6 +139,44 @@ export default async function HomePage() {
                     </Link>
                   );
                 })}
+
+                <div style={touchpointGroupLabel}>Recent outreach</div>
+                {recentOutreach.length === 0 ? (
+                  <p style={emptyTouchpointText}>No outreach logged yet.</p>
+                ) : recentOutreach.map((activity) => {
+                  const badge = activity.deliveryStatus ? deliveryStatusBadge[activity.deliveryStatus] : null;
+                  return (
+                    <div key={activity.id} style={momentRow}>
+                      <span style={momentIcon}>
+                        <Icon name={badge?.icon ?? "i-send"} />
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={momentTitle}>{activity.subtitle.split(" · ")[0] ?? "Contact"}</span>
+                        <span style={momentMeta}>{activity.touchpointSummary}</span>
+                      </span>
+                    </div>
+                  );
+                })}
+
+                <div style={touchpointGroupLabel}>Needs follow-up</div>
+                {needsFollowUp.length === 0 ? (
+                  <p style={emptyTouchpointText}>Every account has a next touchpoint.</p>
+                ) : needsFollowUp.map((account) => (
+                  <Link
+                    key={account.id}
+                    href={`/workspace?person=${account.primaryContactId}`}
+                    style={momentRow}
+                  >
+                    <span style={momentIcon}>
+                      <Icon name="i-bulb" />
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={momentTitle}>{account.name}</span>
+                      <span style={momentMeta}>{account.nextFollowUpLabel}</span>
+                    </span>
+                    <span style={momentArrow}><Icon name="i-chev" /></span>
+                  </Link>
+                ))}
               </div>
             </section>
 
@@ -147,21 +191,20 @@ export default async function HomePage() {
         </div>
 
         <div style={{ marginTop: 28 }}>
-          <p className="heartline-section-label">ACCOUNTS TO REVIEW</p>
+          <p className="heartline-section-label">TOUCHPOINTS TO REVIEW</p>
           <div style={peopleGrid}>
             {overview.accounts.map((account) => {
               const nextActivity = account.nextActivityId
                 ? activityById.get(account.nextActivityId) ?? null
                 : null;
-              const days = nextActivity?.daysUntil ?? -60;
-              const text = nextActivity && nextActivity.daysUntil !== null
-                ? nodeChipText(nextActivity.title, nextActivity.daysUntil)
-                : account.lastDeliveryStatus
-                  ? `Last delivery · ${account.lastDeliveryStatus}`
-                  : "No scheduled activity";
               const lvl = nextActivity?.daysUntil !== null && nextActivity?.daysUntil !== undefined
                 ? urgencyLevel(nextActivity.daysUntil)
                 : "far";
+              const icon = nextActivity?.occasionKind
+                ? occasionIcon[nextActivity.occasionKind]
+                : account.lastDeliveryStatus
+                  ? deliveryStatusBadge[account.lastDeliveryStatus].icon
+                  : "i-bulb";
               return (
                 <Link key={account.id} href={`/workspace?person=${account.primaryContactId}`} style={personCard}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -185,13 +228,15 @@ export default async function HomePage() {
                   </div>
                   <div style={nextNode}>
                     <span style={{ color: metaColor[lvl], fontSize: 14 }}>
-                      <Icon name={nextActivity?.occasionKind ? occasionIcon[nextActivity.occasionKind] : "i-bulb"} />
+                      <Icon name={icon} />
                     </span>
-                    <span style={{ color: metaColor[lvl] }}>{text}</span>
+                    <span style={{ color: metaColor[lvl] }}>{account.nextFollowUpLabel}</span>
                   </div>
+                  <div style={lastTouchLine}>{account.lastTouchLabel}</div>
+                  <div style={contextLine}>{account.sourceContext ?? account.contextLabel}</div>
                   <div style={quickActions}>
-                    <span>Draft outreach</span>
-                    <span>Log context</span>
+                    <span>Open touchpoint</span>
+                    <span>Draft follow-up</span>
                   </div>
                 </Link>
               );
@@ -311,6 +356,21 @@ const momentRow: CSSProperties = {
   gap: 10,
   padding: 10,
   textDecoration: "none",
+};
+
+const touchpointGroupLabel: CSSProperties = {
+  color: "var(--heartline-rose-strong)",
+  fontSize: 10.5,
+  fontWeight: 800,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+};
+
+const emptyTouchpointText: CSSProperties = {
+  color: "var(--gray-2)",
+  fontSize: 12,
+  lineHeight: 1.5,
+  margin: 0,
 };
 
 const momentIcon: CSSProperties = {
@@ -435,6 +495,19 @@ const nextNode: CSSProperties = {
   fontWeight: 650,
   gap: 7,
   padding: "8px 9px",
+};
+
+const lastTouchLine: CSSProperties = {
+  color: "var(--gray-1)",
+  fontSize: 11.5,
+  fontWeight: 600,
+  lineHeight: 1.35,
+};
+
+const contextLine: CSSProperties = {
+  color: "var(--gray-3)",
+  fontSize: 11,
+  lineHeight: 1.35,
 };
 
 const quickActions: CSSProperties = {

@@ -3,6 +3,7 @@ import type {
   Delivery,
   DeliveryStatus,
   ID,
+  OccasionNode,
   OccasionKind,
   PeoplePayload,
   Person,
@@ -33,6 +34,9 @@ export interface RemasterDashboardAccount {
   nextActivityId: ID | null;
   lastDeliveryStatus: DeliveryStatus | null;
   lastDeliveryAtISO: string | null;
+  lastTouchLabel: string;
+  nextFollowUpLabel: string;
+  touchpointSummary: string;
 }
 
 export interface RemasterDashboardContact {
@@ -59,6 +63,8 @@ export interface RemasterDashboardActivity {
   daysUntil: number | null;
   occasionKind: OccasionKind | null;
   deliveryStatus: DeliveryStatus | null;
+  touchpointLabel: string;
+  touchpointSummary: string;
 }
 
 export interface RemasterDashboardOverview {
@@ -87,6 +93,11 @@ export function buildRemasterDashboardOverview(
   const relationshipById = new Map(payload.relationships.map((relationship) => [relationship.id, relationship]));
   const cultureById = new Map(payload.cultures.map((culture) => [culture.id, culture]));
   const personById = new Map(payload.people.map((person) => [person.id, person]));
+  const primaryOccasionByPersonId = new Map(
+    payload.occasions
+      .filter((occasion) => occasion.isPrimary)
+      .map((occasion) => [occasion.personId, occasion]),
+  );
 
   const latestDeliveryByPersonId = new Map<ID, Delivery>();
   for (const delivery of deliveries) {
@@ -101,9 +112,11 @@ export function buildRemasterDashboardOverview(
     const relationship = relationshipById.get(person.relationshipId);
     const culture = cultureById.get(person.cultureId);
     const latestDelivery = latestDeliveryByPersonId.get(person.id) ?? null;
+    const nextOccasion = primaryOccasionByPersonId.get(person.id) ?? null;
     return buildAccount(person, relationship?.label ?? "Contact", relationship?.group ?? "Friends", {
       cultureLabel: culture?.label ?? null,
       latestDelivery,
+      nextOccasion,
     });
   });
 
@@ -172,15 +185,19 @@ function buildAccount(
   options: {
     cultureLabel: string | null;
     latestDelivery: Delivery | null;
+    nextOccasion: OccasionNode | null;
   },
 ): RemasterDashboardAccount {
+  const segment = contactSegment(person);
+  const lastTouchLabel = buildLastTouchLabel(person, options.latestDelivery);
+  const nextFollowUpLabel = buildNextFollowUpLabel(options.nextOccasion, options.latestDelivery);
   return {
     id: accountIdForPerson(person.id),
     primaryContactId: person.id,
     name: person.name,
     mode: "contact-led",
     relationshipType: relationshipTypeByGroup[relationshipGroup],
-    segment: contactSegment(person),
+    segment,
     relationshipLabel,
     organization: person.organization ?? null,
     roleTitle: person.roleTitle ?? null,
@@ -193,6 +210,9 @@ function buildAccount(
     nextActivityId: person.nextOccasionId,
     lastDeliveryStatus: options.latestDelivery?.status ?? null,
     lastDeliveryAtISO: options.latestDelivery?.sentAtISO ?? null,
+    lastTouchLabel,
+    nextFollowUpLabel,
+    touchpointSummary: buildTouchpointSummary(segment, nextFollowUpLabel, lastTouchLabel, person.sourceContext),
   };
 }
 
@@ -221,6 +241,8 @@ function buildOccasionActivity(
     daysUntil,
     occasionKind: kind,
     deliveryStatus: null,
+    touchpointLabel: kind === "check-in" ? "Needs follow-up" : "Upcoming milestone",
+    touchpointSummary: `${options.subjectName} · ${label} · ${daysUntilText(daysUntil)}`,
   };
 }
 
@@ -240,6 +262,8 @@ function buildDeliveryActivity(
     daysUntil: null,
     occasionKind: delivery.occasionKind,
     deliveryStatus: delivery.status,
+    touchpointLabel: "Recent outreach",
+    touchpointSummary: `${subjectName} · ${delivery.channel} · ${deliveryStatusLabel(delivery.status)}`,
   };
 }
 
@@ -249,4 +273,76 @@ function accountIdForPerson(personId: ID): ID {
 
 function contactSegment(person: Person): ContactSegment {
   return person.segment ?? "personal";
+}
+
+function buildLastTouchLabel(person: Person, latestDelivery: Delivery | null): string {
+  if (latestDelivery) {
+    return `Last touch · ${deliveryStatusLabel(latestDelivery.status)} · ${latestDelivery.sentAtISO.slice(0, 10)}`;
+  }
+  if (person.lastContactAt) {
+    return `Last touch · ${person.lastContactAt.slice(0, 10)}`;
+  }
+  return "Last touch · No outreach yet";
+}
+
+function buildNextFollowUpLabel(
+  nextOccasion: OccasionNode | null,
+  latestDelivery: Delivery | null,
+): string {
+  if (nextOccasion) {
+    return `Next follow-up · ${nextOccasion.label} · ${daysUntilText(nextOccasion.daysUntil)}`;
+  }
+  if (latestDelivery) {
+    return "Next follow-up · Review after recent outreach";
+  }
+  return "Next follow-up · Not scheduled";
+}
+
+function buildTouchpointSummary(
+  segment: ContactSegment,
+  nextFollowUpLabel: string,
+  lastTouchLabel: string,
+  sourceContext: string | null,
+): string {
+  const context = sourceContext ? ` · ${sourceContext}` : "";
+  return `${segmentLabel(segment)} touchpoints · ${nextFollowUpLabel} · ${lastTouchLabel}${context}`;
+}
+
+function segmentLabel(segment: ContactSegment): string {
+  switch (segment) {
+    case "client":
+      return "Client";
+    case "partner":
+      return "Partner";
+    case "prospect":
+      return "Prospect";
+    case "investor":
+      return "Investor";
+    default:
+      return "Personal";
+  }
+}
+
+function deliveryStatusLabel(status: DeliveryStatus): string {
+  switch (status) {
+    case "queued":
+      return "Queued";
+    case "sending":
+      return "Sending";
+    case "sent":
+      return "Sent";
+    case "delivered":
+      return "Delivered";
+    case "opened":
+      return "Opened";
+    case "failed":
+      return "Failed";
+  }
+}
+
+function daysUntilText(daysUntil: number): string {
+  if (daysUntil < 0) return `${Math.abs(daysUntil)} days ago`;
+  if (daysUntil === 0) return "today";
+  if (daysUntil === 1) return "tomorrow";
+  return `in ${daysUntil} days`;
 }

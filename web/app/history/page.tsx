@@ -7,7 +7,7 @@ import {
   deliveryStatusBadge,
   occasionIcon,
 } from "@/lib/presentation";
-import type { Delivery, OccasionKind } from "@/lib/domain";
+import type { ContactSegment, Delivery, OccasionKind } from "@/lib/domain";
 import type { RemasterDashboardOverview } from "@/lib/remaster/read-model";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +30,8 @@ interface HistoryActivityRow {
   relationshipLabel: string;
   contextLabel: string;
   activityLabel: string;
+  touchpointLabel: string;
+  touchpointSummary: string;
 }
 
 function groupByMonth(items: HistoryActivityRow[]): { month: string; items: HistoryActivityRow[] }[] {
@@ -72,9 +74,11 @@ function buildHistoryActivityRows(
       delivery,
       accountName: account?.name ?? delivery.recipientName,
       primaryContactName: contact?.displayName ?? delivery.recipientName,
-      relationshipLabel: account ? `${account.relationshipLabel} account` : "Archived contact",
+      relationshipLabel: account ? `${segmentLabel(account.segment)} account` : "Archived contact",
       contextLabel: account?.contextLabel ?? "Delivery history",
       activityLabel: activity?.title ?? delivery.occasionLabel,
+      touchpointLabel: activity?.touchpointLabel ?? "Recent outreach",
+      touchpointSummary: activity?.touchpointSummary ?? `${delivery.recipientName} · ${delivery.channel}`,
     };
   });
 }
@@ -98,11 +102,11 @@ export default async function HistoryPage() {
           letterSpacing: "0.09em",
           textTransform: "uppercase",
         }}>
-          Activity timeline
+          Touchpoint timeline
         </p>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Account activity</h1>
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Relationship activity</h1>
         <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-          Account/contact outreach history · {activityCount} {activityCount === 1 ? "activity" : "activities"} recorded
+          Business touchpoint history · {activityCount} outreach {activityCount === 1 ? "touchpoint" : "touchpoints"} recorded
         </p>
       </div>
         {groups.length === 0 ? (
@@ -110,7 +114,7 @@ export default async function HistoryPage() {
             background: "rgba(255,255,255,0.9)", border: "0.5px solid rgba(239, 224, 218, 0.92)",
             borderRadius: 17, padding: 18, color: "var(--gray-2)", fontSize: 12.5,
           }}>
-            No account activity recorded yet. Queued and completed outreach will appear here.
+            No relationship touchpoints recorded yet. Queued and completed outreach will appear here.
           </div>
         ) : groups.map((g) => (
           <div key={g.month}>
@@ -147,7 +151,8 @@ export default async function HistoryPage() {
                       display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
                     }}>
                       <span>Primary contact: {row.primaryContactName}</span>
-                      <span>Outreach: {row.activityLabel}</span>
+                      <span>Touchpoint: {row.touchpointLabel}</span>
+                      <span>Activity: {row.activityLabel}</span>
                       <span style={{
                         fontSize: 10, padding: "2px 8px", borderRadius: 7,
                         display: "flex", alignItems: "center", gap: 4,
@@ -158,7 +163,7 @@ export default async function HistoryPage() {
                       </span>
                     </div>
                     <div style={{ fontSize: 11, color: "var(--gray-3)", marginTop: 3 }}>
-                      {row.relationshipLabel} · {row.contextLabel}
+                      {row.relationshipLabel} · {row.contextLabel} · {row.touchpointSummary}
                     </div>
                   </div>
                   <div>
@@ -186,4 +191,19 @@ export default async function HistoryPage() {
       </div>
     </div>
   );
+}
+
+function segmentLabel(segment: ContactSegment): string {
+  switch (segment) {
+    case "client":
+      return "Client";
+    case "partner":
+      return "Partner";
+    case "prospect":
+      return "Prospect";
+    case "investor":
+      return "Investor";
+    default:
+      return "Personal";
+  }
 }

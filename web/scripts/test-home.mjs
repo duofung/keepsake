@@ -115,12 +115,18 @@ try {
   check("does not render old hard-coded greeting", !body.includes("Good evening, Arthur"));
   check(
     "renders ReMaster dashboard subtitle",
-    body.includes("Stay on top of follow-ups, milestone dates, and outreach across 5 accounts / 5 contacts."),
+    body.includes("Track upcoming milestones, recent outreach, and follow-up gaps across 5 accounts / 5 contacts."),
   );
   check("renders upcoming moments count", body.includes("3 upcoming activities need attention soon."));
-  check("renders Lin anniversary focus", body.includes("Prepare Anniversary outreach for Lin"));
+  check("renders Lin touchpoint focus", body.includes("Prepare upcoming milestone for Lin"));
   check("renders anniversary timing chip", body.includes("In 12 days"));
-  check("renders accounts grid label", body.includes("ACCOUNTS TO REVIEW"));
+  check("renders follow-up dashboard sections",
+    body.includes("FOLLOW-UP DASHBOARD")
+      && body.includes("Upcoming milestone")
+      && body.includes("Recent outreach")
+      && body.includes("Needs follow-up"));
+  check("renders touchpoints grid label", body.includes("TOUCHPOINTS TO REVIEW"));
+  check("renders last touch copy", body.includes("Last touch · Opened · 2026-02-14"));
   check("renders Add contact CTA", body.includes("Add contact"));
   check("renders workspace CTA", body.includes("Draft outreach"));
 } catch (error) {

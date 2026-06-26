@@ -119,11 +119,11 @@ try {
   check("response is a non-empty HTML string", typeof body === "string" && body.length > 0);
 
   // ── Page header + data-driven subtitle ───────────────────────────────
-  check("contains activity timeline eyebrow", body.includes("Activity timeline"));
-  check("contains header 'Account activity'", body.includes("Account activity"));
+  check("contains touchpoint timeline eyebrow", body.includes("Touchpoint timeline"));
+  check("contains header 'Relationship activity'", body.includes("Relationship activity"));
   check(
-    "subtitle: 'Account/contact outreach history · 4 activities recorded'",
-    body.includes("Account/contact outreach history · 4 activities recorded"),
+    "subtitle: 'Business touchpoint history · 4 outreach touchpoints recorded'",
+    body.includes("Business touchpoint history · 4 outreach touchpoints recorded"),
   );
 
   // ── Month groups (mock data spans Mar / Feb / Jan 2026) ──────────────
@@ -133,32 +133,33 @@ try {
 
   // ── Per-activity rows (account/contact + outreach + channel badge text) ─
   check(
-    "row: Ah Ma · Primary contact · Lunar New Year · Card",
+    "row: Ah Ma · Primary contact · Recent outreach · Lunar New Year · Card",
     body.includes("Ah Ma")
       && body.includes("Primary contact: Ah Ma")
-      && body.includes("Outreach: Lunar New Year")
+      && body.includes("Touchpoint: Recent outreach")
+      && body.includes("Activity: Lunar New Year")
       && body.includes("Card"),
   );
   check(
-    "row: Lin account · Primary contact · Valentine's note · Email",
+    "row: Lin account · Primary contact · Recent outreach · Valentine's note · Email",
     body.includes("Lin")
       && body.includes("Primary contact: Lin")
-      && body.includes("Outreach: Valentine's note")
-      && body.includes("Partner account")
+      && body.includes("Activity: Valentine's note")
+      && body.includes("Client account")
       && body.includes("Email"),
   );
   check(
-    "row: Jun · Primary contact · Birthday · Email",
+    "row: Jun · Primary contact · Recent outreach · Birthday · Email",
     body.includes("Jun")
       && body.includes("Primary contact: Jun")
-      && body.includes("Outreach: Birthday")
+      && body.includes("Activity: Birthday")
       && body.includes("Email"),
   );
   check(
-    "row: Priya · Primary contact · Deepavali · Card",
+    "row: Priya · Primary contact · Recent outreach · Deepavali · Card",
     body.includes("Priya")
       && body.includes("Primary contact: Priya")
-      && body.includes("Outreach: Deepavali")
+      && body.includes("Activity: Deepavali")
       && body.includes("Card"),
   );
   check("archived delivery rows keep account-like context", body.includes("Archived contact"));

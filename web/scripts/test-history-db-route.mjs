@@ -266,10 +266,10 @@ try {
   const { status, text } = await getHistory();
   const normalizedText = normalizeHtmlText(text);
   check("GET /history -> 200", status === 200, `status=${status}`);
-  check("contains Activity", normalizedText.includes("Activity"));
+  check("contains Relationship activity", normalizedText.includes("Relationship activity"));
   check(
-    "contains 4 activities subtitle",
-    normalizedText.includes("Account/contact outreach history · 4 activities recorded"),
+    "contains 4 touchpoints subtitle",
+    normalizedText.includes("Business touchpoint history · 4 outreach touchpoints recorded"),
   );
   check("contains MARCH 2026", normalizedText.includes("MARCH 2026"));
   check("contains FEBRUARY 2026", normalizedText.includes("FEBRUARY 2026"));

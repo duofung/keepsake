@@ -12,7 +12,7 @@ import type {
   RemasterDashboardOverview,
   RemasterRelationshipType,
 } from "@/lib/remaster/read-model";
-import { deliveryStatusBadge, nodeChipText, occasionIcon, urgencyLevel } from "@/lib/presentation";
+import { deliveryStatusBadge, occasionIcon, urgencyLevel } from "@/lib/presentation";
 
 type AccountTab = "All" | ContactSegment;
 
@@ -396,6 +396,13 @@ export default function PeopleClient({ overview, payload }: Props) {
                         <span style={{ fontSize: 13 }}><Icon name={activitySummary.icon} /></span>
                         {activitySummary.text}
                       </div>
+                      <div style={{
+                        display: "grid", gap: 3, marginTop: 8,
+                        color: "var(--gray-2)", fontSize: 11.25, lineHeight: 1.35,
+                      }}>
+                        <span>{account.lastTouchLabel}</span>
+                        <span>{account.sourceContext ?? account.contextLabel}</span>
+                      </div>
                     </div>
                   </button>
                 );
@@ -460,6 +467,13 @@ function buildCompatibilityAccount(
     nextActivityId: person.nextOccasionId,
     lastDeliveryStatus: null,
     lastDeliveryAtISO: null,
+    lastTouchLabel: person.lastContactAt
+      ? `Last touch · ${person.lastContactAt.slice(0, 10)}`
+      : "Last touch · No outreach yet",
+    nextFollowUpLabel: person.nextOccasionId
+      ? "Next follow-up · Scheduled"
+      : "Next follow-up · Not scheduled",
+    touchpointSummary: `${segmentLabel[contactSegment(person)]} touchpoints · ${person.sourceContext ?? person.since ?? "Business context not set"}`,
   };
 }
 
@@ -470,7 +484,7 @@ function accountActivitySummary(
   if (nextActivity && nextActivity.daysUntil !== null) {
     const level = urgencyLevel(nextActivity.daysUntil);
     return {
-      text: `Next activity · ${nodeChipText(nextActivity.title, nextActivity.daysUntil)}`,
+      text: account.nextFollowUpLabel,
       icon: occasionIcon[nextActivity.occasionKind ?? "check-in"],
       level,
     };
@@ -479,15 +493,14 @@ function accountActivitySummary(
   if (account.lastDeliveryStatus) {
     const badge = deliveryStatusBadge[account.lastDeliveryStatus];
     return {
-      text: `Last outreach · ${badge.label}${account.lastDeliveryAtISO ? ` · ${account.lastDeliveryAtISO.slice(0, 10)}` : ""}`,
+      text: account.nextFollowUpLabel,
       icon: badge.icon,
       level: "far" as const,
     };
   }
 
-  const context = account.sourceContext ?? account.contextLabel;
   return {
-    text: `Relationship context · ${context}`,
+    text: account.nextFollowUpLabel,
     icon: "i-bulb",
     level: "far" as const,
   };
