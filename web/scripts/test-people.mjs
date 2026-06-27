@@ -7,6 +7,7 @@
 // Run via: pnpm test:people
 
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -200,6 +201,7 @@ try {
 
   await mintSession();
   const peoplePage = await getPeoplePage();
+  const drawerSource = await readFile(resolve(projectRoot, "components/PersonDrawer.tsx"), "utf8");
 
   check("GET /people → 200", peoplePage.status === 200, `status=${peoplePage.status}`);
   check("People page renders business relationship title", peoplePage.body.includes("Business relationships"));
@@ -233,6 +235,23 @@ try {
   check(
     "People page renders organization and role",
     peoplePage.body.includes("Lattice Works / Founder"),
+  );
+  check(
+    "People page keeps dossier drawer shell",
+    peoplePage.body.includes('data-testid="person-dossier-drawer"'),
+  );
+  check(
+    "People drawer source anchors business dossier sections",
+    [
+      "Relationship dossier",
+      "OVERVIEW",
+      "RELATIONSHIP CONTEXT",
+      "TOUCHPOINTS",
+      "NOTES / REMEMBER",
+      "ACTIONS",
+      "Open workspace",
+      "Draft next note",
+    ].every((label) => drawerSource.includes(label)),
   );
 } catch (err) {
   process.stdout.write(`harness error: ${err?.message ?? err}\n`);

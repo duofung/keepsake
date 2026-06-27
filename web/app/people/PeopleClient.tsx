@@ -162,6 +162,9 @@ export default function PeopleClient({ overview, payload }: Props) {
   const drawerPerson = openId ? people.find((p) => p.id === openId) ?? null : null;
   const drawerRel = drawerPerson ? relationshipById.get(drawerPerson.relationshipId) ?? null : null;
   const drawerCulture = drawerPerson ? cultureById.get(drawerPerson.cultureId) ?? null : null;
+  const drawerAccount = drawerPerson
+    ? accounts.find((account) => account.primaryContactId === drawerPerson.id) ?? null
+    : null;
   const drawerOccasions = drawerPerson
     ? occasions.filter((o) => o.personId === drawerPerson.id)
     : [];
@@ -415,6 +418,7 @@ export default function PeopleClient({ overview, payload }: Props) {
 
       <PersonDrawer
         person={drawerPerson}
+        account={drawerAccount}
         relationship={drawerRel}
         culture={drawerCulture}
         occasions={drawerOccasions}
