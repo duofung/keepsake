@@ -170,9 +170,11 @@ async function seedPeople(client, encrypt, people) {
           identity_tags_enc,
           known_facts_enc,
           personal_taboos_enc,
-          last_contact_at
+          last_contact_at,
+          next_follow_up_at,
+          archived_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
         ON CONFLICT (id) DO UPDATE
         SET
           owner_id = EXCLUDED.owner_id,
@@ -191,6 +193,8 @@ async function seedPeople(client, encrypt, people) {
           known_facts_enc = EXCLUDED.known_facts_enc,
           personal_taboos_enc = EXCLUDED.personal_taboos_enc,
           last_contact_at = EXCLUDED.last_contact_at,
+          next_follow_up_at = EXCLUDED.next_follow_up_at,
+          archived_at = EXCLUDED.archived_at,
           updated_at = now()
       `,
       [
@@ -211,6 +215,8 @@ async function seedPeople(client, encrypt, people) {
         await encryptedJson(encrypt, "people", "known_facts_enc", person.knownFacts),
         await encryptedJson(encrypt, "people", "personal_taboos_enc", person.personalTaboos),
         person.lastContactAt ?? null,
+        person.nextFollowUpAt ?? null,
+        person.archivedAt ?? null,
       ],
     );
   }

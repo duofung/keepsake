@@ -229,6 +229,18 @@ try {
   await command("node", ["scripts/seed-dev-fixtures.mjs"], { env: fixtureEnv });
   process.stdout.write("  ✓ fixtures seeded\n");
 
+  await withClient(adminUrl, async (client) => {
+    await client.query(
+      `
+        UPDATE people
+        SET archived_at = now()
+        WHERE owner_id = $1
+          AND id = '10000000-0000-4000-8000-000000000001'
+      `,
+      [ownerId],
+    );
+  });
+
   const nextBin = resolve(projectRoot, "node_modules/.bin/next");
   nextChild = spawn(nextBin, ["dev", "--port", String(port)], {
     cwd: projectRoot,
@@ -275,7 +287,7 @@ try {
   check("contains FEBRUARY 2026", normalizedText.includes("FEBRUARY 2026"));
   check("contains JANUARY 2026", normalizedText.includes("JANUARY 2026"));
   check("contains Ah Ma", normalizedText.includes("Ah Ma"));
-  check("contains Lin", normalizedText.includes("Lin"));
+  check("contains Lin archived delivery row", normalizedText.includes("Lin"));
   check("contains Jun", normalizedText.includes("Jun"));
   check("contains Priya", normalizedText.includes("Priya"));
   check("contains Delivered", normalizedText.includes("Delivered"));

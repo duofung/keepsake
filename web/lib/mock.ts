@@ -67,7 +67,7 @@ export const occasions: OccasionNode[] = [
   { id: "occ-dad-bday", personId: "p-dad", kind: "birthday", label: "Birthday", detail: "December", dateISO: "2026-12-10", daysUntil: 120, isPrimary: true },
 ];
 
-export const people: Person[] = [
+const seedPeople: Person[] = [
   {
     id: "p-lin", name: "Lin", starred: true,
     segment: "client",
@@ -161,6 +161,18 @@ export const people: Person[] = [
   },
 ];
 
+type MockGlobal = typeof globalThis & {
+  __keepsakeMockPeople?: Person[];
+};
+
+function mockPeopleStore(seed: Person[]): Person[] {
+  const root = globalThis as MockGlobal;
+  root.__keepsakeMockPeople ??= seed;
+  return root.__keepsakeMockPeople;
+}
+
+export const people: Person[] = mockPeopleStore(seedPeople);
+
 export const deliveries: Delivery[] = [
   { id: "d-1", personId: "p-other-ahma", recipientName: "Ah Ma", occasionKind: "lunar-new-year", occasionLabel: "Lunar New Year", channel: "post", sentAtISO: "2026-03-02", status: "delivered" },
   { id: "d-2", personId: "p-lin", recipientName: "Lin", occasionKind: "custom", occasionLabel: "Valentine's note", channel: "email", sentAtISO: "2026-02-14", status: "opened" },
@@ -176,7 +188,7 @@ export const deliveries: Delivery[] = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function findPerson(id: string): Person | undefined {
-  return people.find((p) => p.id === id);
+  return people.find((p) => p.id === id && !p.archivedAt);
 }
 export function findRelationship(id: string): Relationship | undefined {
   return relationships.find((r) => r.id === id);
@@ -189,9 +201,17 @@ export function findOccasion(id: string | null): OccasionNode | undefined {
   return occasions.find((o) => o.id === id);
 }
 export function occasionsFor(personId: string): OccasionNode[] {
+  if (!findPerson(personId)) return [];
   return occasions.filter((o) => o.personId === personId);
 }
 
 export function peoplePayload(): PeoplePayload {
-  return { people, relationships, cultures, occasions };
+  const activePeople = people.filter((person) => !person.archivedAt);
+  const activeIds = new Set(activePeople.map((person) => person.id));
+  return {
+    people: activePeople,
+    relationships,
+    cultures,
+    occasions: occasions.filter((occasion) => activeIds.has(occasion.personId)),
+  };
 }

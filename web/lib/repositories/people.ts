@@ -12,7 +12,7 @@
 //   listForOwner            → /api/people GET (server)
 //   listWithRelations       → /api/people GET — single batched query
 //   findById                → /api/drafts POST (internal); future drawer GET
-//   create / update / softDelete → future "Add someone" / drawer edit routes
+//   create / update / archive → "Add contact" / drawer maintenance routes
 //   listOccasions           → drawer load (internal)
 //   findOccasion            → /api/drafts POST (internal)
 //   nextOccasionFor         → resolves Person.nextOccasionId at read time
@@ -56,7 +56,10 @@ export interface PeopleRepository {
 
   update(ownerId: OwnerId, personId: ID, patch: PersonPatch, tx?: Tx): Promise<Person>;
 
-  /** Sets `deleted_at`; row is retained so History rows keep their recipient_name. */
+  /** Sets `archived_at`; row is retained so History rows keep their recipient_name. */
+  archive(ownerId: OwnerId, personId: ID, tx?: Tx): Promise<Person>;
+
+  /** Backward-compatible alias for older call sites. */
   softDelete(ownerId: OwnerId, personId: ID, tx?: Tx): Promise<void>;
 
   // ── Occasions ───────────────────────────────────────────────────────────

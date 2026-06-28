@@ -1,12 +1,24 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import Icon from "./Icon";
 import Avatar from "./Avatar";
-import type { ReactNode } from "react";
-import type { CultureRule, OccasionNode, Person, Relationship } from "@/lib/domain";
+import type { FormEvent, ReactNode } from "react";
+import type { ContactSegment, CultureRule, OccasionNode, Person, Relationship } from "@/lib/domain";
 import type { RemasterDashboardAccount } from "@/lib/remaster/read-model";
 import { nodeChipText, occasionIcon, occasionTintBg, urgencyLevel } from "@/lib/presentation";
+
+export type PersonMaintenanceInput = {
+  name: string;
+  segment: ContactSegment;
+  organization: string;
+  roleTitle: string;
+  sourceContext: string;
+  note: string;
+  lastContactAt: string;
+  nextFollowUpAt: string;
+};
 
 type Props = {
   person: Person | null;
@@ -14,11 +26,13 @@ type Props = {
   relationship: Relationship | null;
   culture: CultureRule | null;
   occasions: OccasionNode[];
+  onUpdate: (personId: string, input: PersonMaintenanceInput) => Promise<Person>;
+  onArchive: (personId: string) => Promise<void>;
   onClose: () => void;
 };
 
 export default function PersonDrawer({
-  person, account, relationship, culture, occasions, onClose,
+  person, account, relationship, culture, occasions, onUpdate, onArchive, onClose,
 }: Props) {
   const open = !!person;
   return (
@@ -51,6 +65,8 @@ export default function PersonDrawer({
             relationship={relationship}
             culture={culture}
             occasions={occasions}
+            onUpdate={onUpdate}
+            onArchive={onArchive}
             onClose={onClose}
           />
         )}
@@ -60,10 +76,13 @@ export default function PersonDrawer({
 }
 
 function DrawerContent({
-  person, account, relationship, culture, occasions, onClose,
+  person, account, relationship, culture, occasions, onUpdate, onArchive, onClose,
 }: {
   person: Person; account: RemasterDashboardAccount | null; relationship: Relationship; culture: CultureRule;
-  occasions: OccasionNode[]; onClose: () => void;
+  occasions: OccasionNode[];
+  onUpdate: (personId: string, input: PersonMaintenanceInput) => Promise<Person>;
+  onArchive: (personId: string) => Promise<void>;
+  onClose: () => void;
 }) {
   const primary = occasions.find((o) => o.isPrimary) ?? occasions[0] ?? null;
   const businessLine = drawerBusinessLine(person, relationship);
@@ -78,6 +97,50 @@ function DrawerContent({
   const prepareLabel = primary
     ? `Draft next note for ${primary.label}`
     : "Draft next note";
+  const [draft, setDraft] = useState(() => draftFromPerson(person));
+  const [saving, setSaving] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(draftFromPerson(person));
+    setSaving(false);
+    setArchiving(false);
+    setError(null);
+  }, [person]);
+
+  async function submitMaintenance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draft.name.trim()) {
+      setError("Name is required.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await onUpdate(person.id, draft);
+      setDraft(draftFromPerson(updated));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not update this contact.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function archiveContact() {
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm(`Archive ${person.name}? They will leave People/Home, but touchpoint history stays.`);
+    if (!confirmed) return;
+    setArchiving(true);
+    setError(null);
+    try {
+      await onArchive(person.id);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not archive this contact.");
+      setArchiving(false);
+    }
+  }
 
   return (
     <>
@@ -136,6 +199,111 @@ function DrawerContent({
           <div style={{ marginTop: 9 }}>
             <DossierField label="Context / source" value={person.sourceContext ?? person.since ?? "Source context not captured"} wide />
           </div>
+        </Section>
+
+        <Section title="MAINTENANCE LOOP">
+          <form data-testid="person-maintenance-form" onSubmit={submitMaintenance} style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 0.84fr", gap: 9 }}>
+              <label style={maintenanceFieldStyle}>
+                <span style={maintenanceLabelStyle}>Name</span>
+                <input
+                  value={draft.name}
+                  onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+                  style={maintenanceInputStyle}
+                />
+              </label>
+              <label style={maintenanceFieldStyle}>
+                <span style={maintenanceLabelStyle}>Segment</span>
+                <select
+                  value={draft.segment}
+                  onChange={(event) => setDraft((current) => ({ ...current, segment: event.target.value as ContactSegment }))}
+                  style={maintenanceInputStyle}
+                >
+                  {CONTACT_SEGMENTS.map((segment) => (
+                    <option key={segment} value={segment}>{segmentText[segment]}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
+              <label style={maintenanceFieldStyle}>
+                <span style={maintenanceLabelStyle}>Organization</span>
+                <input
+                  value={draft.organization}
+                  onChange={(event) => setDraft((current) => ({ ...current, organization: event.target.value }))}
+                  style={maintenanceInputStyle}
+                />
+              </label>
+              <label style={maintenanceFieldStyle}>
+                <span style={maintenanceLabelStyle}>Role title</span>
+                <input
+                  value={draft.roleTitle}
+                  onChange={(event) => setDraft((current) => ({ ...current, roleTitle: event.target.value }))}
+                  style={maintenanceInputStyle}
+                />
+              </label>
+            </div>
+            <label style={maintenanceFieldStyle}>
+              <span style={maintenanceLabelStyle}>Source context</span>
+              <input
+                value={draft.sourceContext}
+                onChange={(event) => setDraft((current) => ({ ...current, sourceContext: event.target.value }))}
+                style={maintenanceInputStyle}
+              />
+            </label>
+            <label style={maintenanceFieldStyle}>
+              <span style={maintenanceLabelStyle}>Remember</span>
+              <textarea
+                value={draft.note}
+                onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+                style={{ ...maintenanceInputStyle, minHeight: 78, resize: "vertical", lineHeight: 1.45 }}
+              />
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
+              <label style={maintenanceFieldStyle}>
+                <span style={maintenanceLabelStyle}>Last touch</span>
+                <input
+                  type="date"
+                  value={draft.lastContactAt}
+                  onChange={(event) => setDraft((current) => ({ ...current, lastContactAt: event.target.value }))}
+                  style={maintenanceInputStyle}
+                />
+              </label>
+              <label style={maintenanceFieldStyle}>
+                <span style={maintenanceLabelStyle}>Next follow-up</span>
+                <input
+                  type="date"
+                  value={draft.nextFollowUpAt}
+                  onChange={(event) => setDraft((current) => ({ ...current, nextFollowUpAt: event.target.value }))}
+                  style={maintenanceInputStyle}
+                />
+              </label>
+            </div>
+            {error && (
+              <p role="alert" style={{ margin: 0, color: "#D55C5C", fontSize: 12.25 }}>
+                {error}
+              </p>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="submit"
+                disabled={saving || archiving}
+                style={{
+                  padding: "9px 13px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: "var(--heartline-purple-deep)",
+                  color: "#fff",
+                  fontSize: 12.75,
+                  fontWeight: 650,
+                  cursor: saving || archiving ? "default" : "pointer",
+                  opacity: saving || archiving ? 0.68 : 1,
+                }}
+              >
+                {saving ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </form>
         </Section>
 
         <Section title="RELATIONSHIP CONTEXT">
@@ -210,12 +378,12 @@ function DrawerContent({
         <div style={{ fontSize: 10.75, fontWeight: 740, color: "var(--gray-2)", letterSpacing: "0.08em", marginBottom: 9 }}>
           ACTIONS
         </div>
-        <div style={{ display: "flex", gap: 9 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 0.88fr", gap: 9 }}>
           <Link
             href={`/workspace?person=${person.id}`}
             onClick={onClose}
             className="heartline-button"
-            style={{ flex: 1 }}
+            style={{ justifyContent: "center" }}
           >
             <Icon name="i-edit" /> Open workspace
           </Link>
@@ -234,6 +402,30 @@ function DrawerContent({
             <Icon name="i-pencil" /> Draft next note
           </Link>
         </div>
+        <button
+          type="button"
+          onClick={archiveContact}
+          disabled={saving || archiving}
+          style={{
+            width: "100%",
+            marginTop: 9,
+            padding: "10px 13px",
+            background: "rgba(255,255,255,0.74)",
+            border: "0.5px solid rgba(213, 92, 92, 0.24)",
+            borderRadius: 12,
+            color: "#B94F4F",
+            fontSize: 12.75,
+            fontWeight: 650,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            cursor: saving || archiving ? "default" : "pointer",
+            opacity: saving || archiving ? 0.68 : 1,
+          }}
+        >
+          <Icon name="i-alert" /> {archiving ? "Archiving..." : "Archive contact"}
+        </button>
       </div>
     </>
   );
@@ -423,17 +615,54 @@ function daysUntilText(daysUntil: number): string {
   return `in ${daysUntil} days`;
 }
 
-function segmentLabel(person: Person): string {
-  switch (person.segment ?? "personal") {
-    case "client":
-      return "Client";
-    case "partner":
-      return "Partner";
-    case "prospect":
-      return "Prospect";
-    case "investor":
-      return "Investor";
-    default:
-      return "Personal";
-  }
+const CONTACT_SEGMENTS: ContactSegment[] = ["client", "partner", "prospect", "investor", "personal"];
+
+const segmentText: Record<ContactSegment, string> = {
+  client: "Client",
+  partner: "Partner",
+  prospect: "Prospect",
+  investor: "Investor",
+  personal: "Personal",
+};
+
+function draftFromPerson(person: Person): PersonMaintenanceInput {
+  return {
+    name: person.name,
+    segment: person.segment ?? "personal",
+    organization: person.organization ?? "",
+    roleTitle: person.roleTitle ?? "",
+    sourceContext: person.sourceContext ?? person.since ?? "",
+    note: person.knownFacts.map((fact) => fact.text).join(" "),
+    lastContactAt: person.lastContactAt?.slice(0, 10) ?? "",
+    nextFollowUpAt: person.nextFollowUpAt?.slice(0, 10) ?? "",
+  };
 }
+
+function segmentLabel(person: Person): string {
+  return segmentText[person.segment ?? "personal"];
+}
+
+const maintenanceFieldStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+} as const;
+
+const maintenanceLabelStyle = {
+  color: "var(--gray-3)",
+  fontSize: 10.5,
+  fontWeight: 700,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+} as const;
+
+const maintenanceInputStyle = {
+  border: "0.5px solid rgba(239, 224, 218, 0.9)",
+  borderRadius: 11,
+  background: "rgba(255,255,255,0.82)",
+  color: "var(--ink)",
+  fontSize: 12.75,
+  outline: "none",
+  padding: "9px 10px",
+  boxShadow: "0 1px 0 rgba(70, 42, 82, 0.03)",
+} as const;

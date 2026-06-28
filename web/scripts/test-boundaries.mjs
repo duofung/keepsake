@@ -22,6 +22,7 @@ const SCAN_DIRS = ["app", "components", "lib"];
 const ALLOWED_MOCK_IMPORTERS = new Set([
   "lib/server/delivery-history/mock.server.ts",
   "lib/server/draft-context/mock.server.ts",
+  "lib/server/people-maintenance/mock.server.ts",
   "lib/server/people-payload/mock.server.ts",
 ]);
 

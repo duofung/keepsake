@@ -113,6 +113,8 @@ export interface Person {
   personalTaboos: string[];// person-specific notes beyond culture rules
   nextOccasionId: ID | null;
   lastContactAt?: string;  // ISO — when no occasion, drives "last note · 2 mo ago"
+  nextFollowUpAt?: string; // ISO date for the lightweight maintenance follow-up target
+  archivedAt?: string;     // ISO timestamp for soft archive; history rows remain
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

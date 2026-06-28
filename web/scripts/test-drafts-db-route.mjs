@@ -291,6 +291,7 @@ try {
   check("GET /api/people -> 200", peopleStatus === 200, `status=${peopleStatus}`);
 
   const people = peopleBody?.people ?? [];
+  const occasions = peopleBody?.occasions ?? [];
   const lin = people.find((person) => person.name === "Lin");
   const aisha = people.find((person) => person.name === "Aisha");
 
@@ -302,6 +303,16 @@ try {
   if (!lin || !aisha || !lin.nextOccasionId || !aisha.nextOccasionId) {
     throw new Error("Required Lin/Aisha fixture rows were not available.");
   }
+  const linNextOccasion = occasions.find((occasion) => occasion.id === lin.nextOccasionId);
+  const expectedLinInitialTone = linNextOccasion?.label === "Anniversary"
+    ? "tender-intimate"
+    : "light-warm";
+
+  check(
+    "Lin next occasion label is seeded milestone",
+    ["Anniversary", "Birthday"].includes(linNextOccasion?.label ?? ""),
+    `got ${linNextOccasion?.label}`,
+  );
 
   process.stdout.write("running draft assertions:\n");
 
@@ -390,7 +401,7 @@ try {
     check("Lin explicit next occasion -> 200", status === 200, `status=${status}`);
     linInitialDraftId = body?.id ?? null;
     check("Lin initial returns DB uuid id", /^[0-9a-f-]{36}$/i.test(linInitialDraftId ?? ""));
-    check("Lin initial tone = tender-intimate", body?.tone === "tender-intimate", `tone=${body?.tone}`);
+    check("Lin initial tone matches current fixture occasion", body?.tone === expectedLinInitialTone, `tone=${body?.tone}`);
     check(
       "Lin initial has paragraphs[]",
       Array.isArray(body?.paragraphs) && body.paragraphs.length > 0,

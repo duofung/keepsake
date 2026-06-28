@@ -190,7 +190,7 @@ function buildAccount(
 ): RemasterDashboardAccount {
   const segment = contactSegment(person);
   const lastTouchLabel = buildLastTouchLabel(person, options.latestDelivery);
-  const nextFollowUpLabel = buildNextFollowUpLabel(options.nextOccasion, options.latestDelivery);
+  const nextFollowUpLabel = buildNextFollowUpLabel(person, options.nextOccasion, options.latestDelivery);
   return {
     id: accountIdForPerson(person.id),
     primaryContactId: person.id,
@@ -286,9 +286,13 @@ function buildLastTouchLabel(person: Person, latestDelivery: Delivery | null): s
 }
 
 function buildNextFollowUpLabel(
+  person: Person,
   nextOccasion: OccasionNode | null,
   latestDelivery: Delivery | null,
 ): string {
+  if (person.nextFollowUpAt) {
+    return `Next follow-up · ${person.nextFollowUpAt}`;
+  }
   if (nextOccasion) {
     return `Next follow-up · ${nextOccasion.label} · ${daysUntilText(nextOccasion.daysUntil)}`;
   }

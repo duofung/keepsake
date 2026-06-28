@@ -39,6 +39,8 @@ type PeopleRow = QueryResultRow & {
   known_facts_enc: Uint8Array;
   personal_taboos_enc: Uint8Array;
   last_contact_at_iso: string | null;
+  next_follow_up_at_iso: string | null;
+  archived_at_iso: string | null;
   next_occasion_id: string | null;
 };
 
@@ -120,6 +122,8 @@ async function personFromRow(ownerId: OwnerId, row: PeopleRow): Promise<Person> 
     personalTaboos: await decryptJson<string[]>(ownerId, "people", "personal_taboos_enc", row.personal_taboos_enc),
     nextOccasionId: row.next_occasion_id,
     lastContactAt: row.last_contact_at_iso ?? undefined,
+    nextFollowUpAt: row.next_follow_up_at_iso ?? undefined,
+    archivedAt: row.archived_at_iso ?? undefined,
   };
 }
 
@@ -138,6 +142,13 @@ async function occasionFromRow(ownerId: OwnerId, row: OccasionRow): Promise<Occa
 
 function notImplemented(method: string): never {
   throw new Error(`PeopleRepository.${method} is not implemented yet.`);
+}
+
+function repoError(kind: "not-found" | "validation" | "unavailable", message: string, cause?: unknown): Error & { kind: typeof kind; cause?: unknown } {
+  const error = new Error(message) as Error & { kind: typeof kind; cause?: unknown };
+  error.kind = kind;
+  if (cause) error.cause = cause;
+  return error;
 }
 
 export class PgPeopleRepository implements PeopleRepository {
@@ -163,6 +174,8 @@ export class PgPeopleRepository implements PeopleRepository {
             p.known_facts_enc,
             p.personal_taboos_enc,
             to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
+            to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
             next_occ.id::text AS next_occasion_id
           FROM people p
           LEFT JOIN LATERAL (
@@ -175,6 +188,7 @@ export class PgPeopleRepository implements PeopleRepository {
             LIMIT 1
           ) next_occ ON true
           WHERE p.owner_id = $1
+            AND p.archived_at IS NULL
           ORDER BY p.starred DESC, p.created_at ASC, p.id ASC
         `,
         [ownerId],
@@ -215,6 +229,8 @@ export class PgPeopleRepository implements PeopleRepository {
             p.known_facts_enc,
             p.personal_taboos_enc,
             to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
+            to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
             next_occ.id::text AS next_occasion_id
           FROM people p
           LEFT JOIN LATERAL (
@@ -227,7 +243,8 @@ export class PgPeopleRepository implements PeopleRepository {
             LIMIT 1
           ) next_occ ON true
           WHERE p.owner_id = $1
-            AND p.id = $2
+            AND p.id::text = $2
+            AND p.archived_at IS NULL
           LIMIT 1
         `,
         [ownerId, personId],
@@ -257,7 +274,8 @@ export class PgPeopleRepository implements PeopleRepository {
             identity_tags_enc,
             known_facts_enc,
             personal_taboos_enc,
-            last_contact_at
+            last_contact_at,
+            next_follow_up_at
           )
           VALUES (
             $1,
@@ -275,7 +293,8 @@ export class PgPeopleRepository implements PeopleRepository {
             $13,
             $14,
             $15,
-            $16
+            $16,
+            $17
           )
           RETURNING
             id::text,
@@ -294,6 +313,8 @@ export class PgPeopleRepository implements PeopleRepository {
             known_facts_enc,
             personal_taboos_enc,
             to_char(last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            to_char(next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
+            to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
             NULL::text AS next_occasion_id
         `,
         [
@@ -321,6 +342,7 @@ export class PgPeopleRepository implements PeopleRepository {
           await encryptJson(ownerId, "people", "known_facts_enc", input.knownFacts ?? []),
           await encryptJson(ownerId, "people", "personal_taboos_enc", input.personalTaboos ?? []),
           input.lastContactAt ?? null,
+          input.nextFollowUpAt ?? null,
         ],
       );
 
@@ -328,12 +350,171 @@ export class PgPeopleRepository implements PeopleRepository {
     });
   }
 
-  async update(_ownerId: OwnerId, _personId: string, _patch: PersonPatch, _tx?: Tx): Promise<Person> {
-    return notImplemented("update");
+  async update(ownerId: OwnerId, personId: string, patch: PersonPatch, tx?: Tx): Promise<Person> {
+    return withTx(ownerId, tx, async (activeTx) => {
+      const values: unknown[] = [ownerId, personId];
+      const setters: string[] = [];
+
+      async function setEncryptedText(column: string, cryptoColumn: string, value: string | null | undefined) {
+        if (value === undefined) return;
+        values.push(value ? await encryptText(ownerId, "people", cryptoColumn, value) : null);
+        setters.push(`${column} = $${values.length}`);
+      }
+
+      if (patch.name !== undefined) {
+        values.push(await encryptText(ownerId, "people", "name_enc", patch.name));
+        setters.push(`name_enc = $${values.length}`);
+      }
+      if (patch.segment !== undefined) {
+        values.push(patch.segment);
+        setters.push(`segment = $${values.length}`);
+      }
+      await setEncryptedText("organization_enc", "organization_enc", patch.organization);
+      await setEncryptedText("role_title_enc", "role_title_enc", patch.roleTitle);
+      await setEncryptedText("source_context_enc", "source_context_enc", patch.sourceContext);
+      if (patch.starred !== undefined) {
+        values.push(patch.starred);
+        setters.push(`starred = $${values.length}`);
+      }
+      if (patch.avatarBg !== undefined) {
+        values.push(patch.avatarBg);
+        setters.push(`avatar_bg = $${values.length}`);
+      }
+      if (patch.avatarFg !== undefined) {
+        values.push(patch.avatarFg);
+        setters.push(`avatar_fg = $${values.length}`);
+      }
+      if (patch.relationshipId !== undefined) {
+        values.push(patch.relationshipId);
+        setters.push(`relationship_id = $${values.length}`);
+      }
+      if (patch.cultureId !== undefined) {
+        values.push(patch.cultureId);
+        setters.push(`culture_id = $${values.length}`);
+      }
+      await setEncryptedText("since_enc", "since_enc", patch.since ?? undefined);
+      if (patch.identityTags !== undefined) {
+        values.push(await encryptJson(ownerId, "people", "identity_tags_enc", patch.identityTags));
+        setters.push(`identity_tags_enc = $${values.length}`);
+      }
+      if (patch.knownFacts !== undefined) {
+        values.push(await encryptJson(ownerId, "people", "known_facts_enc", patch.knownFacts));
+        setters.push(`known_facts_enc = $${values.length}`);
+      }
+      if (patch.personalTaboos !== undefined) {
+        values.push(await encryptJson(ownerId, "people", "personal_taboos_enc", patch.personalTaboos));
+        setters.push(`personal_taboos_enc = $${values.length}`);
+      }
+      if (patch.lastContactAt !== undefined) {
+        values.push(patch.lastContactAt);
+        setters.push(`last_contact_at = $${values.length}`);
+      }
+      if (patch.nextFollowUpAt !== undefined) {
+        values.push(patch.nextFollowUpAt);
+        setters.push(`next_follow_up_at = $${values.length}`);
+      }
+
+      if (setters.length === 0) {
+        const person = await this.findById(ownerId, personId, activeTx);
+        if (!person) throw repoError("not-found", "Person not found.");
+        return person;
+      }
+
+      setters.push("updated_at = now()");
+      const result = await query<PeopleRow>(
+        activeTx,
+        `
+          WITH updated AS (
+            UPDATE people p
+            SET ${setters.join(", ")}
+            WHERE p.owner_id = $1
+              AND p.id::text = $2
+              AND p.archived_at IS NULL
+            RETURNING p.*
+          )
+          SELECT
+            p.id::text,
+            p.name_enc,
+            p.segment,
+            p.organization_enc,
+            p.role_title_enc,
+            p.source_context_enc,
+            p.starred,
+            p.avatar_bg,
+            p.avatar_fg,
+            p.relationship_id,
+            p.culture_id,
+            p.since_enc,
+            p.identity_tags_enc,
+            p.known_facts_enc,
+            p.personal_taboos_enc,
+            to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
+            to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
+            next_occ.id::text AS next_occasion_id
+          FROM updated p
+          LEFT JOIN LATERAL (
+            SELECT o.id
+            FROM occasion_nodes o
+            WHERE o.owner_id = p.owner_id
+              AND o.person_id = p.id
+              AND o.date_iso >= CURRENT_DATE
+            ORDER BY o.date_iso ASC, o.id ASC
+            LIMIT 1
+          ) next_occ ON true
+        `,
+        values,
+      );
+      if (!result.rows[0]) throw repoError("not-found", "Person not found.");
+      return personFromRow(ownerId, result.rows[0]);
+    });
   }
 
-  async softDelete(_ownerId: OwnerId, _personId: string, _tx?: Tx): Promise<void> {
-    return notImplemented("softDelete");
+  async archive(ownerId: OwnerId, personId: string, tx?: Tx): Promise<Person> {
+    return withTx(ownerId, tx, async (activeTx) => {
+      const result = await query<PeopleRow>(
+        activeTx,
+        `
+          WITH updated AS (
+            UPDATE people p
+            SET archived_at = now(),
+                updated_at = now()
+            WHERE p.owner_id = $1
+              AND p.id::text = $2
+              AND p.archived_at IS NULL
+            RETURNING p.*
+          )
+          SELECT
+            p.id::text,
+            p.name_enc,
+            p.segment,
+            p.organization_enc,
+            p.role_title_enc,
+            p.source_context_enc,
+            p.starred,
+            p.avatar_bg,
+            p.avatar_fg,
+            p.relationship_id,
+            p.culture_id,
+            p.since_enc,
+            p.identity_tags_enc,
+            p.known_facts_enc,
+            p.personal_taboos_enc,
+            to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
+            to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
+            NULL::text AS next_occasion_id
+          FROM updated p
+        `,
+        [ownerId, personId],
+      );
+      if (!result.rows[0]) throw repoError("not-found", "Person not found.");
+      return personFromRow(ownerId, result.rows[0]);
+    });
+  }
+
+  async softDelete(ownerId: OwnerId, personId: string, tx?: Tx): Promise<void> {
+    await this.archive(ownerId, personId, tx);
   }
 
   async listOccasions(ownerId: OwnerId, personId: string, tx?: Tx): Promise<OccasionNode[]> {
@@ -448,6 +629,10 @@ export class PgPeopleRepository implements PeopleRepository {
           (o.date_iso - CURRENT_DATE)::int AS days_until,
           (o.id = primary_occ.id) AS is_primary
         FROM occasion_nodes o
+        JOIN people person_filter
+          ON person_filter.id = o.person_id
+         AND person_filter.owner_id = o.owner_id
+         AND person_filter.archived_at IS NULL
         LEFT JOIN LATERAL (
           SELECT p.id
           FROM occasion_nodes p

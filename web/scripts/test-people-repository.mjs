@@ -248,6 +248,7 @@ try {
     `);
     await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes TO ${appRole}`);
     await client.query(`GRANT INSERT ON people TO ${appRole}`);
+    await client.query(`GRANT UPDATE ON people TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 
@@ -409,6 +410,37 @@ try {
   assertEqual(kira?.segment, "personal", "defaults legacy people rows to personal segment");
   assert(kira?.organization === null, "legacy people rows have null organization");
 
+  const updatedKira = await people.update(ownerA, kiraId, {
+    name: "Kira Tan",
+    segment: "prospect",
+    organization: "Northstar Labs",
+    roleTitle: "VP People Ops",
+    sourceContext: "Post-event pilot follow-up",
+    knownFacts: [{ text: "Wants a short deck before July.", isLead: true }],
+    lastContactAt: dates.soon,
+    nextFollowUpAt: dates.later,
+  });
+  assertEqual(updatedKira.name, "Kira Tan", "update returns decrypted name");
+  assertEqual(updatedKira.segment, "prospect", "update preserves segment");
+  assertEqual(updatedKira.organization, "Northstar Labs", "update decrypts organization");
+  assertEqual(updatedKira.roleTitle, "VP People Ops", "update decrypts role title");
+  assertEqual(updatedKira.sourceContext, "Post-event pilot follow-up", "update decrypts source context");
+  assertEqual(updatedKira.knownFacts[0]?.text, "Wants a short deck before July.", "update decrypts known facts");
+  assertEqual(updatedKira.lastContactAt, dates.soon, "update maps lastContactAt");
+  assertEqual(updatedKira.nextFollowUpAt, dates.later, "update maps nextFollowUpAt");
+
+  const refreshedKira = await people.findById(ownerA, kiraId);
+  assertEqual(refreshedKira?.name, "Kira Tan", "findById sees updated person");
+  assertEqual(refreshedKira?.nextFollowUpAt, dates.later, "findById sees updated nextFollowUpAt");
+
+  let crossOwnerUpdateBlocked = false;
+  try {
+    await people.update(ownerB, kiraId, { name: "Should Not Update" });
+  } catch (error) {
+    crossOwnerUpdateBlocked = error && typeof error === "object" && error.kind === "not-found";
+  }
+  assert(crossOwnerUpdateBlocked, "update hides another owner's person");
+
   const foundLin = await people.findById(ownerA, linId);
   const hiddenLin = await people.findById(ownerB, linId);
   assert(foundLin?.name === "Lin", "findById returns owned person");
@@ -458,6 +490,7 @@ try {
     knownFacts: [{ text: "Prefers concise notes.", isLead: true }],
     personalTaboos: ["No surprise parties."],
     lastContactAt: dates.soon,
+    nextFollowUpAt: dates.later,
   });
   assert(created.id && created.id !== linId, "create returns a fresh person id");
   assertEqual(created.name, "Helen", "create returns decrypted name");
@@ -472,6 +505,7 @@ try {
   assert(created.identityTags.includes("promoted today"), "create decrypts identity tags");
   assert(created.knownFacts[0]?.text === "Prefers concise notes.", "create decrypts known facts");
   assert(created.personalTaboos.includes("No surprise parties."), "create decrypts personal taboos");
+  assertEqual(created.nextFollowUpAt, dates.later, "create maps nextFollowUpAt");
   assert(created.nextOccasionId === null, "create returns null nextOccasionId until dates exist");
 
   const foundCreated = await people.findById(ownerA, created.id);
@@ -495,6 +529,25 @@ try {
     assertEqual(payloadInsideTx.people.length, 3, "listWithRelations can reuse an explicit Tx");
     assertEqual(createdInsideTx.name, "Nina", "create can reuse an explicit Tx");
   });
+
+  const archivedLin = await people.archive(ownerA, linId);
+  assertEqual(archivedLin.id, linId, "archive returns the archived person");
+  assert(typeof archivedLin.archivedAt === "string", "archive sets archivedAt");
+
+  const ownerAAfterArchive = await people.listForOwner(ownerA);
+  assert(!ownerAAfterArchive.some((person) => person.id === linId), "listForOwner hides archived people");
+  const archivedFind = await people.findById(ownerA, linId);
+  assert(archivedFind === null, "findById hides archived people");
+  const archivedOccasions = await people.listOccasions(ownerA, linId);
+  assertEqual(archivedOccasions.length, 0, "listOccasions hides archived people's occasions");
+
+  let crossOwnerArchiveBlocked = false;
+  try {
+    await people.archive(ownerB, kiraId);
+  } catch (error) {
+    crossOwnerArchiveBlocked = error && typeof error === "object" && error.kind === "not-found";
+  }
+  assert(crossOwnerArchiveBlocked, "archive hides another owner's person");
 
   process.stdout.write("\nall people repository checks passed\n");
 } catch (error) {

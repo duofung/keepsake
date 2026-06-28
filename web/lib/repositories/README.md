@@ -18,7 +18,7 @@ methods will follow the same pattern as they land.
 | [`catalog.ts`](./catalog.ts) | `CatalogRepository` — catalog access to `relationships` + `cultures`. Relationships are owner-aware because user-custom rows share the table with system presets. |
 | [`catalog.server.ts`](./catalog.server.ts) | `PgCatalogRepository` — first server-only runtime implementation, backed by `pg` through `lib/server/db/transaction.server.ts`. |
 | [`people.ts`](./people.ts) | `PeopleRepository` — per-user CRUD over `people` + `occasion_nodes`. |
-| [`people.server.ts`](./people.server.ts) | `PgPeopleRepository` — runtime implementation for people + occasions, including encrypted columns via `lib/server/crypto/envelope.server.ts`. Supports owner-scoped reads and `create`; update/delete/occasion writes remain future. |
+| [`people.server.ts`](./people.server.ts) | `PgPeopleRepository` — runtime implementation for people + occasions, including encrypted columns via `lib/server/crypto/envelope.server.ts`. Supports owner-scoped reads, `create`, `update`, and soft `archive`; occasion writes remain future. |
 | [`drafts.ts`](./drafts.ts) | `DraftRepository` — persistence for `message_drafts`. |
 | [`drafts.server.ts`](./drafts.server.ts) | `PgDraftRepository` — runtime implementation for `message_drafts` persistence/cache, including encrypted subject/paragraph/note/instruction columns. |
 | [`deliveries.ts`](./deliveries.ts) | `DeliveryRepository` — `deliveries` reads + the send/webhook write paths. |
@@ -133,14 +133,18 @@ user-custom rows.
 
 ### PeopleRepository
 
-Runtime implementation: `people.server.ts` for owner-scoped reads and person
-creation, including encrypted business contact fields (`organization`,
-`roleTitle`, `sourceContext`) and a cleartext checked `segment` with legacy
-rows defaulting to `personal`. It backs `/api/people` and `/api/drafts` context resolution when
-`KEEPSAKE_DATA_SOURCE=db`; mock-backed server seams remain the default.
+Runtime implementation: `people.server.ts` for owner-scoped reads, person
+creation, drawer maintenance updates, and soft archive, including encrypted
+business contact fields (`organization`, `roleTitle`, `sourceContext`), a
+cleartext checked `segment` with legacy rows defaulting to `personal`, and
+lightweight follow-up/archive columns (`next_follow_up_at`, `archived_at`). It
+backs `/api/people`, `/api/people/[id]`, `/api/people/[id]/archive`, and
+`/api/drafts` context resolution when `KEEPSAKE_DATA_SOURCE=db`;
+mock-backed server seams remain the default.
 `pnpm test:db:people` verifies decryption, RLS behavior,
-derived `nextOccasionId` / `isPrimary`, business field defaults, person creation, and
-`PeoplePayload` shape against temporary Postgres.
+derived `nextOccasionId` / `isPrimary`, business field defaults, person
+creation, update, archive filtering, and `PeoplePayload` shape against
+temporary Postgres.
 
 Per-user. All methods take `ownerId: OwnerId` as the first argument and
 return decrypted domain types. Occasion CRUD lives here because every
@@ -152,8 +156,9 @@ occasion belongs to a person — a `personId` lookup already proves ownership.
 | `listWithRelations(ownerId)` | `PeoplePayload` | `/api/people` GET — single batched query producing the full payload |
 | `findById(ownerId, personId)` | `Person \| null` | `/api/drafts` POST (internal); future drawer GET |
 | `create(ownerId, input)` | `Person` | `POST /api/people` / People "Add someone" |
-| `update(ownerId, personId, patch)` | `Person` | Future drawer edit |
-| `softDelete(ownerId, personId)` | `void` | Future drawer delete |
+| `update(ownerId, personId, patch)` | `Person` | `PATCH /api/people/[id]` / People drawer maintenance |
+| `archive(ownerId, personId)` | `Person` | `POST /api/people/[id]/archive` / People drawer archive |
+| `softDelete(ownerId, personId)` | `void` | Backward-compatible alias for archive |
 | `listOccasions(ownerId, personId)` | `OccasionNode[]` | Drawer load (internal) |
 | `findOccasionForPerson(ownerId, personId, occasionId)` | `OccasionNode \| null` | `/api/drafts` POST (internal) when `occasionId !== null` |
 | `nextOccasionFor(ownerId, personId)` | `OccasionNode \| null` | Resolves `Person.nextOccasionId` at read time |

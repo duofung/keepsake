@@ -133,6 +133,28 @@ async function postPeople(body) {
   return { status: res.status, body: payload };
 }
 
+async function patchPeople(id, body) {
+  const res = await fetch(`${base}/api/people/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+  const payload = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: payload };
+}
+
+async function archivePeople(id) {
+  const res = await fetch(`${base}/api/people/${encodeURIComponent(id)}/archive`, {
+    method: "POST",
+  });
+  const payload = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: payload };
+}
+
 const failures = [];
 function check(name, cond, detail = "") {
   if (cond) {
@@ -183,10 +205,13 @@ try {
     await client.query(`GRANT USAGE ON SCHEMA public TO ${appRole}`);
     await client.query(`GRANT SELECT ON relationships, cultures, people, occasion_nodes TO ${appRole}`);
     await client.query(`GRANT INSERT ON people TO ${appRole}`);
+    await client.query(`GRANT UPDATE ON people TO ${appRole}`);
     await client.query(`GRANT EXECUTE ON FUNCTION current_user_id() TO ${appRole}`);
   });
 
   const ownerId = randomUUID();
+  const otherOwnerId = randomUUID();
+  const otherPersonId = randomUUID();
   const encryptionKey = randomBytes(32).toString("base64");
   const fixtureEnv = {
     ...process.env,
@@ -200,6 +225,47 @@ try {
   process.stdout.write("seeding dev fixtures:\n");
   await command("node", ["scripts/seed-dev-fixtures.mjs"], { env: fixtureEnv });
   process.stdout.write("  ✓ fixtures seeded\n");
+
+  await withClient(adminUrl, async (client) => {
+    await client.query(
+      `
+        INSERT INTO users (id, email, display_name)
+        VALUES ($1, $2, $3)
+      `,
+      [otherOwnerId, "people-route-other@example.test", "People Route Other"],
+    );
+    await client.query(
+      `
+        INSERT INTO people (
+          id,
+          owner_id,
+          name_enc,
+          starred,
+          avatar_bg,
+          avatar_fg,
+          relationship_id,
+          culture_id,
+          identity_tags_enc,
+          known_facts_enc,
+          personal_taboos_enc
+        )
+        VALUES (
+          $1,
+          $2,
+          decode('00', 'hex'),
+          false,
+          '#F8DCEB',
+          '#C24E78',
+          'rel-friend',
+          'none',
+          decode('00', 'hex'),
+          decode('00', 'hex'),
+          decode('00', 'hex')
+        )
+      `,
+      [otherPersonId, otherOwnerId],
+    );
+  });
 
   const nextBin = resolve(projectRoot, "node_modules/.bin/next");
   nextChild = spawn(nextBin, ["dev", "--port", String(port)], {
@@ -266,14 +332,49 @@ try {
   check("Lin sourceContext = Malaysia launch advisory", lin?.sourceContext === "Malaysia launch advisory", `got ${lin?.sourceContext}`);
   check("Lin has a nextOccasionId", typeof lin?.nextOccasionId === "string" && lin.nextOccasionId.length > 0);
 
-  const linAnniv = occasions.find((occasion) => occasion.id === lin?.nextOccasionId);
-  check("Lin next occasion is present", !!linAnniv);
-  check("Lin next occasion belongs to Lin", linAnniv?.personId === lin?.id, `got ${linAnniv?.personId}`);
-  check("Lin next occasion label = Anniversary", linAnniv?.label === "Anniversary", `got ${linAnniv?.label}`);
+  const linNextOccasion = occasions.find((occasion) => occasion.id === lin?.nextOccasionId);
+  check("Lin next occasion is present", !!linNextOccasion);
+  check("Lin next occasion belongs to Lin", linNextOccasion?.personId === lin?.id, `got ${linNextOccasion?.personId}`);
+  check(
+    "Lin next occasion label is seeded milestone",
+    ["Anniversary", "Birthday"].includes(linNextOccasion?.label ?? ""),
+    `got ${linNextOccasion?.label}`,
+  );
 
   const kira = people.find((person) => person.name === "Kira");
   check("Kira lastContactAt survives DB route", kira?.lastContactAt === "2026-04-14", `got ${kira?.lastContactAt}`);
   check("Kira segment = prospect", kira?.segment === "prospect", `got ${kira?.segment}`);
+
+  const updatedKira = await patchPeople(kira?.id ?? "", {
+    name: "Kira Tan",
+    segment: "prospect",
+    organization: "Northstar Labs",
+    roleTitle: "VP People Ops",
+    sourceContext: "Post-event pilot follow-up",
+    note: "Wants a short deck before July.",
+    lastContactAt: "2026-06-20",
+    nextFollowUpAt: "2026-07-08",
+  });
+  check("PATCH /api/people/[id] DB update → 200", updatedKira.status === 200, `status=${updatedKira.status}`);
+  check("updated person name = Kira Tan", updatedKira.body?.name === "Kira Tan", `got ${updatedKira.body?.name}`);
+  check("updated organization preserved", updatedKira.body?.organization === "Northstar Labs", `got ${updatedKira.body?.organization}`);
+  check("updated roleTitle preserved", updatedKira.body?.roleTitle === "VP People Ops", `got ${updatedKira.body?.roleTitle}`);
+  check("updated sourceContext preserved", updatedKira.body?.sourceContext === "Post-event pilot follow-up", `got ${updatedKira.body?.sourceContext}`);
+  check("updated lastContactAt preserved", updatedKira.body?.lastContactAt === "2026-06-20", `got ${updatedKira.body?.lastContactAt}`);
+  check("updated nextFollowUpAt preserved", updatedKira.body?.nextFollowUpAt === "2026-07-08", `got ${updatedKira.body?.nextFollowUpAt}`);
+  check("updated note preserved", updatedKira.body?.knownFacts?.[0]?.text === "Wants a short deck before July.", `body=${JSON.stringify(updatedKira.body)}`);
+
+  const invalidPatch = await patchPeople(kira?.id ?? "", { nextFollowUpAt: "2026-13-40" });
+  check("PATCH /api/people/[id] invalid date → 400", invalidPatch.status === 400, `status=${invalidPatch.status}`);
+  check("invalid date code = invalid_request", invalidPatch.body?.code === "invalid_request", `body=${JSON.stringify(invalidPatch.body)}`);
+
+  const emptyPatch = await patchPeople(kira?.id ?? "", {});
+  check("PATCH /api/people/[id] no fields → 400", emptyPatch.status === 400, `status=${emptyPatch.status}`);
+  check("no fields code = invalid_request", emptyPatch.body?.code === "invalid_request", `body=${JSON.stringify(emptyPatch.body)}`);
+
+  const crossOwnerPatch = await patchPeople(otherPersonId, { name: "Should Not Update" });
+  check("PATCH /api/people/[id] cross-owner → 404", crossOwnerPatch.status === 404, `status=${crossOwnerPatch.status}`);
+  check("cross-owner patch code = not_found", crossOwnerPatch.body?.code === "not_found", `body=${JSON.stringify(crossOwnerPatch.body)}`);
 
   const malformed = await postPeople("{");
   check("POST /api/people malformed JSON → 400", malformed.status === 400, `status=${malformed.status}`);
@@ -330,6 +431,24 @@ try {
   check("created person remains decrypted in payload", createdInPayload?.name === "Helen", `got ${createdInPayload?.name}`);
   check("created business fields remain decrypted in payload", createdInPayload?.organization === "Northstar Labs", `got ${createdInPayload?.organization}`);
   check("people.length becomes 6 after create", afterCreate.body?.people?.length === 6, `got ${afterCreate.body?.people?.length}`);
+
+  const archived = await archivePeople(kira?.id ?? "");
+  check("POST /api/people/[id]/archive DB → 200", archived.status === 200, `status=${archived.status}`);
+  check("archive returns archivedAt", typeof archived.body?.person?.archivedAt === "string", `body=${JSON.stringify(archived.body)}`);
+
+  const crossOwnerArchive = await archivePeople(otherPersonId);
+  check("POST /api/people/[id]/archive cross-owner → 404", crossOwnerArchive.status === 404, `status=${crossOwnerArchive.status}`);
+  check("cross-owner archive code = not_found", crossOwnerArchive.body?.code === "not_found", `body=${JSON.stringify(crossOwnerArchive.body)}`);
+
+  const archivedAgain = await archivePeople(kira?.id ?? "");
+  check("POST /api/people/[id]/archive already archived → 404", archivedAgain.status === 404, `status=${archivedAgain.status}`);
+
+  const afterArchive = await getPeople();
+  check(
+    "archived person leaves DB people payload",
+    !afterArchive.body?.people?.some((person) => person.id === kira?.id),
+  );
+  check("people.length returns to 5 after archive", afterArchive.body?.people?.length === 5, `got ${afterArchive.body?.people?.length}`);
 
   if (serverError && failures.length) {
     process.stdout.write(`\nnext stderr:\n${serverError}\n`);

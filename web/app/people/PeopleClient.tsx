@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
-import PersonDrawer from "@/components/PersonDrawer";
+import PersonDrawer, { type PersonMaintenanceInput } from "@/components/PersonDrawer";
 import type { FormEvent } from "react";
 import type { ContactSegment, Person, PeoplePayload, Relationship, RelationshipGroup } from "@/lib/domain";
 import type {
@@ -112,16 +112,20 @@ export default function PeopleClient({ overview, payload }: Props) {
   );
 
   const accounts = useMemo(() => {
-    const serverContactIds = new Set(overview.accounts.map((account) => account.primaryContactId));
-    const projectedAccounts = people.flatMap((person) => {
-      if (serverContactIds.has(person.id)) return [];
+    const serverAccountByContactId = new Map(
+      overview.accounts.map((account) => [account.primaryContactId, account]),
+    );
+    return people.flatMap((person) => {
       const relationship = relationshipById.get(person.relationshipId);
       const culture = cultureById.get(person.cultureId);
       if (!relationship) return [];
-      return [buildCompatibilityAccount(person, relationship, culture?.label ?? null)];
+      const base = serverAccountByContactId.get(person.id) ?? null;
+      return [
+        base
+          ? mergeAccountWithPerson(base, person, relationship, culture?.label ?? null)
+          : buildCompatibilityAccount(person, relationship, culture?.label ?? null),
+      ];
     });
-
-    return [...projectedAccounts, ...overview.accounts];
   }, [cultureById, overview.accounts, people, relationshipById]);
 
   const grouped = useMemo(() => {
@@ -217,6 +221,64 @@ export default function PeopleClient({ overview, payload }: Props) {
     setTab("All");
     setAdding(false);
     setOpenId(person.id);
+  }
+
+  async function handleUpdatePerson(personId: string, input: PersonMaintenanceInput): Promise<Person> {
+    if (personId.startsWith("local-")) {
+      const current = people.find((person) => person.id === personId);
+      if (!current) throw new Error("Person not found.");
+      const updated = applyMaintenanceInput(current, input);
+      updatePersonInState(updated);
+      return updated;
+    }
+
+    const response = await fetch(`/api/people/${encodeURIComponent(personId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const body = await response.json().catch(() => null) as Person | { error?: string } | null;
+    if (!response.ok) {
+      throw new Error((body && "error" in body ? body.error : null) ?? "Could not update this contact.");
+    }
+
+    const updated = normalizePerson(body as Person);
+    updatePersonInState(updated);
+    return updated;
+  }
+
+  async function handleArchivePerson(personId: string): Promise<void> {
+    if (personId.startsWith("local-")) {
+      removePersonFromState(personId);
+      setOpenId(null);
+      return;
+    }
+
+    const response = await fetch(`/api/people/${encodeURIComponent(personId)}/archive`, {
+      method: "POST",
+    });
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    if (!response.ok) {
+      throw new Error(body?.error ?? "Could not archive this contact.");
+    }
+
+    removePersonFromState(personId);
+    setOpenId(null);
+  }
+
+  function updatePersonInState(updated: Person) {
+    setPeople((current) => current.map((person) => (person.id === updated.id ? updated : person)));
+    if (updated.id.startsWith("local-")) {
+      const nextLocal = readLocalPeople().map((person) => (person.id === updated.id ? updated : person));
+      saveLocalPeople(nextLocal);
+    }
+  }
+
+  function removePersonFromState(personId: string) {
+    setPeople((current) => current.filter((person) => person.id !== personId));
+    if (personId.startsWith("local-")) {
+      saveLocalPeople(readLocalPeople().filter((person) => person.id !== personId));
+    }
   }
 
   function createLocalPerson(input: AddPersonInput): Person {
@@ -422,6 +484,8 @@ export default function PeopleClient({ overview, payload }: Props) {
         relationship={drawerRel}
         culture={drawerCulture}
         occasions={drawerOccasions}
+        onUpdate={handleUpdatePerson}
+        onArchive={handleArchivePerson}
         onClose={() => setOpenId(null)}
       />
       <AddPersonDialog
@@ -452,13 +516,18 @@ function buildCompatibilityAccount(
   relationship: Relationship,
   cultureLabel: string | null,
 ): RemasterDashboardAccount {
+  const segment = contactSegment(person);
+  const lastTouchLabel = lastTouchLabelForPerson(person, "Last touch · No outreach yet");
+  const nextFollowUpLabel = nextFollowUpLabelForPerson(person, person.nextOccasionId
+    ? "Next follow-up · Scheduled"
+    : "Next follow-up · Not scheduled");
   return {
     id: `account-${person.id}`,
     primaryContactId: person.id,
     name: person.name,
     mode: "contact-led",
     relationshipType: relationshipTypeByGroup[relationship.group],
-    segment: contactSegment(person),
+    segment,
     relationshipLabel: relationship.label,
     organization: person.organization ?? null,
     roleTitle: person.roleTitle ?? null,
@@ -471,14 +540,63 @@ function buildCompatibilityAccount(
     nextActivityId: person.nextOccasionId,
     lastDeliveryStatus: null,
     lastDeliveryAtISO: null,
-    lastTouchLabel: person.lastContactAt
-      ? `Last touch · ${person.lastContactAt.slice(0, 10)}`
-      : "Last touch · No outreach yet",
-    nextFollowUpLabel: person.nextOccasionId
-      ? "Next follow-up · Scheduled"
-      : "Next follow-up · Not scheduled",
-    touchpointSummary: `${segmentLabel[contactSegment(person)]} touchpoints · ${person.sourceContext ?? person.since ?? "Business context not set"}`,
+    lastTouchLabel,
+    nextFollowUpLabel,
+    touchpointSummary: `${segmentLabel[segment]} touchpoints · ${nextFollowUpLabel} · ${lastTouchLabel} · ${person.sourceContext ?? person.since ?? "Business context not set"}`,
   };
+}
+
+function mergeAccountWithPerson(
+  account: RemasterDashboardAccount,
+  person: Person,
+  relationship: Relationship,
+  cultureLabel: string | null,
+): RemasterDashboardAccount {
+  const segment = contactSegment(person);
+  const lastTouchLabel = lastTouchLabelForPerson(person, account.lastTouchLabel);
+  const nextFollowUpLabel = nextFollowUpLabelForPerson(person, account.nextFollowUpLabel);
+  return {
+    ...account,
+    name: person.name,
+    relationshipType: relationshipTypeByGroup[relationship.group],
+    segment,
+    relationshipLabel: relationship.label,
+    organization: person.organization ?? null,
+    roleTitle: person.roleTitle ?? null,
+    sourceContext: person.sourceContext ?? null,
+    starred: person.starred,
+    avatarBg: person.avatarBg,
+    avatarFg: person.avatarFg,
+    contextLabel: person.since ?? person.sourceContext ?? person.identityTags[0] ?? account.contextLabel,
+    secondaryLabel: person.organization ?? person.identityTags[0] ?? cultureLabel ?? account.secondaryLabel,
+    lastTouchLabel,
+    nextFollowUpLabel,
+    touchpointSummary: `${segmentLabel[segment]} touchpoints · ${nextFollowUpLabel} · ${lastTouchLabel}${person.sourceContext ? ` · ${person.sourceContext}` : ""}`,
+  };
+}
+
+function applyMaintenanceInput(person: Person, input: PersonMaintenanceInput): Person {
+  const note = input.note.trim();
+  return normalizePerson({
+    ...person,
+    name: input.name.trim(),
+    segment: input.segment,
+    organization: input.organization.trim() || null,
+    roleTitle: input.roleTitle.trim() || null,
+    sourceContext: input.sourceContext.trim() || null,
+    since: input.sourceContext.trim() || person.since,
+    knownFacts: note ? [{ text: note, isLead: true }] : [],
+    lastContactAt: input.lastContactAt || undefined,
+    nextFollowUpAt: input.nextFollowUpAt || undefined,
+  });
+}
+
+function lastTouchLabelForPerson(person: Person, fallback: string): string {
+  return person.lastContactAt ? `Last touch · ${person.lastContactAt.slice(0, 10)}` : fallback;
+}
+
+function nextFollowUpLabelForPerson(person: Person, fallback: string): string {
+  return person.nextFollowUpAt ? `Next follow-up · ${person.nextFollowUpAt.slice(0, 10)}` : fallback;
 }
 
 function accountActivitySummary(
@@ -926,6 +1044,8 @@ function normalizePerson(person: Person): Person {
     organization: person.organization ?? null,
     roleTitle: person.roleTitle ?? null,
     sourceContext: person.sourceContext ?? null,
+    nextFollowUpAt: person.nextFollowUpAt ?? undefined,
+    archivedAt: person.archivedAt ?? undefined,
   };
 }
 
@@ -943,6 +1063,7 @@ function readLocalPeople(): Person[] {
       && typeof person.name === "string"
       && typeof person.relationshipId === "string"
       && typeof person.cultureId === "string"
+      && !person.archivedAt
     ));
   } catch {
     return [];

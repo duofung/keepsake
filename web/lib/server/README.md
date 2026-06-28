@@ -3,7 +3,7 @@
 Where server-only orchestration lives. This directory keeps `app/` and
 `components/` away from `lib/mock.ts`, SQL, crypto, and future auth/LLM
 clients. People payload, the ReMaster compatibility runtime for Home + People + Workspace + History,
-the business contact create/read foundation for People,
+the business contact create/read/maintenance foundation for People,
 the seams feeding ReMaster-framed Profile / Sign-in pages, draft generation
 orchestration, latest draft restore, draft version history, draft context,
 delivery history, and the send-boundary queue now have DB-capable runtime
@@ -35,6 +35,10 @@ lib/server/
 │   ├── index.server.ts       ← current: request validation + mock/db dispatcher
 │   ├── mock.server.ts        ← current: preview Person response for local UI persistence
 │   └── db.server.ts          ← current: DB-backed PeopleRepository.create
+├── people-maintenance/
+│   ├── index.server.ts       ← current: request validation + mock/db dispatcher
+│   ├── mock.server.ts        ← current: mock update/archive over active people
+│   └── db.server.ts          ← current: DB-backed PeopleRepository.update/archive
 ├── delivery-history/
 │   ├── index.server.ts       ← current: mock/db dispatcher
 │   ├── mock.server.ts        ← current: mock fallback
@@ -114,7 +118,8 @@ sit next to the implementation. Runtime implementations keep the suffix.
 3. **Only server code imports `lib/server/`.** Server components and route
    handlers may import it. `"use client"` modules must not.
 4. **Only mock seams import `lib/mock.ts`.** Today that means
-   `people-payload/mock.server.ts`, `delivery-history/mock.server.ts`, and
+   `people-payload/mock.server.ts`, `people-create/mock.server.ts`,
+   `people-maintenance/mock.server.ts`, `delivery-history/mock.server.ts`, and
    `draft-context/mock.server.ts`. This is checked by `pnpm test:boundaries`.
 5. **No HTTP types past `auth/`.** Only `current-user` knows about
    `Request`, cookies, or session tokens; everyone else takes resolved
@@ -150,8 +155,11 @@ small on purpose.
 | `people-payload/index.server.ts` | `GET /api/people`, `remaster-overview/index.server.ts` | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db`. People no longer imports this seam directly; it receives legacy payload through the ReMaster compatibility view while `/api/people` keeps returning `PeoplePayload`. | Real auth owner resolution; eventually delete mock fallback | `pnpm test:people`, `pnpm test:db:people-route`, `pnpm test:boundaries` |
 | `people-payload/mock.server.ts` | `people-payload/index.server.ts` | `peoplePayload()` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:people`, `pnpm test:boundaries` |
 | `people-payload/db.server.ts` | `people-payload/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.listWithRelations(ownerId)` | Same repository call with real auth | `pnpm test:db:people-route` |
-| `people-create/index.server.ts` | `POST /api/people`, People "Add contact" | Validates the business-first payload `{ name, segment?, organization?, roleTitle?, sourceContext?, note?, starred? }`, accepts legacy `relationshipId` / `cultureId` when provided, fills safe legacy defaults when the form omits them, derives avatar + first known fact, dispatches by `KEEPSAKE_DATA_SOURCE`, and returns a `Person` with business contact fields. Mock mode returns a `local-*` preview person for browser-local persistence; DB mode writes through `PeopleRepository.create`. | Future People edit/archive/date routes stay sibling seams; this POST route remains thin. | `pnpm test:people`, `pnpm test:db:people`, `pnpm test:db:people-route` |
+| `people-create/index.server.ts` | `POST /api/people`, People "Add contact" | Validates the business-first payload `{ name, segment?, organization?, roleTitle?, sourceContext?, note?, starred? }`, accepts legacy `relationshipId` / `cultureId` when provided, fills safe legacy defaults when the form omits them, derives avatar + first known fact, dispatches by `KEEPSAKE_DATA_SOURCE`, and returns a `Person` with business contact fields. Mock mode returns a `local-*` preview person for browser-local persistence; DB mode writes through `PeopleRepository.create`. | Stays create-only; edit/archive/date routes are sibling seams. | `pnpm test:people`, `pnpm test:db:people`, `pnpm test:db:people-route` |
 | `people-create/db.server.ts` | `people-create/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.create(ownerId, input)`; FK misses map to 400 `invalid_reference`; no SQL in the route. | Same repository call with real auth. | `pnpm test:db:people-route` |
+| `people-maintenance/index.server.ts` | `PATCH /api/people/[id]`, `POST /api/people/[id]/archive`, People drawer maintenance loop | Validates lightweight business contact updates (`name`, `segment`, `organization`, `roleTitle`, `sourceContext`, remember note, `lastContactAt`, `nextFollowUpAt`, `starred`) and archive requests, dispatches by `KEEPSAKE_DATA_SOURCE`, and returns the updated `Person` shape. Invalid body/field shapes map to 400 before the repository. | Future richer contact maintenance can stay here; draft/delivery/channel contracts do not change. | `pnpm test:people`, `pnpm test:db:people`, `pnpm test:db:people-route` |
+| `people-maintenance/db.server.ts` | `people-maintenance/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `PeopleRepository.update/archive(ownerId, personId, input)`; not-found and cross-owner rows map to 404; unsupported DB values map to 400. No SQL in the route. | Same repository calls with real auth. | `pnpm test:db:people-route` |
+| `people-maintenance/mock.server.ts` | `people-maintenance/index.server.ts` | Mutates the in-memory active `people` row for local/mock smoke coverage; archive sets `archivedAt`, and mock People/Home reads filter archived rows while delivery history remains independent. | Removed when mock is gone. | `pnpm test:people` |
 | `delivery-history/index.server.ts` | `remaster-overview/index.server.ts` for History framing | Dispatches by `KEEPSAKE_DATA_SOURCE`: mock by default, DB when set to `db`; History reaches it through the ReMaster compatibility seam, not directly from the page | Real auth owner resolution; eventually delete mock fallback | `pnpm test:history`, `pnpm test:db:history-route`, `pnpm test:boundaries` |
 | `delivery-history/mock.server.ts` | `delivery-history/index.server.ts` | `deliveries` from `lib/mock.ts` | Deleted when DB is the only source | `pnpm test:history`, `pnpm test:boundaries` |
 | `delivery-history/db.server.ts` | `delivery-history/index.server.ts` | `currentUserIdOrThrow()` + `transaction(ownerId)` + `DeliveryRepository.listByMonth(ownerId, { limit: 50 })`; read-only History DB mode | Same repository read with real auth; send/enqueue/webhook/worker remain separate future paths | `pnpm test:db:deliveries`, `pnpm test:db:history-route` |

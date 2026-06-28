@@ -56,6 +56,36 @@ async function postPeople(body) {
   return { status: res.status, body: json };
 }
 
+async function patchPeople(id, body) {
+  const res = await fetch(`${BASE}/api/people/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
+async function archivePeople(id) {
+  const res = await fetch(`${BASE}/api/people/${encodeURIComponent(id)}/archive`, {
+    method: "POST",
+  });
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
+async function getHomePage() {
+  const res = await fetch(BASE, {
+    headers: sessionCookie ? { cookie: `keepsake_session=${sessionCookie}` } : {},
+  });
+  const text = await res.text();
+  return { status: res.status, body: normalize(text) };
+}
+
 async function getPeoplePage() {
   const res = await fetch(`${BASE}/people`, {
     headers: sessionCookie ? { cookie: `keepsake_session=${sessionCookie}` } : {},
@@ -199,11 +229,36 @@ try {
   check("mock created segment preserved", created.body?.segment === "client", `got ${created.body?.segment}`);
   check("mock created organization preserved", created.body?.organization === "Northstar Labs", `got ${created.body?.organization}`);
 
+  const updatedKira = await patchPeople("p-kira", {
+    name: "Kira Tan",
+    segment: "prospect",
+    organization: "Northstar Labs",
+    roleTitle: "VP People Ops",
+    sourceContext: "Post-event pilot follow-up",
+    note: "Wants a short deck before July.",
+    lastContactAt: "2026-06-20",
+    nextFollowUpAt: "2026-07-08",
+  });
+  check("PATCH /api/people/[id] mock update → 200", updatedKira.status === 200, `status=${updatedKira.status}`);
+  check("mock update returns new name", updatedKira.body?.name === "Kira Tan", `got ${updatedKira.body?.name}`);
+  check("mock update returns nextFollowUpAt", updatedKira.body?.nextFollowUpAt === "2026-07-08", `got ${updatedKira.body?.nextFollowUpAt}`);
+  check("mock update rewrites remember note", updatedKira.body?.knownFacts?.[0]?.text === "Wants a short deck before July.", `body=${JSON.stringify(updatedKira.body)}`);
+
+  const invalidPatch = await patchPeople("p-kira", { nextFollowUpAt: "2026-13-40" });
+  check("PATCH /api/people/[id] invalid date → 400", invalidPatch.status === 400, `status=${invalidPatch.status}`);
+  check("invalid patch code = invalid_request", invalidPatch.body?.code === "invalid_request", `body=${JSON.stringify(invalidPatch.body)}`);
+
+  const missingPatch = await patchPeople("p-not-real", { name: "Missing" });
+  check("PATCH /api/people/[id] missing person → 404", missingPatch.status === 404, `status=${missingPatch.status}`);
+  check("missing person code = not_found", missingPatch.body?.code === "not_found", `body=${JSON.stringify(missingPatch.body)}`);
+
   await mintSession();
   const peoplePage = await getPeoplePage();
+  const homePage = await getHomePage();
   const drawerSource = await readFile(resolve(projectRoot, "components/PersonDrawer.tsx"), "utf8");
 
   check("GET /people → 200", peoplePage.status === 200, `status=${peoplePage.status}`);
+  check("GET / after maintenance update → 200", homePage.status === 200, `status=${homePage.status}`);
   check("People page renders business relationship title", peoplePage.body.includes("Business relationships"));
   check("People page renders Add contact CTA", peoplePage.body.includes("Add contact"));
   check(
@@ -237,6 +292,19 @@ try {
     peoplePage.body.includes("Lattice Works / Founder"),
   );
   check(
+    "People page reflects updated contact identity",
+    peoplePage.body.includes("Kira Tan") && peoplePage.body.includes("Northstar Labs / VP People Ops"),
+  );
+  check(
+    "People page reflects updated follow-up cadence",
+    peoplePage.body.includes("Next follow-up · 2026-07-08")
+      && peoplePage.body.includes("Last touch · 2026-06-20"),
+  );
+  check(
+    "Home reflects updated follow-up cadence",
+    homePage.body.includes("Kira Tan") && homePage.body.includes("Next follow-up · 2026-07-08"),
+  );
+  check(
     "People page keeps dossier drawer shell",
     peoplePage.body.includes('data-testid="person-dossier-drawer"'),
   );
@@ -245,13 +313,36 @@ try {
     [
       "Relationship dossier",
       "OVERVIEW",
+      "MAINTENANCE LOOP",
+      'data-testid="person-maintenance-form"',
       "RELATIONSHIP CONTEXT",
       "TOUCHPOINTS",
       "NOTES / REMEMBER",
       "ACTIONS",
+      "Save changes",
       "Open workspace",
       "Draft next note",
+      "Archive contact",
     ].every((label) => drawerSource.includes(label)),
+  );
+
+  const archivedKira = await archivePeople("p-kira");
+  check("POST /api/people/[id]/archive mock → 200", archivedKira.status === 200, `status=${archivedKira.status}`);
+  check("archive returns archivedAt", typeof archivedKira.body?.person?.archivedAt === "string", `body=${JSON.stringify(archivedKira.body)}`);
+
+  const afterArchivePayload = await getPeople();
+  check(
+    "archived person leaves /api/people",
+    !afterArchivePayload.body?.people?.some((person) => person.id === "p-kira"),
+  );
+  check("people.length becomes 4 after archive", afterArchivePayload.body?.people?.length === 4, `got ${afterArchivePayload.body?.people?.length}`);
+
+  const archivedPeoplePage = await getPeoplePage();
+  check("GET /people after archive → 200", archivedPeoplePage.status === 200, `status=${archivedPeoplePage.status}`);
+  check("archived person leaves /people", !archivedPeoplePage.body.includes("Kira Tan"));
+  check(
+    "People page count drops after archive",
+    archivedPeoplePage.body.includes("4 contacts across client, partner, prospect, investor, and personal segments"),
   );
 } catch (err) {
   process.stdout.write(`harness error: ${err?.message ?? err}\n`);

@@ -220,6 +220,8 @@ CREATE TABLE people (
   known_facts_enc       bytea NOT NULL,  -- encrypted JSON.stringify(PersonKnownFact[])
   personal_taboos_enc   bytea NOT NULL,  -- encrypted JSON.stringify(string[])
   last_contact_at       date,
+  next_follow_up_at     date,
+  archived_at           timestamptz,
 
   created_at            timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now(),
@@ -240,12 +242,18 @@ CREATE INDEX people_owner_relationship_idx
 CREATE INDEX people_owner_segment_idx
   ON people (owner_id, segment);
 
+CREATE INDEX people_owner_archived_idx
+  ON people (owner_id, archived_at);
+
 COMMENT ON COLUMN people.avatar_bg IS
   'Generated from name at create-time. Kept in clear so list views render '
   'without decrypting. Acceptable initial-letter entropy leak.';
 
 COMMENT ON COLUMN people.segment IS
   'Business contact segment. Existing personal/family/friend rows default to personal.';
+
+COMMENT ON COLUMN people.archived_at IS
+  'Soft archive timestamp. Default People/Home reads hide archived rows while delivery history remains.';
 
 -- Note: Person.nextOccasionId from domain.ts is NOT stored. Derived per-read,
 -- see docs/DB_SCHEMA.md §6.

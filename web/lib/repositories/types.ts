@@ -92,7 +92,9 @@ export interface PersonCreateInput {
   identityTags?: string[];
   knownFacts?: PersonKnownFact[];
   personalTaboos?: string[];
-  lastContactAt?: string;
+  lastContactAt?: string | null;
+  nextFollowUpAt?: string | null;
+  archivedAt?: string | null;
 }
 
 export type PersonPatch = Partial<PersonCreateInput>;

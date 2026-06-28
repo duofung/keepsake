@@ -258,6 +258,8 @@ CREATE TABLE people (
   known_facts_enc    bytea NOT NULL,                   -- 🔒  jsonb→encrypted
   personal_taboos_enc bytea NOT NULL,                  -- 🔒  jsonb→encrypted
   last_contact_at    date,
+  next_follow_up_at  date,
+  archived_at        timestamptz,
 
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
@@ -270,6 +272,8 @@ CREATE INDEX people_owner_relationship_idx
   ON people(owner_id, relationship_id);                   -- Legacy relationship lookup/filter
 CREATE INDEX people_owner_segment_idx
   ON people(owner_id, segment);                           -- Business segment filter
+CREATE INDEX people_owner_archived_idx
+  ON people(owner_id, archived_at);                       -- Active/archived People reads
 ```
 
 **Notes**
@@ -282,6 +286,11 @@ CREATE INDEX people_owner_segment_idx
   decrypting. Tradeoff: leaks ~3 bytes of entropy about the first letter.
   Acceptable for a UI affordance; revisit if a stricter threat model lands.
 - `next_occasion_id` is **not** stored. See §6.
+- `next_follow_up_at` is the lightweight maintenance date set from the People
+  dossier; it is not a reminder job or scheduler contract.
+- `archived_at` is a soft archive flag. Default People/Home read paths filter
+  archived contacts, but delivery history keeps rendering its denormalized
+  recipient rows.
 - Organization, role/title, source context, and all other free-text user
   content about another person are encrypted — the brief
   explicitly treats "your relationships stay yours" as a product promise.
@@ -482,10 +491,10 @@ CREATE INDEX        channel_accounts_provider_thread_idx
 | Screen / job | Query shape | Index used |
 |---|---|---|
 | Profile / Workspace sender display | `gmail_accounts` by `(owner_id, is_primary)` | `gmail_accounts_owner_primary_idx` |
-| Home: people grid | `people` by `owner_id` | `people_owner_idx` |
+| Home: active people grid | `people` by `owner_id` with `archived_at IS NULL` | `people_owner_archived_idx` |
 | Home: dates coming up | `occasion_nodes` by `owner_id`, `date_iso BETWEEN now() AND now()+30d` | `occasion_nodes_owner_date_idx` |
 | Home: closest circle | `people` by `(owner_id, starred=true)` | `people_owner_starred_idx` |
-| People: tab counts | `people` by `(owner_id, relationship_id)` | `people_owner_relationship_idx` |
+| People: active segment tabs | `people` by `(owner_id, segment)` with `archived_at IS NULL` | `people_owner_segment_idx`, `people_owner_archived_idx` |
 | Workspace: load latest draft | `message_drafts` by `(owner_id, person_id, created_at DESC)` LIMIT 1 | `message_drafts_owner_person_idx` |
 | Workspace: response cache | `message_drafts` by `prompt_input_hash` | `message_drafts_prompt_hash_idx` |
 | History: month-grouped list | `deliveries` by `(owner_id, sent_at DESC)` | `deliveries_owner_sent_idx` |

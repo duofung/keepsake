@@ -26,7 +26,8 @@ export async function createMockPerson(input: PreviewPersonCreateInput): Promise
     knownFacts: input.knownFacts ?? [{ text: "New relationship to learn about.", isLead: true }],
     personalTaboos: input.personalTaboos ?? [],
     nextOccasionId: null,
-    lastContactAt: input.lastContactAt,
+    lastContactAt: input.lastContactAt ?? undefined,
+    nextFollowUpAt: input.nextFollowUpAt ?? undefined,
   };
 
   return { ok: true, person };
