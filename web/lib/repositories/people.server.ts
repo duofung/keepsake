@@ -19,6 +19,8 @@ import type {
   OwnerId,
   PersonCreateInput,
   PersonPatch,
+  PeopleListScope,
+  PeopleReadOptions,
   Tx,
 } from "./types";
 
@@ -151,9 +153,20 @@ function repoError(kind: "not-found" | "validation" | "unavailable", message: st
   return error;
 }
 
+function listScope(options?: PeopleReadOptions): PeopleListScope {
+  return options?.scope ?? "active";
+}
+
+function archivedPredicate(alias: string, scope: PeopleListScope): string {
+  if (scope === "archived") return `${alias}.archived_at IS NOT NULL`;
+  if (scope === "all") return "true";
+  return `${alias}.archived_at IS NULL`;
+}
+
 export class PgPeopleRepository implements PeopleRepository {
-  async listForOwner(ownerId: OwnerId, tx?: Tx): Promise<Person[]> {
+  async listForOwner(ownerId: OwnerId, tx?: Tx, options?: PeopleReadOptions): Promise<Person[]> {
     return withTx(ownerId, tx, async (activeTx) => {
+      const scope = listScope(options);
       const result = await query<PeopleRow>(
         activeTx,
         `
@@ -188,8 +201,8 @@ export class PgPeopleRepository implements PeopleRepository {
             LIMIT 1
           ) next_occ ON true
           WHERE p.owner_id = $1
-            AND p.archived_at IS NULL
-          ORDER BY p.starred DESC, p.created_at ASC, p.id ASC
+            AND ${archivedPredicate("p", scope)}
+          ORDER BY p.starred DESC, p.archived_at DESC NULLS LAST, p.created_at ASC, p.id ASC
         `,
         [ownerId],
       );
@@ -197,12 +210,13 @@ export class PgPeopleRepository implements PeopleRepository {
     });
   }
 
-  async listWithRelations(ownerId: OwnerId, tx?: Tx): Promise<PeoplePayload> {
+  async listWithRelations(ownerId: OwnerId, tx?: Tx, options?: PeopleReadOptions): Promise<PeoplePayload> {
     return withTx(ownerId, tx, async (activeTx) => {
-      const people = await this.listForOwner(ownerId, activeTx);
+      const scope = listScope(options);
+      const people = await this.listForOwner(ownerId, activeTx, { scope });
       const relationships = await catalog.listRelationships(ownerId, activeTx);
       const cultures = await catalog.listCultures(activeTx);
-      const occasions = await this.listOccasionsForOwner(ownerId, activeTx);
+      const occasions = await this.listOccasionsForOwner(ownerId, activeTx, undefined, scope);
       return { people, relationships, cultures, occasions };
     });
   }
@@ -513,6 +527,61 @@ export class PgPeopleRepository implements PeopleRepository {
     });
   }
 
+  async restore(ownerId: OwnerId, personId: string, tx?: Tx): Promise<Person> {
+    return withTx(ownerId, tx, async (activeTx) => {
+      const result = await query<PeopleRow>(
+        activeTx,
+        `
+          WITH updated AS (
+            UPDATE people p
+            SET archived_at = NULL,
+                updated_at = now()
+            WHERE p.owner_id = $1
+              AND p.id::text = $2
+              AND p.archived_at IS NOT NULL
+            RETURNING p.*
+          )
+          SELECT
+            p.id::text,
+            p.name_enc,
+            p.segment,
+            p.organization_enc,
+            p.role_title_enc,
+            p.source_context_enc,
+            p.starred,
+            p.avatar_bg,
+            p.avatar_fg,
+            p.relationship_id,
+            p.culture_id,
+            p.since_enc,
+            p.identity_tags_enc,
+            p.known_facts_enc,
+            p.personal_taboos_enc,
+            to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
+            to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
+            next_occ.id::text AS next_occasion_id
+          FROM updated p
+          LEFT JOIN LATERAL (
+            SELECT o.id
+            FROM occasion_nodes o
+            WHERE o.owner_id = p.owner_id
+              AND o.person_id = p.id
+              AND o.date_iso >= CURRENT_DATE
+            ORDER BY o.date_iso ASC, o.id ASC
+            LIMIT 1
+          ) next_occ ON true
+        `,
+        [ownerId, personId],
+      );
+      if (result.rows[0]) return personFromRow(ownerId, result.rows[0]);
+
+      const active = await this.findById(ownerId, personId, activeTx);
+      if (active) throw repoError("validation", "Person is already active.");
+      throw repoError("not-found", "Person not found.");
+    });
+  }
+
   async softDelete(ownerId: OwnerId, personId: string, tx?: Tx): Promise<void> {
     await this.archive(ownerId, personId, tx);
   }
@@ -576,8 +645,9 @@ export class PgPeopleRepository implements PeopleRepository {
     ownerId: OwnerId,
     tx: Tx,
     personId?: string,
+    scope: PeopleListScope = "active",
   ): Promise<OccasionNode[]> {
-    const rows = await this.occasionRows(ownerId, tx, { personId });
+    const rows = await this.occasionRows(ownerId, tx, { personId, scope });
     return Promise.all(rows.map((row) => occasionFromRow(ownerId, row)));
   }
 
@@ -590,10 +660,12 @@ export class PgPeopleRepository implements PeopleRepository {
       futureOnly?: boolean;
       withinDays?: number;
       limit?: number;
+      scope?: PeopleListScope;
     } = {},
   ): Promise<OccasionRow[]> {
     const values: unknown[] = [ownerId];
     const where = ["o.owner_id = $1"];
+    const scope = filters.scope ?? "active";
 
     if (filters.personId) {
       values.push(filters.personId);
@@ -632,7 +704,7 @@ export class PgPeopleRepository implements PeopleRepository {
         JOIN people person_filter
           ON person_filter.id = o.person_id
          AND person_filter.owner_id = o.owner_id
-         AND person_filter.archived_at IS NULL
+         AND ${archivedPredicate("person_filter", scope)}
         LEFT JOIN LATERAL (
           SELECT p.id
           FROM occasion_nodes p

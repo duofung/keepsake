@@ -38,6 +38,18 @@ export async function archiveDbPerson(personId: string): Promise<PeopleMaintenan
   }
 }
 
+export async function restoreDbPerson(personId: string): Promise<PeopleMaintenanceResult> {
+  try {
+    const ownerId = await currentUserIdOrThrow();
+    const person = await transaction(ownerId, (tx) => (
+      peopleRepository.restore(ownerId, personId, tx)
+    ));
+    return { ok: true, person };
+  } catch (error) {
+    return mapDbMaintenanceError(error, "Could not restore person.");
+  }
+}
+
 function mapDbMaintenanceError(error: unknown, fallback: string): PeopleMaintenanceResult {
   if (error instanceof AuthError) throw error;
   if (repoKind(error) === "not-found") {
@@ -46,6 +58,14 @@ function mapDbMaintenanceError(error: unknown, fallback: string): PeopleMaintena
       status: 404,
       code: "not_found",
       error: "Person not found.",
+    };
+  }
+  if (repoKind(error) === "validation") {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_request",
+      error: error instanceof Error ? error.message : "Invalid person state.",
     };
   }
   if (pgCode(error) === "23503" || pgCode(error) === "23514") {

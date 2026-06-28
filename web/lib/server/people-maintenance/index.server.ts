@@ -3,8 +3,8 @@ import "server-only";
 import type { ContactSegment, Person, PersonKnownFact } from "@/lib/domain";
 import type { PersonPatch } from "@/lib/repositories";
 import { dataSource } from "@/lib/server/auth/current-user.server";
-import { archiveDbPerson, updateDbPerson } from "./db.server";
-import { archiveMockPerson, updateMockPerson } from "./mock.server";
+import { archiveDbPerson, restoreDbPerson, updateDbPerson } from "./db.server";
+import { archiveMockPerson, restoreMockPerson, updateMockPerson } from "./mock.server";
 
 const CONTACT_SEGMENTS = new Set<ContactSegment>([
   "client",
@@ -39,6 +39,12 @@ export async function archivePersonFromRequest(personId: string): Promise<People
   return dataSource() === "db"
     ? archiveDbPerson(personId)
     : archiveMockPerson(personId);
+}
+
+export async function restorePersonFromRequest(personId: string): Promise<PeopleMaintenanceResult> {
+  return dataSource() === "db"
+    ? restoreDbPerson(personId)
+    : restoreMockPerson(personId);
 }
 
 function normalizePersonPatch(input: unknown):

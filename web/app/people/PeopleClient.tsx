@@ -15,6 +15,7 @@ import type {
 import { deliveryStatusBadge, occasionIcon, urgencyLevel } from "@/lib/presentation";
 
 type AccountTab = "All" | ContactSegment;
+type ContactArchiveView = "active" | "archived";
 
 const segmentIcon: Record<ContactSegment, string> = {
   client: "i-users",
@@ -87,11 +88,43 @@ export default function PeopleClient({ overview, payload }: Props) {
   const [people, setPeople] = useState<Person[]>(() => payload.people.map(normalizePerson));
   const [openId, setOpenId] = useState<string | null>(null);
   const [tab, setTab] = useState<AccountTab>("All");
+  const [contactView, setContactView] = useState<ContactArchiveView>("active");
+  const [archivedLoaded, setArchivedLoaded] = useState(false);
+  const [loadingArchived, setLoadingArchived] = useState(false);
+  const [archiveViewError, setArchiveViewError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    setPeople(mergePeople(payload.people, readLocalPeople()));
+    setPeople((current) => mergePeople(payload.people, [
+      ...readLocalPeople(),
+      ...current.filter((person) => Boolean(person.archivedAt)),
+    ]));
   }, [payload.people]);
+
+  useEffect(() => {
+    if (contactView !== "archived" || archivedLoaded) return;
+    const controller = new AbortController();
+    setLoadingArchived(true);
+    setArchiveViewError(null);
+    fetch("/api/people?view=archived", { signal: controller.signal })
+      .then(async (response) => {
+        const body = await response.json().catch(() => null) as PeoplePayload | { error?: string } | null;
+        if (!response.ok) {
+          throw new Error((body && "error" in body ? body.error : null) ?? "Could not load archived contacts.");
+        }
+        return body as PeoplePayload;
+      })
+      .then((archivedPayload) => {
+        setPeople((current) => mergePeople(current, archivedPayload.people));
+        setArchivedLoaded(true);
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setArchiveViewError(error instanceof Error ? error.message : "Could not load archived contacts.");
+      })
+      .finally(() => setLoadingArchived(false));
+    return () => controller.abort();
+  }, [archivedLoaded, contactView]);
 
   const relationshipById = useMemo(
     () => new Map(relationships.map((r) => [r.id, r])),
@@ -111,11 +144,28 @@ export default function PeopleClient({ overview, payload }: Props) {
     [overview.recentActivities, overview.upcomingActivities],
   );
 
+  const activePeople = useMemo(
+    () => people.filter((person) => !person.archivedAt),
+    [people],
+  );
+
+  const archivedPeople = useMemo(
+    () => people.filter((person) => Boolean(person.archivedAt)),
+    [people],
+  );
+
+  const viewPeople = contactView === "archived" ? archivedPeople : activePeople;
+
+  const viewPersonById = useMemo(
+    () => new Map(viewPeople.map((person) => [person.id, person])),
+    [viewPeople],
+  );
+
   const accounts = useMemo(() => {
     const serverAccountByContactId = new Map(
       overview.accounts.map((account) => [account.primaryContactId, account]),
     );
-    return people.flatMap((person) => {
+    return viewPeople.flatMap((person) => {
       const relationship = relationshipById.get(person.relationshipId);
       const culture = cultureById.get(person.cultureId);
       if (!relationship) return [];
@@ -126,7 +176,7 @@ export default function PeopleClient({ overview, payload }: Props) {
           : buildCompatibilityAccount(person, relationship, culture?.label ?? null),
       ];
     });
-  }, [cultureById, overview.accounts, people, relationshipById]);
+  }, [cultureById, overview.accounts, relationshipById, viewPeople]);
 
   const grouped = useMemo(() => {
     const out: Record<ContactSegment, RemasterDashboardAccount[]> = {
@@ -218,16 +268,21 @@ export default function PeopleClient({ overview, payload }: Props) {
       saveLocalPeople(nextLocal);
     }
     setPeople((current) => [person, ...current.filter((p) => p.id !== person.id)]);
+    setContactView("active");
     setTab("All");
     setAdding(false);
     setOpenId(person.id);
   }
 
   async function handleUpdatePerson(personId: string, input: PersonMaintenanceInput): Promise<Person> {
+    const existing = people.find((person) => person.id === personId);
+    if (existing?.archivedAt) {
+      throw new Error("Restore this contact before editing the dossier.");
+    }
+
     if (personId.startsWith("local-")) {
-      const current = people.find((person) => person.id === personId);
-      if (!current) throw new Error("Person not found.");
-      const updated = applyMaintenanceInput(current, input);
+      if (!existing) throw new Error("Person not found.");
+      const updated = applyMaintenanceInput(existing, input);
       updatePersonInState(updated);
       return updated;
     }
@@ -249,7 +304,9 @@ export default function PeopleClient({ overview, payload }: Props) {
 
   async function handleArchivePerson(personId: string): Promise<void> {
     if (personId.startsWith("local-")) {
-      removePersonFromState(personId);
+      const current = people.find((person) => person.id === personId);
+      if (!current) throw new Error("Person not found.");
+      updatePersonInState(normalizePerson({ ...current, archivedAt: new Date().toISOString() }));
       setOpenId(null);
       return;
     }
@@ -257,27 +314,54 @@ export default function PeopleClient({ overview, payload }: Props) {
     const response = await fetch(`/api/people/${encodeURIComponent(personId)}/archive`, {
       method: "POST",
     });
-    const body = await response.json().catch(() => null) as { error?: string } | null;
+    const body = await response.json().catch(() => null) as { person?: Person; error?: string } | null;
     if (!response.ok) {
       throw new Error(body?.error ?? "Could not archive this contact.");
     }
 
-    removePersonFromState(personId);
+    if (body?.person) updatePersonInState(normalizePerson(body.person));
     setOpenId(null);
   }
 
-  function updatePersonInState(updated: Person) {
-    setPeople((current) => current.map((person) => (person.id === updated.id ? updated : person)));
-    if (updated.id.startsWith("local-")) {
-      const nextLocal = readLocalPeople().map((person) => (person.id === updated.id ? updated : person));
-      saveLocalPeople(nextLocal);
+  async function handleRestorePerson(personId: string): Promise<Person> {
+    if (personId.startsWith("local-")) {
+      const current = people.find((person) => person.id === personId);
+      if (!current) throw new Error("Person not found.");
+      const restored = normalizePerson({ ...current, archivedAt: undefined });
+      updatePersonInState(restored);
+      setContactView("active");
+      setOpenId(restored.id);
+      return restored;
     }
+
+    const response = await fetch(`/api/people/${encodeURIComponent(personId)}/restore`, {
+      method: "POST",
+    });
+    const body = await response.json().catch(() => null) as { person?: Person; error?: string } | null;
+    if (!response.ok) {
+      throw new Error(body?.error ?? "Could not restore this contact.");
+    }
+
+    if (!body?.person) throw new Error("Restore did not return a contact.");
+    const restored = normalizePerson(body.person);
+    updatePersonInState(restored);
+    setContactView("active");
+    setOpenId(restored.id);
+    return restored;
   }
 
-  function removePersonFromState(personId: string) {
-    setPeople((current) => current.filter((person) => person.id !== personId));
-    if (personId.startsWith("local-")) {
-      saveLocalPeople(readLocalPeople().filter((person) => person.id !== personId));
+  function updatePersonInState(updated: Person) {
+    setPeople((current) => (
+      current.some((person) => person.id === updated.id)
+        ? current.map((person) => (person.id === updated.id ? updated : person))
+        : [updated, ...current]
+    ));
+    if (updated.id.startsWith("local-")) {
+      const stored = readLocalPeople();
+      const nextLocal = stored.some((person) => person.id === updated.id)
+        ? stored.map((person) => (person.id === updated.id ? updated : person))
+        : [updated, ...stored];
+      saveLocalPeople(nextLocal);
     }
   }
 
@@ -331,7 +415,9 @@ export default function PeopleClient({ overview, payload }: Props) {
             </p>
             <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--ink-2)", margin: 0 }}>Business relationships</h1>
             <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
-              {people.length} {people.length === 1 ? "contact" : "contacts"} across client, partner, prospect, investor, and personal segments
+              {activePeople.length} active {activePeople.length === 1 ? "contact" : "contacts"}
+              {" · "}{archivedLoaded || archivedPeople.length > 0 ? `${archivedPeople.length} archived` : "archived view available"}
+              {" · "}client, partner, prospect, investor, and personal segments
             </p>
           </div>
           <button
@@ -344,6 +430,48 @@ export default function PeopleClient({ overview, payload }: Props) {
           >
             <Icon name="i-plus" /> Add contact
           </button>
+        </div>
+      </div>
+
+      <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 0, paddingBottom: 8, width: "min(100%, 1000px)" }}>
+        <div style={{
+          display: "inline-flex",
+          gap: 4,
+          padding: 4,
+          borderRadius: 16,
+          background: "rgba(255,255,255,0.74)",
+          border: "0.5px solid rgba(239, 224, 218, 0.88)",
+        }}>
+          {(["active", "archived"] as const).map((view) => (
+            <button
+              key={view}
+              type="button"
+              aria-pressed={contactView === view}
+              onClick={() => {
+                setContactView(view);
+                setTab("All");
+              }}
+              style={{
+                border: "none",
+                borderRadius: 12,
+                background: contactView === view ? "var(--heartline-rose-wash)" : "transparent",
+                color: contactView === view ? "var(--heartline-purple-deep)" : "var(--gray-2)",
+                fontSize: 12.75,
+                fontWeight: contactView === view ? 700 : 560,
+                padding: "8px 13px",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Icon name={view === "active" ? "i-users" : "i-clock"} />
+              {view === "active" ? "Active" : "Archived"}
+              <span style={{ fontSize: 11, color: contactView === view ? "var(--heartline-rose-strong)" : "var(--gray-3)" }}>
+                {view === "active" ? activePeople.length : archivedPeople.length}
+              </span>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -370,6 +498,32 @@ export default function PeopleClient({ overview, payload }: Props) {
 
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 14, width: "min(100%, 1000px)" }}>
+        {contactView === "archived" && loadingArchived && (
+          <div style={{
+            background: "rgba(255,255,255,0.82)",
+            border: "0.5px solid rgba(239, 224, 218, 0.92)",
+            borderRadius: 18,
+            padding: 18,
+            color: "var(--gray-2)",
+            fontSize: 13,
+            marginBottom: 14,
+          }}>
+            Loading archived contacts...
+          </div>
+        )}
+        {archiveViewError && (
+          <div role="alert" style={{
+            background: "#FFF6F0",
+            border: "0.5px solid rgba(213, 92, 92, 0.22)",
+            borderRadius: 18,
+            padding: 18,
+            color: "#B94F4F",
+            fontSize: 13,
+            marginBottom: 14,
+          }}>
+            {archiveViewError}
+          </div>
+        )}
         {visibleEntries.length === 0 && (
           <div style={{
             background: "rgba(255,255,255,0.82)",
@@ -379,7 +533,9 @@ export default function PeopleClient({ overview, payload }: Props) {
             color: "var(--gray-2)",
             fontSize: 13,
           }}>
-            No contacts in this segment yet.
+            {contactView === "archived"
+              ? "No archived contacts in this segment. Active relationships stay in the default view."
+              : "No active contacts in this segment yet."}
           </div>
         )}
         {visibleEntries.map((entry) => (
@@ -401,6 +557,8 @@ export default function PeopleClient({ overview, payload }: Props) {
                   : null;
                 const activitySummary = accountActivitySummary(account, nextActivity);
                 const extraLabel = secondaryAccountLabel(account);
+                const contact = viewPersonById.get(account.primaryContactId) ?? null;
+                const archived = Boolean(contact?.archivedAt);
                 return (
                   <button
                     type="button"
@@ -450,6 +608,13 @@ export default function PeopleClient({ overview, payload }: Props) {
                             border: "0.5px solid rgba(239, 224, 218, 0.72)",
                           }}>{extraLabel}</span>
                         )}
+                        {archived && (
+                          <span style={{
+                            fontSize: 10.5, padding: "3px 8px", borderRadius: 999,
+                            background: "#FFF6F0", color: "#B94F4F",
+                            border: "0.5px solid rgba(213, 92, 92, 0.2)",
+                          }}>Archived</span>
+                        )}
                       </div>
                       <div style={{
                         fontSize: 11.5, display: "flex", alignItems: "center", gap: 6,
@@ -486,6 +651,7 @@ export default function PeopleClient({ overview, payload }: Props) {
         occasions={drawerOccasions}
         onUpdate={handleUpdatePerson}
         onArchive={handleArchivePerson}
+        onRestore={handleRestorePerson}
         onClose={() => setOpenId(null)}
       />
       <AddPersonDialog
@@ -1063,7 +1229,6 @@ function readLocalPeople(): Person[] {
       && typeof person.name === "string"
       && typeof person.relationshipId === "string"
       && typeof person.cultureId === "string"
-      && !person.archivedAt
     ));
   } catch {
     return [];

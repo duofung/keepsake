@@ -10,6 +10,8 @@ import type {
   Relationship,
 } from "./domain";
 
+type PeoplePayloadScope = "active" | "archived" | "all";
+
 export const relationships: Relationship[] = [
   { id: "rel-partner", kind: "partner", group: "Partner", label: "Partner", paletteBg: "#FBE7EE", paletteFg: "#C24E78" },
   { id: "rel-mother", kind: "mother", group: "Family", label: "Mother", paletteBg: "#FDEBD6", paletteFg: "#B5832E" },
@@ -205,13 +207,17 @@ export function occasionsFor(personId: string): OccasionNode[] {
   return occasions.filter((o) => o.personId === personId);
 }
 
-export function peoplePayload(): PeoplePayload {
-  const activePeople = people.filter((person) => !person.archivedAt);
-  const activeIds = new Set(activePeople.map((person) => person.id));
+export function peoplePayload(scope: PeoplePayloadScope = "active"): PeoplePayload {
+  const visiblePeople = people.filter((person) => {
+    if (scope === "archived") return Boolean(person.archivedAt);
+    if (scope === "all") return true;
+    return !person.archivedAt;
+  });
+  const visibleIds = new Set(visiblePeople.map((person) => person.id));
   return {
-    people: activePeople,
+    people: visiblePeople,
     relationships,
     cultures,
-    occasions: occasions.filter((occasion) => activeIds.has(occasion.personId)),
+    occasions: occasions.filter((occasion) => visibleIds.has(occasion.personId)),
   };
 }

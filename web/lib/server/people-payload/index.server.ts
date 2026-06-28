@@ -5,6 +5,11 @@ import { getDbPeoplePayload } from "./db.server";
 import { getMockPeoplePayload } from "./mock.server";
 
 type PeopleDataSource = "mock" | "db";
+export type PeoplePayloadView = "active" | "archived";
+
+export interface PeoplePayloadOptions {
+  view?: PeoplePayloadView;
+}
 
 function peopleDataSource(): PeopleDataSource {
   const source = process.env.KEEPSAKE_DATA_SOURCE ?? "mock";
@@ -13,8 +18,8 @@ function peopleDataSource(): PeopleDataSource {
   throw new Error("KEEPSAKE_DATA_SOURCE must be either 'mock' or 'db'.");
 }
 
-export async function getPeoplePayload(): Promise<PeoplePayload> {
+export async function getPeoplePayload(options: PeoplePayloadOptions = {}): Promise<PeoplePayload> {
   return peopleDataSource() === "db"
-    ? getDbPeoplePayload()
-    : getMockPeoplePayload();
+    ? getDbPeoplePayload(options)
+    : getMockPeoplePayload(options);
 }

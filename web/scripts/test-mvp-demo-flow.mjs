@@ -150,7 +150,7 @@ try {
 
   const pages = [
     { path: "/", label: "Home", expected: "MVP Demo" },
-    { path: "/people", label: "People", expected: "5 contacts across client, partner, prospect, investor, and personal segments" },
+    { path: "/people", label: "People", expected: "5 active contacts" },
     { path: "/workspace?person=p-lin", label: "Workspace", expected: "Client follow-up for Lin" },
     { path: "/history", label: "History", expected: "Business touchpoint history" },
     { path: "/profile", label: "Profile", expected: "OUTREACH WORKFLOW" },

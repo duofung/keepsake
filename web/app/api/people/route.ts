@@ -8,8 +8,16 @@ import { getPeoplePayload } from "@/lib/server/people-payload/index.server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  return NextResponse.json(await getPeoplePayload());
+export async function GET(req: Request) {
+  const view = new URL(req.url).searchParams.get("view") ?? "active";
+  if (view !== "active" && view !== "archived") {
+    return NextResponse.json(
+      { error: "Unsupported people view", code: "invalid_request" },
+      { status: 400 },
+    );
+  }
+
+  return NextResponse.json(await getPeoplePayload({ view }));
 }
 
 export async function POST(req: Request) {

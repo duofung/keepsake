@@ -155,6 +155,7 @@ export function buildRemasterDashboardOverview(
     });
 
   const recentActivities = deliveries
+    .filter((delivery) => !delivery.personId || personById.has(delivery.personId))
     .slice()
     .sort((left, right) => right.sentAtISO.localeCompare(left.sentAtISO))
     .map((delivery) => {

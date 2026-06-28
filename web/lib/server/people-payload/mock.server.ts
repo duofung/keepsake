@@ -15,7 +15,8 @@ import "server-only";
 
 import { peoplePayload } from "@/lib/mock";
 import type { PeoplePayload } from "@/lib/domain";
+import type { PeoplePayloadOptions } from "./index.server";
 
-export async function getMockPeoplePayload(): Promise<PeoplePayload> {
-  return peoplePayload();
+export async function getMockPeoplePayload(options: PeoplePayloadOptions = {}): Promise<PeoplePayload> {
+  return peoplePayload(options.view ?? "active");
 }

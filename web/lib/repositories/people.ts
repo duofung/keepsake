@@ -30,14 +30,15 @@ import type {
   OwnerId,
   PersonCreateInput,
   PersonPatch,
+  PeopleReadOptions,
   Tx,
 } from "./types";
 
 export interface PeopleRepository {
   // ── People ──────────────────────────────────────────────────────────────
 
-  /** Plain list of people the caller owns. Used when only Person rows are needed. */
-  listForOwner(ownerId: OwnerId, tx?: Tx): Promise<Person[]>;
+  /** Plain list of people the caller owns. Defaults to active rows. */
+  listForOwner(ownerId: OwnerId, tx?: Tx, options?: PeopleReadOptions): Promise<Person[]>;
 
   /**
    * Batched fetch returning the same payload the API responds with:
@@ -47,7 +48,7 @@ export interface PeopleRepository {
    * `Person.nextOccasionId` is hydrated by this method — it's derived as the
    * earliest future occasion per person.
    */
-  listWithRelations(ownerId: OwnerId, tx?: Tx): Promise<PeoplePayload>;
+  listWithRelations(ownerId: OwnerId, tx?: Tx, options?: PeopleReadOptions): Promise<PeoplePayload>;
 
   /** Returns `null` if not owned by the caller or not found. */
   findById(ownerId: OwnerId, personId: ID, tx?: Tx): Promise<Person | null>;
@@ -58,6 +59,9 @@ export interface PeopleRepository {
 
   /** Sets `archived_at`; row is retained so History rows keep their recipient_name. */
   archive(ownerId: OwnerId, personId: ID, tx?: Tx): Promise<Person>;
+
+  /** Clears `archived_at`; row re-enters default People/Home reads. */
+  restore(ownerId: OwnerId, personId: ID, tx?: Tx): Promise<Person>;
 
   /** Backward-compatible alias for older call sites. */
   softDelete(ownerId: OwnerId, personId: ID, tx?: Tx): Promise<void>;

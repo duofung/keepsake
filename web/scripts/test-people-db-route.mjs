@@ -113,8 +113,9 @@ async function waitForNext() {
   throw new Error(`Next dev did not become ready at ${base}: ${lastError?.message ?? "unknown error"}`);
 }
 
-async function getPeople() {
-  const res = await fetch(`${base}/api/people`);
+async function getPeople(view = "active") {
+  const suffix = view === "active" ? "" : `?view=${encodeURIComponent(view)}`;
+  const res = await fetch(`${base}/api/people${suffix}`);
   const body = res.headers.get("content-type")?.includes("json")
     ? await res.json().catch(() => null)
     : null;
@@ -147,6 +148,16 @@ async function patchPeople(id, body) {
 
 async function archivePeople(id) {
   const res = await fetch(`${base}/api/people/${encodeURIComponent(id)}/archive`, {
+    method: "POST",
+  });
+  const payload = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: payload };
+}
+
+async function restorePeople(id) {
+  const res = await fetch(`${base}/api/people/${encodeURIComponent(id)}/restore`, {
     method: "POST",
   });
   const payload = res.headers.get("content-type")?.includes("json")
@@ -449,6 +460,37 @@ try {
     !afterArchive.body?.people?.some((person) => person.id === kira?.id),
   );
   check("people.length returns to 5 after archive", afterArchive.body?.people?.length === 5, `got ${afterArchive.body?.people?.length}`);
+
+  const archivedPayload = await getPeople("archived");
+  const archivedKira = archivedPayload.body?.people?.find((person) => person.id === kira?.id);
+  check("GET /api/people?view=archived → 200", archivedPayload.status === 200, `status=${archivedPayload.status}`);
+  check("archived DB view includes Kira", archivedKira?.name === "Kira Tan", `body=${JSON.stringify(archivedPayload.body)}`);
+  check("archived DB view keeps archivedAt", typeof archivedKira?.archivedAt === "string", `body=${JSON.stringify(archivedKira)}`);
+
+  const crossOwnerRestore = await restorePeople(otherPersonId);
+  check("POST /api/people/[id]/restore cross-owner → 404", crossOwnerRestore.status === 404, `status=${crossOwnerRestore.status}`);
+  check("cross-owner restore code = not_found", crossOwnerRestore.body?.code === "not_found", `body=${JSON.stringify(crossOwnerRestore.body)}`);
+
+  const restoreActive = await restorePeople(created.body?.id ?? "");
+  check("POST /api/people/[id]/restore active person → 400", restoreActive.status === 400, `status=${restoreActive.status}`);
+  check("restore active code = invalid_request", restoreActive.body?.code === "invalid_request", `body=${JSON.stringify(restoreActive.body)}`);
+
+  const restored = await restorePeople(kira?.id ?? "");
+  check("POST /api/people/[id]/restore DB → 200", restored.status === 200, `status=${restored.status}`);
+  check("restore returns active Kira", restored.body?.person?.id === kira?.id && !restored.body?.person?.archivedAt, `body=${JSON.stringify(restored.body)}`);
+
+  const afterRestore = await getPeople();
+  check(
+    "restored person reappears in active DB people payload",
+    afterRestore.body?.people?.some((person) => person.id === kira?.id),
+  );
+  check("people.length returns to 6 after restore", afterRestore.body?.people?.length === 6, `got ${afterRestore.body?.people?.length}`);
+
+  const archivedAfterRestore = await getPeople("archived");
+  check(
+    "restored person leaves DB archived view",
+    !archivedAfterRestore.body?.people?.some((person) => person.id === kira?.id),
+  );
 
   if (serverError && failures.length) {
     process.stdout.write(`\nnext stderr:\n${serverError}\n`);

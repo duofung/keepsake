@@ -536,10 +536,23 @@ try {
 
   const ownerAAfterArchive = await people.listForOwner(ownerA);
   assert(!ownerAAfterArchive.some((person) => person.id === linId), "listForOwner hides archived people");
+  const archivedOwnerA = await people.listForOwner(ownerA, undefined, { scope: "archived" });
+  assert(archivedOwnerA.some((person) => person.id === linId), "archived list shows archived people");
+  const archivedPayload = await people.listWithRelations(ownerA, undefined, { scope: "archived" });
+  assert(archivedPayload.people.some((person) => person.id === linId), "archived payload includes archived people");
+  assert(archivedPayload.occasions.some((occasion) => occasion.personId === linId), "archived payload preserves archived person's occasions");
   const archivedFind = await people.findById(ownerA, linId);
   assert(archivedFind === null, "findById hides archived people");
   const archivedOccasions = await people.listOccasions(ownerA, linId);
   assertEqual(archivedOccasions.length, 0, "listOccasions hides archived people's occasions");
+
+  let restoreActiveBlocked = false;
+  try {
+    await people.restore(ownerA, kiraId);
+  } catch (error) {
+    restoreActiveBlocked = error && typeof error === "object" && error.kind === "validation";
+  }
+  assert(restoreActiveBlocked, "restore rejects already-active people");
 
   let crossOwnerArchiveBlocked = false;
   try {
@@ -548,6 +561,22 @@ try {
     crossOwnerArchiveBlocked = error && typeof error === "object" && error.kind === "not-found";
   }
   assert(crossOwnerArchiveBlocked, "archive hides another owner's person");
+
+  let crossOwnerRestoreBlocked = false;
+  try {
+    await people.restore(ownerB, linId);
+  } catch (error) {
+    crossOwnerRestoreBlocked = error && typeof error === "object" && error.kind === "not-found";
+  }
+  assert(crossOwnerRestoreBlocked, "restore hides another owner's person");
+
+  const restoredLin = await people.restore(ownerA, linId);
+  assertEqual(restoredLin.id, linId, "restore returns the restored person");
+  assert(!restoredLin.archivedAt, "restore clears archivedAt");
+  const ownerAAfterRestore = await people.listForOwner(ownerA);
+  assert(ownerAAfterRestore.some((person) => person.id === linId), "restored person reappears in active listForOwner");
+  const archivedOwnerAAfterRestore = await people.listForOwner(ownerA, undefined, { scope: "archived" });
+  assert(!archivedOwnerAAfterRestore.some((person) => person.id === linId), "restored person leaves archived list");
 
   process.stdout.write("\nall people repository checks passed\n");
 } catch (error) {

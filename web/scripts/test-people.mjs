@@ -36,8 +36,9 @@ function normalize(html) {
     .replace(/&amp;/g, "&");
 }
 
-async function getPeople() {
-  const res = await fetch(`${BASE}/api/people`);
+async function getPeople(view = "active") {
+  const suffix = view === "active" ? "" : `?view=${encodeURIComponent(view)}`;
+  const res = await fetch(`${BASE}/api/people${suffix}`);
   const json = res.headers.get("content-type")?.includes("json")
     ? await res.json().catch(() => null)
     : null;
@@ -70,6 +71,16 @@ async function patchPeople(id, body) {
 
 async function archivePeople(id) {
   const res = await fetch(`${BASE}/api/people/${encodeURIComponent(id)}/archive`, {
+    method: "POST",
+  });
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
+async function restorePeople(id) {
+  const res = await fetch(`${BASE}/api/people/${encodeURIComponent(id)}/restore`, {
     method: "POST",
   });
   const json = res.headers.get("content-type")?.includes("json")
@@ -263,7 +274,13 @@ try {
   check("People page renders Add contact CTA", peoplePage.body.includes("Add contact"));
   check(
     "People page renders business segment counts",
-    peoplePage.body.includes("5 contacts across client, partner, prospect, investor, and personal segments"),
+    peoplePage.body.includes("5 active contacts")
+      && peoplePage.body.includes("archived view available")
+      && peoplePage.body.includes("client, partner, prospect, investor, and personal segments"),
+  );
+  check(
+    "People page renders active/archive management toggle",
+    peoplePage.body.includes("Active") && peoplePage.body.includes("Archived"),
   );
   check(
     "People page renders business segment tabs",
@@ -320,6 +337,10 @@ try {
       "NOTES / REMEMBER",
       "ACTIONS",
       "Save changes",
+      "Archived dossier",
+      "person-archived-state",
+      "Restore contact",
+      "Restore to edit",
       "Open workspace",
       "Draft next note",
       "Archive contact",
@@ -337,13 +358,44 @@ try {
   );
   check("people.length becomes 4 after archive", afterArchivePayload.body?.people?.length === 4, `got ${afterArchivePayload.body?.people?.length}`);
 
+  const archivedPayload = await getPeople("archived");
+  const archivedKiraPayload = archivedPayload.body?.people?.find((person) => person.id === "p-kira");
+  check("GET /api/people?view=archived → 200", archivedPayload.status === 200, `status=${archivedPayload.status}`);
+  check("archived view includes archived Kira", archivedKiraPayload?.name === "Kira Tan", `body=${JSON.stringify(archivedPayload.body)}`);
+  check("archived Kira keeps archivedAt", typeof archivedKiraPayload?.archivedAt === "string", `body=${JSON.stringify(archivedKiraPayload)}`);
+
   const archivedPeoplePage = await getPeoplePage();
   check("GET /people after archive → 200", archivedPeoplePage.status === 200, `status=${archivedPeoplePage.status}`);
   check("archived person leaves /people", !archivedPeoplePage.body.includes("Kira Tan"));
   check(
-    "People page count drops after archive",
-    archivedPeoplePage.body.includes("4 contacts across client, partner, prospect, investor, and personal segments"),
+    "People page active count drops after archive",
+    archivedPeoplePage.body.includes("4 active contacts"),
   );
+
+  const homeAfterArchive = await getHomePage();
+  check("GET / after archive → 200", homeAfterArchive.status === 200, `status=${homeAfterArchive.status}`);
+  check("Home excludes archived Kira", !homeAfterArchive.body.includes("Kira Tan"));
+
+  const restoredKira = await restorePeople("p-kira");
+  check("POST /api/people/[id]/restore mock → 200", restoredKira.status === 200, `status=${restoredKira.status}`);
+  check("restore returns active person", restoredKira.body?.person?.id === "p-kira" && !restoredKira.body?.person?.archivedAt);
+
+  const afterRestorePayload = await getPeople();
+  check(
+    "restored person reappears in active /api/people",
+    afterRestorePayload.body?.people?.some((person) => person.id === "p-kira"),
+  );
+  check("people.length returns to 5 after restore", afterRestorePayload.body?.people?.length === 5, `got ${afterRestorePayload.body?.people?.length}`);
+
+  const archivedAfterRestore = await getPeople("archived");
+  check(
+    "restored person leaves archived view",
+    !archivedAfterRestore.body?.people?.some((person) => person.id === "p-kira"),
+  );
+
+  const homeAfterRestore = await getHomePage();
+  check("GET / after restore → 200", homeAfterRestore.status === 200, `status=${homeAfterRestore.status}`);
+  check("restored Kira can re-enter Home follow-up copy", homeAfterRestore.body.includes("Kira Tan"));
 } catch (err) {
   process.stdout.write(`harness error: ${err?.message ?? err}\n`);
   failures.push("harness");

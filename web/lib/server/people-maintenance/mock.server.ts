@@ -24,6 +24,22 @@ export async function archiveMockPerson(personId: string): Promise<PeopleMainten
   return { ok: true, person };
 }
 
+export async function restoreMockPerson(personId: string): Promise<PeopleMaintenanceResult> {
+  const person = people.find((item) => item.id === personId);
+  if (!person) return notFound();
+  if (!person.archivedAt) {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_request",
+      error: "Person is already active.",
+    };
+  }
+
+  delete person.archivedAt;
+  return { ok: true, person };
+}
+
 function applyPatch(person: Person, patch: PersonPatch) {
   if (patch.name !== undefined) person.name = patch.name;
   if (patch.segment !== undefined) person.segment = patch.segment;

@@ -99,6 +99,12 @@ export interface PersonCreateInput {
 
 export type PersonPatch = Partial<PersonCreateInput>;
 
+export type PeopleListScope = "active" | "archived" | "all";
+
+export interface PeopleReadOptions {
+  scope?: PeopleListScope;
+}
+
 export interface OccasionUpsertInput {
   id?: ID;                  // present → update; absent → insert
   kind: OccasionKind;

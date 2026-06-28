@@ -28,11 +28,12 @@ type Props = {
   occasions: OccasionNode[];
   onUpdate: (personId: string, input: PersonMaintenanceInput) => Promise<Person>;
   onArchive: (personId: string) => Promise<void>;
+  onRestore: (personId: string) => Promise<Person>;
   onClose: () => void;
 };
 
 export default function PersonDrawer({
-  person, account, relationship, culture, occasions, onUpdate, onArchive, onClose,
+  person, account, relationship, culture, occasions, onUpdate, onArchive, onRestore, onClose,
 }: Props) {
   const open = !!person;
   return (
@@ -67,6 +68,7 @@ export default function PersonDrawer({
             occasions={occasions}
             onUpdate={onUpdate}
             onArchive={onArchive}
+            onRestore={onRestore}
             onClose={onClose}
           />
         )}
@@ -76,12 +78,13 @@ export default function PersonDrawer({
 }
 
 function DrawerContent({
-  person, account, relationship, culture, occasions, onUpdate, onArchive, onClose,
+  person, account, relationship, culture, occasions, onUpdate, onArchive, onRestore, onClose,
 }: {
   person: Person; account: RemasterDashboardAccount | null; relationship: Relationship; culture: CultureRule;
   occasions: OccasionNode[];
   onUpdate: (personId: string, input: PersonMaintenanceInput) => Promise<Person>;
   onArchive: (personId: string) => Promise<void>;
+  onRestore: (personId: string) => Promise<Person>;
   onClose: () => void;
 }) {
   const primary = occasions.find((o) => o.isPrimary) ?? occasions[0] ?? null;
@@ -100,17 +103,24 @@ function DrawerContent({
   const [draft, setDraft] = useState(() => draftFromPerson(person));
   const [saving, setSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isArchived = Boolean(person.archivedAt);
 
   useEffect(() => {
     setDraft(draftFromPerson(person));
     setSaving(false);
     setArchiving(false);
+    setRestoring(false);
     setError(null);
   }, [person]);
 
   async function submitMaintenance(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isArchived) {
+      setError("Restore this contact before editing the dossier.");
+      return;
+    }
     if (!draft.name.trim()) {
       setError("Name is required.");
       return;
@@ -142,6 +152,18 @@ function DrawerContent({
     }
   }
 
+  async function restoreContact() {
+    setRestoring(true);
+    setError(null);
+    try {
+      const restored = await onRestore(person.id);
+      setDraft(draftFromPerson(restored));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not restore this contact.");
+      setRestoring(false);
+    }
+  }
+
   return (
     <>
       <div style={{ padding: "22px 24px 18px", position: "relative" }}>
@@ -161,12 +183,12 @@ function DrawerContent({
         <div style={{
           display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14,
           padding: "5px 10px", borderRadius: 999,
-          background: "rgba(252, 234, 240, 0.92)",
-          color: "var(--heartline-purple-deep)",
+          background: isArchived ? "#FFF6F0" : "rgba(252, 234, 240, 0.92)",
+          color: isArchived ? "#B94F4F" : "var(--heartline-purple-deep)",
           fontSize: 10.5, fontWeight: 760, letterSpacing: "0.06em", textTransform: "uppercase",
         }}>
-          <Icon name="i-heart-handshake" />
-          Relationship dossier
+          <Icon name={isArchived ? "i-clock" : "i-heart-handshake"} />
+          {isArchived ? "Archived dossier" : "Relationship dossier"}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14, paddingRight: 34 }}>
           <Avatar name={person.name} bg={person.avatarBg} fg={person.avatarFg} size={58} fontSize={21} />
@@ -184,6 +206,23 @@ function DrawerContent({
             </div>
           </div>
         </div>
+        {isArchived && (
+          <div
+            data-testid="person-archived-state"
+            style={{
+              marginTop: 14,
+              padding: "11px 12px",
+              borderRadius: 14,
+              background: "#FFF6F0",
+              border: "0.5px solid rgba(213, 92, 92, 0.2)",
+              color: "#9A5A44",
+              fontSize: 12.25,
+              lineHeight: 1.5,
+            }}
+          >
+            Archived contact · hidden from active People and Home. Restore to resume follow-up management.
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "2px 24px 18px" }}>
@@ -192,6 +231,7 @@ function DrawerContent({
             display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9,
           }}>
             <DossierField label="Segment" value={segmentLabel(person)} />
+            <DossierField label="Status" value={isArchived ? "Archived" : "Active"} />
             <DossierField label="Priority" value={person.starred ? "Prioritized" : "Standard cadence"} />
             <DossierField label="Organization" value={person.organization ?? "Independent contact"} />
             <DossierField label="Role / title" value={person.roleTitle ?? "Role not set"} />
@@ -203,10 +243,16 @@ function DrawerContent({
 
         <Section title="MAINTENANCE LOOP">
           <form data-testid="person-maintenance-form" onSubmit={submitMaintenance} style={{ display: "grid", gap: 10 }}>
+            {isArchived && (
+              <p style={{ margin: 0, color: "var(--gray-2)", fontSize: 12.25, lineHeight: 1.5 }}>
+                Archived contacts are review-only here. Restore this contact to edit fields or plan new outreach.
+              </p>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 0.84fr", gap: 9 }}>
               <label style={maintenanceFieldStyle}>
                 <span style={maintenanceLabelStyle}>Name</span>
                 <input
+                  disabled={isArchived}
                   value={draft.name}
                   onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
                   style={maintenanceInputStyle}
@@ -215,6 +261,7 @@ function DrawerContent({
               <label style={maintenanceFieldStyle}>
                 <span style={maintenanceLabelStyle}>Segment</span>
                 <select
+                  disabled={isArchived}
                   value={draft.segment}
                   onChange={(event) => setDraft((current) => ({ ...current, segment: event.target.value as ContactSegment }))}
                   style={maintenanceInputStyle}
@@ -229,6 +276,7 @@ function DrawerContent({
               <label style={maintenanceFieldStyle}>
                 <span style={maintenanceLabelStyle}>Organization</span>
                 <input
+                  disabled={isArchived}
                   value={draft.organization}
                   onChange={(event) => setDraft((current) => ({ ...current, organization: event.target.value }))}
                   style={maintenanceInputStyle}
@@ -237,6 +285,7 @@ function DrawerContent({
               <label style={maintenanceFieldStyle}>
                 <span style={maintenanceLabelStyle}>Role title</span>
                 <input
+                  disabled={isArchived}
                   value={draft.roleTitle}
                   onChange={(event) => setDraft((current) => ({ ...current, roleTitle: event.target.value }))}
                   style={maintenanceInputStyle}
@@ -246,6 +295,7 @@ function DrawerContent({
             <label style={maintenanceFieldStyle}>
               <span style={maintenanceLabelStyle}>Source context</span>
               <input
+                disabled={isArchived}
                 value={draft.sourceContext}
                 onChange={(event) => setDraft((current) => ({ ...current, sourceContext: event.target.value }))}
                 style={maintenanceInputStyle}
@@ -254,6 +304,7 @@ function DrawerContent({
             <label style={maintenanceFieldStyle}>
               <span style={maintenanceLabelStyle}>Remember</span>
               <textarea
+                disabled={isArchived}
                 value={draft.note}
                 onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
                 style={{ ...maintenanceInputStyle, minHeight: 78, resize: "vertical", lineHeight: 1.45 }}
@@ -263,6 +314,7 @@ function DrawerContent({
               <label style={maintenanceFieldStyle}>
                 <span style={maintenanceLabelStyle}>Last touch</span>
                 <input
+                  disabled={isArchived}
                   type="date"
                   value={draft.lastContactAt}
                   onChange={(event) => setDraft((current) => ({ ...current, lastContactAt: event.target.value }))}
@@ -272,6 +324,7 @@ function DrawerContent({
               <label style={maintenanceFieldStyle}>
                 <span style={maintenanceLabelStyle}>Next follow-up</span>
                 <input
+                  disabled={isArchived}
                   type="date"
                   value={draft.nextFollowUpAt}
                   onChange={(event) => setDraft((current) => ({ ...current, nextFollowUpAt: event.target.value }))}
@@ -287,7 +340,7 @@ function DrawerContent({
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 type="submit"
-                disabled={saving || archiving}
+                disabled={saving || archiving || restoring || isArchived}
                 style={{
                   padding: "9px 13px",
                   borderRadius: 12,
@@ -296,11 +349,11 @@ function DrawerContent({
                   color: "#fff",
                   fontSize: 12.75,
                   fontWeight: 650,
-                  cursor: saving || archiving ? "default" : "pointer",
-                  opacity: saving || archiving ? 0.68 : 1,
+                  cursor: saving || archiving || restoring || isArchived ? "default" : "pointer",
+                  opacity: saving || archiving || restoring || isArchived ? 0.68 : 1,
                 }}
               >
-                {saving ? "Saving..." : "Save changes"}
+                {isArchived ? "Restore to edit" : saving ? "Saving..." : "Save changes"}
               </button>
             </div>
           </form>
@@ -378,54 +431,87 @@ function DrawerContent({
         <div style={{ fontSize: 10.75, fontWeight: 740, color: "var(--gray-2)", letterSpacing: "0.08em", marginBottom: 9 }}>
           ACTIONS
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 0.88fr", gap: 9 }}>
-          <Link
-            href={`/workspace?person=${person.id}`}
-            onClick={onClose}
-            className="heartline-button"
-            style={{ justifyContent: "center" }}
-          >
-            <Icon name="i-edit" /> Open workspace
-          </Link>
-          <Link
-            href={`/workspace?person=${person.id}`}
-            onClick={onClose}
-            aria-label={prepareLabel}
-            title={prepareLabel}
-            style={{
-              padding: "11px 13px", background: "#fff", borderRadius: 12, color: "var(--heartline-purple-deep)",
-              fontSize: 13.25, display: "flex", alignItems: "center", gap: 6, textDecoration: "none",
-              boxShadow: "inset 0 0 0 0.5px var(--line)",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <Icon name="i-pencil" /> Draft next note
-          </Link>
-        </div>
-        <button
-          type="button"
-          onClick={archiveContact}
-          disabled={saving || archiving}
-          style={{
-            width: "100%",
-            marginTop: 9,
-            padding: "10px 13px",
-            background: "rgba(255,255,255,0.74)",
-            border: "0.5px solid rgba(213, 92, 92, 0.24)",
-            borderRadius: 12,
-            color: "#B94F4F",
-            fontSize: 12.75,
-            fontWeight: 650,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-            cursor: saving || archiving ? "default" : "pointer",
-            opacity: saving || archiving ? 0.68 : 1,
-          }}
-        >
-          <Icon name="i-alert" /> {archiving ? "Archiving..." : "Archive contact"}
-        </button>
+        {isArchived ? (
+          <>
+            <p style={{ margin: "0 0 10px", color: "var(--gray-2)", fontSize: 12.25, lineHeight: 1.5 }}>
+              Restore this contact to return it to Active People, Home follow-ups, and workspace drafting.
+            </p>
+            <button
+              type="button"
+              onClick={restoreContact}
+              disabled={saving || restoring}
+              style={{
+                width: "100%",
+                padding: "11px 13px",
+                background: "var(--heartline-purple-deep)",
+                border: "none",
+                borderRadius: 12,
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                cursor: saving || restoring ? "default" : "pointer",
+                opacity: saving || restoring ? 0.68 : 1,
+              }}
+            >
+              <Icon name="i-users" /> {restoring ? "Restoring..." : "Restore contact"}
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 0.88fr", gap: 9 }}>
+              <Link
+                href={`/workspace?person=${person.id}`}
+                onClick={onClose}
+                className="heartline-button"
+                style={{ justifyContent: "center" }}
+              >
+                <Icon name="i-edit" /> Open workspace
+              </Link>
+              <Link
+                href={`/workspace?person=${person.id}`}
+                onClick={onClose}
+                aria-label={prepareLabel}
+                title={prepareLabel}
+                style={{
+                  padding: "11px 13px", background: "#fff", borderRadius: 12, color: "var(--heartline-purple-deep)",
+                  fontSize: 13.25, display: "flex", alignItems: "center", gap: 6, textDecoration: "none",
+                  boxShadow: "inset 0 0 0 0.5px var(--line)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <Icon name="i-pencil" /> Draft next note
+              </Link>
+            </div>
+            <button
+              type="button"
+              onClick={archiveContact}
+              disabled={saving || archiving}
+              style={{
+                width: "100%",
+                marginTop: 9,
+                padding: "10px 13px",
+                background: "rgba(255,255,255,0.74)",
+                border: "0.5px solid rgba(213, 92, 92, 0.24)",
+                borderRadius: 12,
+                color: "#B94F4F",
+                fontSize: 12.75,
+                fontWeight: 650,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                cursor: saving || archiving ? "default" : "pointer",
+                opacity: saving || archiving ? 0.68 : 1,
+              }}
+            >
+              <Icon name="i-alert" /> {archiving ? "Archiving..." : "Archive contact"}
+            </button>
+          </>
+        )}
       </div>
     </>
   );
