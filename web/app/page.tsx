@@ -88,7 +88,7 @@ export default async function HomePage() {
                   ? focusAccount.touchpointSummary
                   : "Use ReMaster to turn static contacts into an ongoing touchpoint rhythm."}
               </p>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "auto" }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
                 <Link href={`/workspace?person=${focusAccount?.primaryContactId ?? ""}`} className="heartline-button">
                   <Icon name="i-edit" /> Draft outreach
                 </Link>
@@ -293,49 +293,53 @@ const pageSubcopy: CSSProperties = {
 
 const homeGrid: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1.44fr) minmax(258px, 0.72fr)",
+  gridTemplateColumns: "minmax(0, 1.08fr) minmax(270px, 0.72fr)",
   gap: 14,
-  alignItems: "stretch",
+  alignItems: "start",
 };
 
 const heroCard: CSSProperties = {
-  borderRadius: 22,
+  borderRadius: 18,
   display: "grid",
-  gridTemplateColumns: "minmax(270px, 0.92fr) minmax(300px, 1fr)",
-  gap: 16,
+  gridTemplateColumns: "minmax(238px, 0.92fr) minmax(230px, 0.78fr)",
+  gap: 10,
   overflow: "hidden",
-  padding: 16,
-  minHeight: 326,
+  padding: 10,
+  boxSizing: "border-box",
+  height: 232,
+  minHeight: 0,
+  alignSelf: "start",
 };
 
 const heroCopy: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   minWidth: 0,
-  padding: "12px 4px 12px 12px",
+  padding: "6px 2px 6px 8px",
 };
 
 const heroTitle: CSSProperties = {
   color: "var(--ink-2)",
-  fontSize: 28,
+  fontSize: 22,
   fontWeight: 700,
   letterSpacing: "0",
   lineHeight: 1.14,
-  margin: "16px 0 9px",
+  margin: "10px 0 6px",
 };
 
 const heroBody: CSSProperties = {
   color: "var(--gray-1)",
-  fontSize: 13,
-  lineHeight: 1.65,
-  margin: "0 0 18px",
-  maxWidth: 345,
+  fontSize: 11.75,
+  lineHeight: 1.45,
+  margin: 0,
+  maxWidth: 300,
 };
 
 const heroImageWrap: CSSProperties = {
   position: "relative",
-  minHeight: 292,
-  borderRadius: 18,
+  height: "100%",
+  minHeight: 0,
+  borderRadius: 13,
   overflow: "hidden",
   border: "0.5px solid rgba(239, 224, 218, 0.74)",
   background: "#F9EDE8",

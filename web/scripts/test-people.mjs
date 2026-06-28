@@ -89,6 +89,34 @@ async function restorePeople(id) {
   return { status: res.status, body: json };
 }
 
+async function setNextFollowUp(id, date) {
+  return postPersonAction(id, "follow-up", { nextFollowUpAt: date });
+}
+
+async function markFollowUpDone(id) {
+  return postPersonAction(id, "follow-up/done");
+}
+
+async function snoozeFollowUp(id, date) {
+  return postPersonAction(id, "follow-up/snooze", { nextFollowUpAt: date });
+}
+
+async function logTouchpoint(id, body) {
+  return postPersonAction(id, "touchpoints", body);
+}
+
+async function postPersonAction(id, path, body) {
+  const res = await fetch(`${BASE}/api/people/${encodeURIComponent(id)}/${path}`, {
+    method: "POST",
+    headers: body ? { "content-type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const json = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: json };
+}
+
 async function getHomePage() {
   const res = await fetch(BASE, {
     headers: sessionCookie ? { cookie: `keepsake_session=${sessionCookie}` } : {},
@@ -255,6 +283,25 @@ try {
   check("mock update returns nextFollowUpAt", updatedKira.body?.nextFollowUpAt === "2026-07-08", `got ${updatedKira.body?.nextFollowUpAt}`);
   check("mock update rewrites remember note", updatedKira.body?.knownFacts?.[0]?.text === "Wants a short deck before July.", `body=${JSON.stringify(updatedKira.body)}`);
 
+  const setKiraFollowUp = await setNextFollowUp("p-kira", "2026-07-12");
+  check("POST /api/people/[id]/follow-up mock → 200", setKiraFollowUp.status === 200, `status=${setKiraFollowUp.status}`);
+  check("set follow-up returns nextFollowUpAt", setKiraFollowUp.body?.person?.nextFollowUpAt === "2026-07-12", `body=${JSON.stringify(setKiraFollowUp.body)}`);
+
+  const snoozedKira = await snoozeFollowUp("p-kira", "2026-07-22");
+  check("POST /api/people/[id]/follow-up/snooze mock → 200", snoozedKira.status === 200, `status=${snoozedKira.status}`);
+  check("snooze returns moved nextFollowUpAt", snoozedKira.body?.person?.nextFollowUpAt === "2026-07-22", `body=${JSON.stringify(snoozedKira.body)}`);
+
+  const loggedKira = await logTouchpoint("p-kira", { touchType: "meeting", occurredAt: "2026-06-22" });
+  check("POST /api/people/[id]/touchpoints mock → 200", loggedKira.status === 200, `status=${loggedKira.status}`);
+  check("log touchpoint returns lastContactAt", loggedKira.body?.person?.lastContactAt === "2026-06-22", `body=${JSON.stringify(loggedKira.body)}`);
+  check("log touchpoint returns type", loggedKira.body?.person?.lastTouchpointType === "meeting", `body=${JSON.stringify(loggedKira.body)}`);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const doneKira = await markFollowUpDone("p-kira");
+  check("POST /api/people/[id]/follow-up/done mock → 200", doneKira.status === 200, `status=${doneKira.status}`);
+  check("mark done clears nextFollowUpAt", !doneKira.body?.person?.nextFollowUpAt, `body=${JSON.stringify(doneKira.body)}`);
+  check("mark done logs note touchpoint today", doneKira.body?.person?.lastContactAt === today && doneKira.body?.person?.lastTouchpointType === "note", `body=${JSON.stringify(doneKira.body)}`);
+
   const invalidPatch = await patchPeople("p-kira", { nextFollowUpAt: "2026-13-40" });
   check("PATCH /api/people/[id] invalid date → 400", invalidPatch.status === 400, `status=${invalidPatch.status}`);
   check("invalid patch code = invalid_request", invalidPatch.body?.code === "invalid_request", `body=${JSON.stringify(invalidPatch.body)}`);
@@ -314,12 +361,14 @@ try {
   );
   check(
     "People page reflects updated follow-up cadence",
-    peoplePage.body.includes("Next follow-up · 2026-07-08")
-      && peoplePage.body.includes("Last touch · 2026-06-20"),
+    peoplePage.body.includes("Next follow-up · Not scheduled")
+      && peoplePage.body.includes(`Last touch · Note · ${today}`),
   );
   check(
     "Home reflects updated follow-up cadence",
-    homePage.body.includes("Kira Tan") && homePage.body.includes("Next follow-up · 2026-07-08"),
+    homePage.body.includes("Kira Tan")
+      && homePage.body.includes("Next follow-up · Not scheduled")
+      && homePage.body.includes(`Last touch · Note · ${today}`),
   );
   check(
     "People page keeps dossier drawer shell",
@@ -335,6 +384,12 @@ try {
       "RELATIONSHIP CONTEXT",
       "TOUCHPOINTS",
       "NOTES / REMEMBER",
+      "FOLLOW-UP ACTIONS",
+      'data-testid="person-follow-up-actions"',
+      "Mark done",
+      "Set",
+      "Snooze",
+      "Log",
       "ACTIONS",
       "Save changes",
       "Archived dossier",
@@ -375,6 +430,14 @@ try {
   const homeAfterArchive = await getHomePage();
   check("GET / after archive → 200", homeAfterArchive.status === 200, `status=${homeAfterArchive.status}`);
   check("Home excludes archived Kira", !homeAfterArchive.body.includes("Kira Tan"));
+
+  const archivedSnooze = await snoozeFollowUp("p-kira", "2026-08-01");
+  check("archived person follow-up action stays blocked", archivedSnooze.status === 404, `status=${archivedSnooze.status}`);
+  const afterArchivedActionPayload = await getPeople();
+  check(
+    "archived follow-up action does not re-enter active payload",
+    !afterArchivedActionPayload.body?.people?.some((person) => person.id === "p-kira"),
+  );
 
   const restoredKira = await restorePeople("p-kira");
   check("POST /api/people/[id]/restore mock → 200", restoredKira.status === 200, `status=${restoredKira.status}`);

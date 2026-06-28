@@ -70,9 +70,15 @@ Current implementation:
 - DB mode opens one RLS-scoped transaction and calls
   `PeopleRepository.create(ownerId, input)`.
 
-Future implementation:
+Related People maintenance routes:
 
-- Person update/archive/date management should land as separate routes/seams.
+- `PATCH /api/people/[id]` updates business contact fields and maintenance
+  dates.
+- `POST /api/people/[id]/archive` and `/restore` manage soft archive state.
+- `POST /api/people/[id]/follow-up`, `/follow-up/done`,
+  `/follow-up/snooze`, and `/touchpoints` update the contact's lightweight
+  follow-up/touchpoint fields without changing draft, delivery, worker,
+  webhook, Gmail, Telegram, or WhatsApp contracts.
 
 ## GET /api/session
 

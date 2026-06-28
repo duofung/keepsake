@@ -160,6 +160,7 @@ const seedPeople: Person[] = [
     personalTaboos: [],
     nextOccasionId: null,
     lastContactAt: "2026-04-14",
+    lastTouchpointType: "meeting",
   },
 ];
 

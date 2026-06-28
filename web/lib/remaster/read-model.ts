@@ -1,5 +1,6 @@
 import type {
   ContactSegment,
+  ContactTouchpointType,
   Delivery,
   DeliveryStatus,
   ID,
@@ -277,11 +278,16 @@ function contactSegment(person: Person): ContactSegment {
 }
 
 function buildLastTouchLabel(person: Person, latestDelivery: Delivery | null): string {
+  const manualTouchDate = person.lastContactAt?.slice(0, 10) ?? null;
+  if (manualTouchDate && (!latestDelivery || manualTouchDate >= latestDelivery.sentAtISO.slice(0, 10))) {
+    return manualLastTouchLabel(manualTouchDate, person.lastTouchpointType);
+  }
+
   if (latestDelivery) {
     return `Last touch · ${deliveryStatusLabel(latestDelivery.status)} · ${latestDelivery.sentAtISO.slice(0, 10)}`;
   }
-  if (person.lastContactAt) {
-    return `Last touch · ${person.lastContactAt.slice(0, 10)}`;
+  if (manualTouchDate) {
+    return manualLastTouchLabel(manualTouchDate, person.lastTouchpointType);
   }
   return "Last touch · No outreach yet";
 }
@@ -311,6 +317,24 @@ function buildTouchpointSummary(
 ): string {
   const context = sourceContext ? ` · ${sourceContext}` : "";
   return `${segmentLabel(segment)} touchpoints · ${nextFollowUpLabel} · ${lastTouchLabel}${context}`;
+}
+
+function manualLastTouchLabel(dateISO: string, touchType?: ContactTouchpointType): string {
+  return touchType
+    ? `Last touch · ${touchpointTypeLabel(touchType)} · ${dateISO}`
+    : `Last touch · ${dateISO}`;
+}
+
+function touchpointTypeLabel(touchType: ContactTouchpointType): string {
+  const labels: Record<ContactTouchpointType, string> = {
+    call: "Call",
+    email: "Email",
+    meeting: "Meeting",
+    message: "Message",
+    note: "Note",
+    other: "Other touchpoint",
+  };
+  return labels[touchType];
 }
 
 function segmentLabel(segment: ContactSegment): string {

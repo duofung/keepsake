@@ -3,9 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
-import PersonDrawer, { type PersonMaintenanceInput } from "@/components/PersonDrawer";
+import PersonDrawer, { type PersonMaintenanceInput, type TouchpointLogInput } from "@/components/PersonDrawer";
 import type { FormEvent } from "react";
-import type { ContactSegment, Person, PeoplePayload, Relationship, RelationshipGroup } from "@/lib/domain";
+import type {
+  ContactSegment,
+  ContactTouchpointType,
+  Person,
+  PeoplePayload,
+  Relationship,
+  RelationshipGroup,
+} from "@/lib/domain";
 import type {
   RemasterDashboardAccount,
   RemasterDashboardActivity,
@@ -350,6 +357,72 @@ export default function PeopleClient({ overview, payload }: Props) {
     return restored;
   }
 
+  async function handleSetNextFollowUp(personId: string, date: string): Promise<Person> {
+    return runPersonAction(personId, "follow-up", { nextFollowUpAt: date }, (person) => ({
+      ...person,
+      nextFollowUpAt: date,
+    }));
+  }
+
+  async function handleMarkFollowUpDone(personId: string): Promise<Person> {
+    const date = todayISO();
+    return runPersonAction(personId, "follow-up/done", null, (person) => ({
+      ...person,
+      lastContactAt: date,
+      lastTouchpointType: "note",
+      nextFollowUpAt: undefined,
+    }));
+  }
+
+  async function handleSnoozeFollowUp(personId: string, date: string): Promise<Person> {
+    return runPersonAction(personId, "follow-up/snooze", { nextFollowUpAt: date }, (person) => ({
+      ...person,
+      nextFollowUpAt: date,
+    }));
+  }
+
+  async function handleLogTouchpoint(personId: string, input: TouchpointLogInput): Promise<Person> {
+    return runPersonAction(personId, "touchpoints", input, (person) => ({
+      ...person,
+      lastContactAt: input.occurredAt,
+      lastTouchpointType: input.touchType,
+    }));
+  }
+
+  async function runPersonAction(
+    personId: string,
+    path: string,
+    body: Record<string, unknown> | null,
+    localUpdate: (person: Person) => Person,
+  ): Promise<Person> {
+    const existing = people.find((person) => person.id === personId);
+    if (existing?.archivedAt) {
+      throw new Error("Restore this contact before managing follow-up actions.");
+    }
+
+    if (personId.startsWith("local-")) {
+      if (!existing) throw new Error("Person not found.");
+      const updated = normalizePerson(localUpdate(existing));
+      updatePersonInState(updated);
+      return updated;
+    }
+
+    const response = await fetch(`/api/people/${encodeURIComponent(personId)}/${path}`, {
+      method: "POST",
+      headers: body ? { "content-type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const responseBody = await response.json().catch(() => null) as { person?: Person; error?: string } | null;
+    if (!response.ok) {
+      throw new Error(responseBody?.error ?? "Could not update follow-up action.");
+    }
+    if (!responseBody?.person) throw new Error("Follow-up action did not return a contact.");
+
+    const updated = normalizePerson(responseBody.person);
+    updatePersonInState(updated);
+    return updated;
+  }
+
   function updatePersonInState(updated: Person) {
     setPeople((current) => (
       current.some((person) => person.id === updated.id)
@@ -652,6 +725,10 @@ export default function PeopleClient({ overview, payload }: Props) {
         onUpdate={handleUpdatePerson}
         onArchive={handleArchivePerson}
         onRestore={handleRestorePerson}
+        onSetNextFollowUp={handleSetNextFollowUp}
+        onMarkFollowUpDone={handleMarkFollowUpDone}
+        onSnoozeFollowUp={handleSnoozeFollowUp}
+        onLogTouchpoint={handleLogTouchpoint}
         onClose={() => setOpenId(null)}
       />
       <AddPersonDialog
@@ -758,7 +835,11 @@ function applyMaintenanceInput(person: Person, input: PersonMaintenanceInput): P
 }
 
 function lastTouchLabelForPerson(person: Person, fallback: string): string {
-  return person.lastContactAt ? `Last touch · ${person.lastContactAt.slice(0, 10)}` : fallback;
+  if (!person.lastContactAt) return fallback;
+  const dateISO = person.lastContactAt.slice(0, 10);
+  return person.lastTouchpointType
+    ? `Last touch · ${touchpointTypeLabel(person.lastTouchpointType)} · ${dateISO}`
+    : `Last touch · ${dateISO}`;
 }
 
 function nextFollowUpLabelForPerson(person: Person, fallback: string): string {
@@ -1210,9 +1291,26 @@ function normalizePerson(person: Person): Person {
     organization: person.organization ?? null,
     roleTitle: person.roleTitle ?? null,
     sourceContext: person.sourceContext ?? null,
+    lastTouchpointType: person.lastTouchpointType ?? undefined,
     nextFollowUpAt: person.nextFollowUpAt ?? undefined,
     archivedAt: person.archivedAt ?? undefined,
   };
+}
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function touchpointTypeLabel(touchType: ContactTouchpointType): string {
+  const labels: Record<ContactTouchpointType, string> = {
+    call: "Call",
+    email: "Email",
+    meeting: "Meeting",
+    message: "Message",
+    note: "Note",
+    other: "Other touchpoint",
+  };
+  return labels[touchType];
 }
 
 function readLocalPeople(): Person[] {

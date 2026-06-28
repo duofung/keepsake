@@ -26,12 +26,12 @@ Rules:
 | Workstream | Status | What Is Stable | Remaining Work |
 |---|---|---|---|
 | App shell + core UI | MVP demo-ready desktop | Full-screen desktop shell, Home, People, Workspace, History, Profile, preview-safe icon fallback, page smoke tests, and an end-to-end `pnpm test:mvp-demo` flow. | Mobile pass, deeper visual polish, interaction polish. |
-| ReMaster pivot / model blueprint | Compatibility runtime + business contact foundation + outreach workspace + touchpoint layer + dossier + maintenance loop + active/archive management | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`, now including touchpoint labels for last touch, next follow-up, and recent outreach. People has native business contact fields (`segment`, `organization`, `roleTitle`, `sourceContext`), update/archive/restore maintenance routes, active/archived management, business segment tabs, and a relationship dossier drawer that can edit active contacts inline and restore archived contacts; Workspace frames drafts as segment-aware business outreach with lightweight presets, and Home / People / History now read as a follow-up dashboard, relationship list, and touchpoint timeline. Profile + Sign-in and command-channel replies remain ReMaster-framed while keeping the current auth, Gmail, channel, worker, webhook, draft, and send contracts. | Plan native account/activity schema, backfill, and route deprecation later. |
-| Domain model | Stable current runtime with contact segments and maintenance dates | `domain.ts`, presentation mapping, mock data, API contracts. `Person` remains the storage/API anchor but now carries business contact fields for client/partner/prospect/investor/personal classification plus lightweight `lastContactAt`, `nextFollowUpAt`, and `archivedAt` maintenance fields. | Native account/contact split, stakeholder roles, imports, merge semantics. |
+| ReMaster pivot / model blueprint | Compatibility runtime + business contact foundation + outreach workspace + touchpoint layer + dossier + maintenance/action loop + active/archive management | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`, now including touchpoint labels for last touch, next follow-up, and recent outreach. People has native business contact fields (`segment`, `organization`, `roleTitle`, `sourceContext`), update/archive/restore plus follow-up action routes, active/archived management, business segment tabs, and a relationship dossier drawer that can edit active contacts inline, mark follow-ups done, snooze or set the next follow-up, log manual touchpoints, and restore archived contacts; Workspace frames drafts as segment-aware business outreach with lightweight presets, and Home / People / History now read as a follow-up dashboard, relationship list, and touchpoint timeline. Profile + Sign-in and command-channel replies remain ReMaster-framed while keeping the current auth, Gmail, channel, worker, webhook, draft, and send contracts. | Plan native account/activity schema, backfill, and route deprecation later. |
+| Domain model | Stable current runtime with contact segments and maintenance dates | `domain.ts`, presentation mapping, mock data, API contracts. `Person` remains the storage/API anchor but now carries business contact fields for client/partner/prospect/investor/personal classification plus lightweight `lastContactAt`, `lastTouchpointType`, `nextFollowUpAt`, and `archivedAt` maintenance/action fields. | Native account/contact split, stakeholder roles, imports, merge semantics. |
 | Mock seams | Stable | People payload, draft context, draft service, delivery history dispatchers default to mock. | Delete mock fallback only after DB mode is default and production-ready. |
 | DB schema/RLS | Stable | Postgres schema, catalog seed, local dev fixtures, RLS, transaction helper. | Future migrations for real auth/session, reminders, send queue details. |
 | Crypto | Stable | AES-256-GCM envelope helper, AAD conventions, tests. | KMS/DEK wrapping hardening for production. |
-| People data | Stable read/create/update/archive/restore path, business-first surface | DB-backed people payload, repository reads, `PeopleRepository.create/update/archive/restore`, `POST /api/people`, `PATCH /api/people/[id]`, `POST /api/people/[id]/archive`, `POST /api/people/[id]/restore`, and People-page Add contact + drawer maintenance flow now round-trip `segment`, `organization`, `roleTitle`, `sourceContext`, remember notes, `lastContactAt`, and `nextFollowUpAt` in mock and DB modes. The People page groups by Clients / Partners / Prospects / Investors / Personal, defaults to Active contacts, can switch to Archived contacts, and opens a business-first relationship dossier drawer with overview, inline maintenance for active contacts, review-only archived state, restore, context, touchpoints, notes, and workspace actions while mock mode still returns a `local-*` person for browser-local preview continuity. | Imports, merge semantics, richer follow-up scheduling, native account/activity schema/backfill. |
+| People data | Stable read/create/update/archive/restore/action path, business-first surface | DB-backed people payload, repository reads, `PeopleRepository.create/update/archive/restore/setNextFollowUp/markFollowUpDone/snoozeFollowUp/logTouchpoint`, `POST /api/people`, `PATCH /api/people/[id]`, `POST /api/people/[id]/archive`, `POST /api/people/[id]/restore`, follow-up/touchpoint action routes, and People-page Add contact + drawer maintenance flow now round-trip `segment`, `organization`, `roleTitle`, `sourceContext`, remember notes, `lastContactAt`, `lastTouchpointType`, and `nextFollowUpAt` in mock and DB modes. The People page groups by Clients / Partners / Prospects / Investors / Personal, defaults to Active contacts, can switch to Archived contacts, and opens a business-first relationship dossier drawer with overview, inline maintenance for active contacts, compact follow-up actions, review-only archived state, restore, context, touchpoints, notes, and workspace actions while mock mode still returns a `local-*` person for browser-local preview continuity. | Imports, merge semantics, native account/activity schema/backfill. |
 | Draft generation/persistence | Stable mock + opt-in LLM seam + DB persistence + user-edit versioning | DB-backed draft context/service, draft repository, latest/version reads. `KEEPSAKE_DRAFT_SOURCE=openai` plugs an OpenAI-compatible provider in behind `getDraftGenerator()`; default stays mock. `PATCH /api/drafts` persists Workspace subject + body + card edits as new canonical versions with `prompt_input_hash = NULL`. Workspace outreach presets are page-layer framing and fold into the existing `userInstruction` string only when the user asks for a revision; no new draft fields or route contract. | Tone editing, prompt evaluation harness, A/B, retries on `unavailable`, prompt provenance beyond `model_provider` / `model_version`. |
 | Delivery history | Stable read path + touchpoint timeline framing | DB-backed delivery-history read repository, History relationship/touchpoint timeline framing, and status badges for delivered/opened/failed rows. The underlying delivery storage, webhook, worker, and send contracts are unchanged. | Pagination, filters, live status refresh, native ReMaster activity storage. |
 | Auth/current user | Cookie-backed session foundation + Google sign-in transport + `/signin` page + page-level redirects + sign-out + dev fallback | `keepsake_session` HMAC-signed cookie is the primary identity source. Product pages call `requireSessionUserOrRedirect()` (cookie-only, redirects unauth to `/signin?returnTo=…`). Routes / API handlers / server seams still use `currentUserOrThrow()` (cookie-first with `DEV_OWNER_*` env fallback). `/api/auth/google/{start,callback}` runs the real Google identity flow. `/api/auth/dev-session/{start,clear}` are gated dev bootstrap; start 303s when given `?returnTo=`. `POST /api/auth/signout` clears the cookie and 303s to `/signin` — no DB, no Google revoke, no Gmail disconnect. Profile's "Sign out" row is now a real form POST. `/api/session` shape unchanged. | Retiring the `DEV_OWNER_*` env fallback from the cookie-first seam; Google grant revoke on signout. |
@@ -71,6 +71,43 @@ Reference:
   framing, and command-channel replies now use ReMaster review-pointer
   language, but their auth, Gmail, channel, worker, webhook, and send contracts
   remain unchanged.
+
+### P12-G. Business Follow-Up Actions
+
+Status: implemented. Guarded by `pnpm test:people`, `pnpm test`,
+`pnpm test:db`, `pnpm build`, and `git diff --check`.
+
+Goal: close the next-action loop so ReMaster can mark a follow-up done,
+snooze or set the next follow-up date, and log a lightweight manual
+touchpoint without introducing native account/activity storage or changing
+drafts, deliveries, worker, webhook, Gmail, Telegram, or WhatsApp contracts.
+
+Shipped:
+
+- `Person` now carries `lastTouchpointType` and `people` has a nullable
+  checked `last_touchpoint_type` column. Existing `last_contact_at` and
+  `next_follow_up_at` remain the date source of truth; no account/activity
+  table was introduced.
+- `PeopleRepository` adds owner-scoped `setNextFollowUp`, `markFollowUpDone`,
+  `snoozeFollowUp`, and `logTouchpoint` methods. DB mode runs them under the
+  existing transaction/RLS seam; mock mode mutates the in-memory people row.
+- Thin action routes landed under `/api/people/[id]/follow-up`,
+  `/follow-up/done`, `/follow-up/snooze`, and `/touchpoints`. Invalid bodies
+  map to 400; missing/cross-owner/archived rows stay 404 through the same
+  repository filtering as edit/archive.
+- The People dossier drawer now includes compact follow-up actions: Mark
+  done, Set next follow-up, Snooze, Log touchpoint, and Draft follow-up. The
+  returned `Person` refreshes the active People card, drawer labels, and Home
+  dashboard copy through the existing ReMaster read model.
+- Manual touchpoints update People/Home/dossier last-touch labels only. They
+  do not create delivery rows and do not appear in `/history`.
+
+Out of scope:
+
+- No native account/activity schema, import/merge flow, pipeline/deal
+  management, payment/subscription work, new dashboard page, mobile pass,
+  draft/delivery route changes, worker/webhook changes, Gmail OAuth changes,
+  Telegram/WhatsApp route changes, or delivery-history pollution.
 
 ### P12-F. Archived / Active Contact Management
 

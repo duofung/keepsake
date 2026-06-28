@@ -268,8 +268,10 @@ try {
   const dates = await withClient(adminUrl, async (client) => {
     const result = await client.query(`
       SELECT
+        to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today,
         to_char(CURRENT_DATE + 5, 'YYYY-MM-DD') AS soon,
         to_char(CURRENT_DATE + 30, 'YYYY-MM-DD') AS later,
+        to_char(CURRENT_DATE + 45, 'YYYY-MM-DD') AS snoozed,
         to_char(CURRENT_DATE - 9, 'YYYY-MM-DD') AS last_contact
     `);
     return result.rows[0];
@@ -429,9 +431,25 @@ try {
   assertEqual(updatedKira.lastContactAt, dates.soon, "update maps lastContactAt");
   assertEqual(updatedKira.nextFollowUpAt, dates.later, "update maps nextFollowUpAt");
 
+  const setFollowUpKira = await people.setNextFollowUp(ownerA, kiraId, dates.soon);
+  assertEqual(setFollowUpKira.nextFollowUpAt, dates.soon, "setNextFollowUp maps nextFollowUpAt");
+
+  const snoozedKira = await people.snoozeFollowUp(ownerA, kiraId, dates.snoozed);
+  assertEqual(snoozedKira.nextFollowUpAt, dates.snoozed, "snoozeFollowUp maps nextFollowUpAt");
+
+  const loggedKira = await people.logTouchpoint(ownerA, kiraId, "meeting", dates.soon);
+  assertEqual(loggedKira.lastContactAt, dates.soon, "logTouchpoint maps lastContactAt");
+  assertEqual(loggedKira.lastTouchpointType, "meeting", "logTouchpoint maps touchpoint type");
+
+  const doneKira = await people.markFollowUpDone(ownerA, kiraId);
+  assertEqual(doneKira.lastContactAt, dates.today, "markFollowUpDone stamps lastContactAt");
+  assertEqual(doneKira.lastTouchpointType, "note", "markFollowUpDone stamps note touchpoint");
+  assert(!doneKira.nextFollowUpAt, "markFollowUpDone clears nextFollowUpAt");
+
   const refreshedKira = await people.findById(ownerA, kiraId);
   assertEqual(refreshedKira?.name, "Kira Tan", "findById sees updated person");
-  assertEqual(refreshedKira?.nextFollowUpAt, dates.later, "findById sees updated nextFollowUpAt");
+  assertEqual(refreshedKira?.lastTouchpointType, "note", "findById sees latest touchpoint type");
+  assert(!refreshedKira?.nextFollowUpAt, "findById sees cleared nextFollowUpAt");
 
   let crossOwnerUpdateBlocked = false;
   try {
@@ -440,6 +458,14 @@ try {
     crossOwnerUpdateBlocked = error && typeof error === "object" && error.kind === "not-found";
   }
   assert(crossOwnerUpdateBlocked, "update hides another owner's person");
+
+  let crossOwnerFollowUpBlocked = false;
+  try {
+    await people.setNextFollowUp(ownerB, kiraId, dates.later);
+  } catch (error) {
+    crossOwnerFollowUpBlocked = error && typeof error === "object" && error.kind === "not-found";
+  }
+  assert(crossOwnerFollowUpBlocked, "follow-up actions hide another owner's person");
 
   const foundLin = await people.findById(ownerA, linId);
   const hiddenLin = await people.findById(ownerB, linId);

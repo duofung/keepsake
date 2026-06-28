@@ -3,6 +3,7 @@ import "server-only";
 import type { QueryResultRow } from "pg";
 import type {
   ContactSegment,
+  ContactTouchpointType,
   CultureId,
   OccasionKind,
   OccasionNode,
@@ -41,6 +42,7 @@ type PeopleRow = QueryResultRow & {
   known_facts_enc: Uint8Array;
   personal_taboos_enc: Uint8Array;
   last_contact_at_iso: string | null;
+  last_touchpoint_type: ContactTouchpointType | null;
   next_follow_up_at_iso: string | null;
   archived_at_iso: string | null;
   next_occasion_id: string | null;
@@ -124,6 +126,7 @@ async function personFromRow(ownerId: OwnerId, row: PeopleRow): Promise<Person> 
     personalTaboos: await decryptJson<string[]>(ownerId, "people", "personal_taboos_enc", row.personal_taboos_enc),
     nextOccasionId: row.next_occasion_id,
     lastContactAt: row.last_contact_at_iso ?? undefined,
+    lastTouchpointType: row.last_touchpoint_type ?? undefined,
     nextFollowUpAt: row.next_follow_up_at_iso ?? undefined,
     archivedAt: row.archived_at_iso ?? undefined,
   };
@@ -187,6 +190,7 @@ export class PgPeopleRepository implements PeopleRepository {
             p.known_facts_enc,
             p.personal_taboos_enc,
             to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            p.last_touchpoint_type,
             to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
             to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
             next_occ.id::text AS next_occasion_id
@@ -243,6 +247,7 @@ export class PgPeopleRepository implements PeopleRepository {
             p.known_facts_enc,
             p.personal_taboos_enc,
             to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            p.last_touchpoint_type,
             to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
             to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
             next_occ.id::text AS next_occasion_id
@@ -289,6 +294,7 @@ export class PgPeopleRepository implements PeopleRepository {
             known_facts_enc,
             personal_taboos_enc,
             last_contact_at,
+            last_touchpoint_type,
             next_follow_up_at
           )
           VALUES (
@@ -308,7 +314,8 @@ export class PgPeopleRepository implements PeopleRepository {
             $14,
             $15,
             $16,
-            $17
+            $17,
+            $18
           )
           RETURNING
             id::text,
@@ -327,6 +334,7 @@ export class PgPeopleRepository implements PeopleRepository {
             known_facts_enc,
             personal_taboos_enc,
             to_char(last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            last_touchpoint_type,
             to_char(next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
             to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
             NULL::text AS next_occasion_id
@@ -356,6 +364,7 @@ export class PgPeopleRepository implements PeopleRepository {
           await encryptJson(ownerId, "people", "known_facts_enc", input.knownFacts ?? []),
           await encryptJson(ownerId, "people", "personal_taboos_enc", input.personalTaboos ?? []),
           input.lastContactAt ?? null,
+          input.lastTouchpointType ?? null,
           input.nextFollowUpAt ?? null,
         ],
       );
@@ -423,6 +432,10 @@ export class PgPeopleRepository implements PeopleRepository {
         values.push(patch.lastContactAt);
         setters.push(`last_contact_at = $${values.length}`);
       }
+      if (patch.lastTouchpointType !== undefined) {
+        values.push(patch.lastTouchpointType);
+        setters.push(`last_touchpoint_type = $${values.length}`);
+      }
       if (patch.nextFollowUpAt !== undefined) {
         values.push(patch.nextFollowUpAt);
         setters.push(`next_follow_up_at = $${values.length}`);
@@ -463,6 +476,7 @@ export class PgPeopleRepository implements PeopleRepository {
             p.known_facts_enc,
             p.personal_taboos_enc,
             to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            p.last_touchpoint_type,
             to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
             to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
             next_occ.id::text AS next_occasion_id
@@ -515,6 +529,7 @@ export class PgPeopleRepository implements PeopleRepository {
             p.known_facts_enc,
             p.personal_taboos_enc,
             to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            p.last_touchpoint_type,
             to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
             to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
             NULL::text AS next_occasion_id
@@ -558,6 +573,7 @@ export class PgPeopleRepository implements PeopleRepository {
             p.known_facts_enc,
             p.personal_taboos_enc,
             to_char(p.last_contact_at, 'YYYY-MM-DD') AS last_contact_at_iso,
+            p.last_touchpoint_type,
             to_char(p.next_follow_up_at, 'YYYY-MM-DD') AS next_follow_up_at_iso,
             to_char(p.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS archived_at_iso,
             next_occ.id::text AS next_occasion_id
@@ -580,6 +596,35 @@ export class PgPeopleRepository implements PeopleRepository {
       if (active) throw repoError("validation", "Person is already active.");
       throw repoError("not-found", "Person not found.");
     });
+  }
+
+  async setNextFollowUp(ownerId: OwnerId, personId: string, date: string, tx?: Tx): Promise<Person> {
+    return this.update(ownerId, personId, { nextFollowUpAt: date }, tx);
+  }
+
+  async markFollowUpDone(ownerId: OwnerId, personId: string, tx?: Tx): Promise<Person> {
+    return this.update(ownerId, personId, {
+      lastContactAt: todayISO(),
+      lastTouchpointType: "note",
+      nextFollowUpAt: null,
+    }, tx);
+  }
+
+  async snoozeFollowUp(ownerId: OwnerId, personId: string, date: string, tx?: Tx): Promise<Person> {
+    return this.update(ownerId, personId, { nextFollowUpAt: date }, tx);
+  }
+
+  async logTouchpoint(
+    ownerId: OwnerId,
+    personId: string,
+    touchType: ContactTouchpointType,
+    occurredAt?: string,
+    tx?: Tx,
+  ): Promise<Person> {
+    return this.update(ownerId, personId, {
+      lastContactAt: occurredAt ?? todayISO(),
+      lastTouchpointType: touchType,
+    }, tx);
   }
 
   async softDelete(ownerId: OwnerId, personId: string, tx?: Tx): Promise<void> {
@@ -722,6 +767,10 @@ export class PgPeopleRepository implements PeopleRepository {
     );
     return result.rows;
   }
+}
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 export function createPeopleRepository(): PeopleRepository {

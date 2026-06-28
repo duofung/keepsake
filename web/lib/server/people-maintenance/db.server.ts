@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ContactTouchpointType } from "@/lib/domain";
 import type { PersonPatch } from "@/lib/repositories";
 import {
   AuthError,
@@ -47,6 +48,58 @@ export async function restoreDbPerson(personId: string): Promise<PeopleMaintenan
     return { ok: true, person };
   } catch (error) {
     return mapDbMaintenanceError(error, "Could not restore person.");
+  }
+}
+
+export async function setDbNextFollowUp(personId: string, date: string): Promise<PeopleMaintenanceResult> {
+  try {
+    const ownerId = await currentUserIdOrThrow();
+    const person = await transaction(ownerId, (tx) => (
+      peopleRepository.setNextFollowUp(ownerId, personId, date, tx)
+    ));
+    return { ok: true, person };
+  } catch (error) {
+    return mapDbMaintenanceError(error, "Could not set next follow-up.");
+  }
+}
+
+export async function markDbFollowUpDone(personId: string): Promise<PeopleMaintenanceResult> {
+  try {
+    const ownerId = await currentUserIdOrThrow();
+    const person = await transaction(ownerId, (tx) => (
+      peopleRepository.markFollowUpDone(ownerId, personId, tx)
+    ));
+    return { ok: true, person };
+  } catch (error) {
+    return mapDbMaintenanceError(error, "Could not mark follow-up done.");
+  }
+}
+
+export async function snoozeDbFollowUp(personId: string, date: string): Promise<PeopleMaintenanceResult> {
+  try {
+    const ownerId = await currentUserIdOrThrow();
+    const person = await transaction(ownerId, (tx) => (
+      peopleRepository.snoozeFollowUp(ownerId, personId, date, tx)
+    ));
+    return { ok: true, person };
+  } catch (error) {
+    return mapDbMaintenanceError(error, "Could not snooze follow-up.");
+  }
+}
+
+export async function logDbTouchpoint(
+  personId: string,
+  touchType: ContactTouchpointType,
+  occurredAt?: string,
+): Promise<PeopleMaintenanceResult> {
+  try {
+    const ownerId = await currentUserIdOrThrow();
+    const person = await transaction(ownerId, (tx) => (
+      peopleRepository.logTouchpoint(ownerId, personId, touchType, occurredAt, tx)
+    ));
+    return { ok: true, person };
+  } catch (error) {
+    return mapDbMaintenanceError(error, "Could not log touchpoint.");
   }
 }
 

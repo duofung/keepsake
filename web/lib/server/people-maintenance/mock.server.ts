@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Person } from "@/lib/domain";
+import type { ContactTouchpointType, Person } from "@/lib/domain";
 import type { PersonPatch } from "@/lib/repositories";
 import { people } from "@/lib/mock";
 import type { PeopleMaintenanceResult } from "./index.server";
@@ -40,6 +40,33 @@ export async function restoreMockPerson(personId: string): Promise<PeopleMainten
   return { ok: true, person };
 }
 
+export async function setMockNextFollowUp(personId: string, date: string): Promise<PeopleMaintenanceResult> {
+  return updateMockPerson(personId, { nextFollowUpAt: date });
+}
+
+export async function markMockFollowUpDone(personId: string): Promise<PeopleMaintenanceResult> {
+  return updateMockPerson(personId, {
+    lastContactAt: todayISO(),
+    lastTouchpointType: "note",
+    nextFollowUpAt: null,
+  });
+}
+
+export async function snoozeMockFollowUp(personId: string, date: string): Promise<PeopleMaintenanceResult> {
+  return updateMockPerson(personId, { nextFollowUpAt: date });
+}
+
+export async function logMockTouchpoint(
+  personId: string,
+  touchType: ContactTouchpointType,
+  occurredAt?: string,
+): Promise<PeopleMaintenanceResult> {
+  return updateMockPerson(personId, {
+    lastContactAt: occurredAt ?? todayISO(),
+    lastTouchpointType: touchType,
+  });
+}
+
 function applyPatch(person: Person, patch: PersonPatch) {
   if (patch.name !== undefined) person.name = patch.name;
   if (patch.segment !== undefined) person.segment = patch.segment;
@@ -56,10 +83,18 @@ function applyPatch(person: Person, patch: PersonPatch) {
     if (patch.lastContactAt) person.lastContactAt = patch.lastContactAt;
     else delete person.lastContactAt;
   }
+  if (patch.lastTouchpointType !== undefined) {
+    if (patch.lastTouchpointType) person.lastTouchpointType = patch.lastTouchpointType;
+    else delete person.lastTouchpointType;
+  }
   if (patch.nextFollowUpAt !== undefined) {
     if (patch.nextFollowUpAt) person.nextFollowUpAt = patch.nextFollowUpAt;
     else delete person.nextFollowUpAt;
   }
+}
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function notFound(): PeopleMaintenanceResult {

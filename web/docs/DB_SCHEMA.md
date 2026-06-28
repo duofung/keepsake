@@ -258,6 +258,8 @@ CREATE TABLE people (
   known_facts_enc    bytea NOT NULL,                   -- 🔒  jsonb→encrypted
   personal_taboos_enc bytea NOT NULL,                  -- 🔒  jsonb→encrypted
   last_contact_at    date,
+  last_touchpoint_type text
+                     CHECK (last_touchpoint_type IN ('call','email','meeting','message','note','other')),
   next_follow_up_at  date,
   archived_at        timestamptz,
 
@@ -288,6 +290,9 @@ CREATE INDEX people_owner_archived_idx
 - `next_occasion_id` is **not** stored. See §6.
 - `next_follow_up_at` is the lightweight maintenance date set from the People
   dossier; it is not a reminder job or scheduler contract.
+- `last_touchpoint_type` is a checked lightweight enum for manual People/Home
+  touchpoint labels. It is not a native activity table and does not enter
+  delivery history.
 - `archived_at` is a soft archive flag. Default People/Home read paths filter
   archived contacts, but delivery history keeps rendering its denormalized
   recipient rows.

@@ -18,7 +18,7 @@ methods will follow the same pattern as they land.
 | [`catalog.ts`](./catalog.ts) | `CatalogRepository` — catalog access to `relationships` + `cultures`. Relationships are owner-aware because user-custom rows share the table with system presets. |
 | [`catalog.server.ts`](./catalog.server.ts) | `PgCatalogRepository` — first server-only runtime implementation, backed by `pg` through `lib/server/db/transaction.server.ts`. |
 | [`people.ts`](./people.ts) | `PeopleRepository` — per-user CRUD over `people` + `occasion_nodes`. |
-| [`people.server.ts`](./people.server.ts) | `PgPeopleRepository` — runtime implementation for people + occasions, including encrypted columns via `lib/server/crypto/envelope.server.ts`. Supports owner-scoped active/archived reads, `create`, `update`, soft `archive`, and `restore`; occasion writes remain future. |
+| [`people.server.ts`](./people.server.ts) | `PgPeopleRepository` — runtime implementation for people + occasions, including encrypted columns via `lib/server/crypto/envelope.server.ts`. Supports owner-scoped active/archived reads, `create`, `update`, soft `archive`, `restore`, and lightweight follow-up/touchpoint actions; occasion writes remain future. |
 | [`drafts.ts`](./drafts.ts) | `DraftRepository` — persistence for `message_drafts`. |
 | [`drafts.server.ts`](./drafts.server.ts) | `PgDraftRepository` — runtime implementation for `message_drafts` persistence/cache, including encrypted subject/paragraph/note/instruction columns. |
 | [`deliveries.ts`](./deliveries.ts) | `DeliveryRepository` — `deliveries` reads + the send/webhook write paths. |
@@ -134,16 +134,18 @@ user-custom rows.
 ### PeopleRepository
 
 Runtime implementation: `people.server.ts` for owner-scoped reads, person
-creation, drawer maintenance updates, soft archive, and restore, including encrypted
+creation, drawer maintenance updates, soft archive, restore, and follow-up actions, including encrypted
 business contact fields (`organization`, `roleTitle`, `sourceContext`), a
 cleartext checked `segment` with legacy rows defaulting to `personal`, and
-lightweight follow-up/archive columns (`next_follow_up_at`, `archived_at`). It
+lightweight follow-up/touchpoint/archive columns (`last_contact_at`,
+`last_touchpoint_type`, `next_follow_up_at`, `archived_at`). It
 backs `/api/people`, `/api/people/[id]`, `/api/people/[id]/archive`,
-`/api/people/[id]/restore`, and `/api/drafts` context resolution when `KEEPSAKE_DATA_SOURCE=db`;
+`/api/people/[id]/restore`, the follow-up/touchpoint action routes, and
+`/api/drafts` context resolution when `KEEPSAKE_DATA_SOURCE=db`;
 mock-backed server seams remain the default.
 `pnpm test:db:people` verifies decryption, RLS behavior,
 derived `nextOccasionId` / `isPrimary`, business field defaults, person
-creation, update, archive/restore filtering, and `PeoplePayload` shape against
+creation, update, follow-up actions, archive/restore filtering, and `PeoplePayload` shape against
 temporary Postgres.
 
 Per-user. All methods take `ownerId: OwnerId` as the first argument and
@@ -159,6 +161,10 @@ occasion belongs to a person — a `personId` lookup already proves ownership.
 | `update(ownerId, personId, patch)` | `Person` | `PATCH /api/people/[id]` / People drawer maintenance |
 | `archive(ownerId, personId)` | `Person` | `POST /api/people/[id]/archive` / People drawer archive |
 | `restore(ownerId, personId)` | `Person` | `POST /api/people/[id]/restore` / People archived drawer restore |
+| `setNextFollowUp(ownerId, personId, date)` | `Person` | `POST /api/people/[id]/follow-up` / People drawer set next follow-up |
+| `markFollowUpDone(ownerId, personId)` | `Person` | `POST /api/people/[id]/follow-up/done` / People drawer mark done |
+| `snoozeFollowUp(ownerId, personId, date)` | `Person` | `POST /api/people/[id]/follow-up/snooze` / People drawer snooze |
+| `logTouchpoint(ownerId, personId, touchType, occurredAt?)` | `Person` | `POST /api/people/[id]/touchpoints` / People drawer log touchpoint |
 | `softDelete(ownerId, personId)` | `void` | Backward-compatible alias for archive |
 | `listOccasions(ownerId, personId)` | `OccasionNode[]` | Drawer load (internal) |
 | `findOccasionForPerson(ownerId, personId, occasionId)` | `OccasionNode \| null` | `/api/drafts` POST (internal) when `occasionId !== null` |

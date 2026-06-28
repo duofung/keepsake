@@ -12,7 +12,9 @@
 //   listForOwner            → /api/people GET (server)
 //   listWithRelations       → /api/people GET — single batched query
 //   findById                → /api/drafts POST (internal); future drawer GET
-//   create / update / archive → "Add contact" / drawer maintenance routes
+//   create / update / archive / restore → Add contact / drawer maintenance routes
+//   setNextFollowUp / markFollowUpDone / snoozeFollowUp / logTouchpoint
+//                            → drawer follow-up action routes
 //   listOccasions           → drawer load (internal)
 //   findOccasion            → /api/drafts POST (internal)
 //   nextOccasionFor         → resolves Person.nextOccasionId at read time
@@ -20,6 +22,7 @@
 //   upsertOccasion / removeOccasion → future drawer / first-run setup
 
 import type {
+  ContactTouchpointType,
   ID,
   OccasionNode,
   PeoplePayload,
@@ -62,6 +65,24 @@ export interface PeopleRepository {
 
   /** Clears `archived_at`; row re-enters default People/Home reads. */
   restore(ownerId: OwnerId, personId: ID, tx?: Tx): Promise<Person>;
+
+  /** Sets or replaces the next lightweight follow-up date. */
+  setNextFollowUp(ownerId: OwnerId, personId: ID, date: string, tx?: Tx): Promise<Person>;
+
+  /** Clears the current follow-up and logs a lightweight completion touch. */
+  markFollowUpDone(ownerId: OwnerId, personId: ID, tx?: Tx): Promise<Person>;
+
+  /** Moves the next follow-up date without changing other dossier fields. */
+  snoozeFollowUp(ownerId: OwnerId, personId: ID, date: string, tx?: Tx): Promise<Person>;
+
+  /** Logs a manual non-delivery touchpoint for People/Home/dossier labels. */
+  logTouchpoint(
+    ownerId: OwnerId,
+    personId: ID,
+    touchType: ContactTouchpointType,
+    occurredAt?: string,
+    tx?: Tx,
+  ): Promise<Person>;
 
   /** Backward-compatible alias for older call sites. */
   softDelete(ownerId: OwnerId, personId: ID, tx?: Tx): Promise<void>;

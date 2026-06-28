@@ -166,6 +166,34 @@ async function restorePeople(id) {
   return { status: res.status, body: payload };
 }
 
+async function setNextFollowUp(id, date) {
+  return postPersonAction(id, "follow-up", { nextFollowUpAt: date });
+}
+
+async function markFollowUpDone(id) {
+  return postPersonAction(id, "follow-up/done");
+}
+
+async function snoozeFollowUp(id, date) {
+  return postPersonAction(id, "follow-up/snooze", { nextFollowUpAt: date });
+}
+
+async function logTouchpoint(id, body) {
+  return postPersonAction(id, "touchpoints", body);
+}
+
+async function postPersonAction(id, path, body) {
+  const res = await fetch(`${base}/api/people/${encodeURIComponent(id)}/${path}`, {
+    method: "POST",
+    headers: body ? { "content-type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = res.headers.get("content-type")?.includes("json")
+    ? await res.json().catch(() => null)
+    : null;
+  return { status: res.status, body: payload };
+}
+
 const failures = [];
 function check(name, cond, detail = "") {
   if (cond) {
@@ -375,6 +403,29 @@ try {
   check("updated nextFollowUpAt preserved", updatedKira.body?.nextFollowUpAt === "2026-07-08", `got ${updatedKira.body?.nextFollowUpAt}`);
   check("updated note preserved", updatedKira.body?.knownFacts?.[0]?.text === "Wants a short deck before July.", `body=${JSON.stringify(updatedKira.body)}`);
 
+  const setKiraFollowUp = await setNextFollowUp(kira?.id ?? "", "2026-07-12");
+  check("POST /api/people/[id]/follow-up DB → 200", setKiraFollowUp.status === 200, `status=${setKiraFollowUp.status}`);
+  check("DB set follow-up returns nextFollowUpAt", setKiraFollowUp.body?.person?.nextFollowUpAt === "2026-07-12", `body=${JSON.stringify(setKiraFollowUp.body)}`);
+
+  const snoozedKira = await snoozeFollowUp(kira?.id ?? "", "2026-07-22");
+  check("POST /api/people/[id]/follow-up/snooze DB → 200", snoozedKira.status === 200, `status=${snoozedKira.status}`);
+  check("DB snooze returns moved nextFollowUpAt", snoozedKira.body?.person?.nextFollowUpAt === "2026-07-22", `body=${JSON.stringify(snoozedKira.body)}`);
+
+  const loggedKira = await logTouchpoint(kira?.id ?? "", { touchType: "meeting", occurredAt: "2026-06-22" });
+  check("POST /api/people/[id]/touchpoints DB → 200", loggedKira.status === 200, `status=${loggedKira.status}`);
+  check("DB log touchpoint returns lastContactAt", loggedKira.body?.person?.lastContactAt === "2026-06-22", `body=${JSON.stringify(loggedKira.body)}`);
+  check("DB log touchpoint returns type", loggedKira.body?.person?.lastTouchpointType === "meeting", `body=${JSON.stringify(loggedKira.body)}`);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const doneKira = await markFollowUpDone(kira?.id ?? "");
+  check("POST /api/people/[id]/follow-up/done DB → 200", doneKira.status === 200, `status=${doneKira.status}`);
+  check("DB mark done clears nextFollowUpAt", !doneKira.body?.person?.nextFollowUpAt, `body=${JSON.stringify(doneKira.body)}`);
+  check("DB mark done logs note touchpoint today", doneKira.body?.person?.lastContactAt === today && doneKira.body?.person?.lastTouchpointType === "note", `body=${JSON.stringify(doneKira.body)}`);
+
+  const crossOwnerFollowUp = await setNextFollowUp(otherPersonId, "2026-08-01");
+  check("POST /api/people/[id]/follow-up cross-owner → 404", crossOwnerFollowUp.status === 404, `status=${crossOwnerFollowUp.status}`);
+  check("cross-owner follow-up code = not_found", crossOwnerFollowUp.body?.code === "not_found", `body=${JSON.stringify(crossOwnerFollowUp.body)}`);
+
   const invalidPatch = await patchPeople(kira?.id ?? "", { nextFollowUpAt: "2026-13-40" });
   check("PATCH /api/people/[id] invalid date → 400", invalidPatch.status === 400, `status=${invalidPatch.status}`);
   check("invalid date code = invalid_request", invalidPatch.body?.code === "invalid_request", `body=${JSON.stringify(invalidPatch.body)}`);
@@ -453,6 +504,9 @@ try {
 
   const archivedAgain = await archivePeople(kira?.id ?? "");
   check("POST /api/people/[id]/archive already archived → 404", archivedAgain.status === 404, `status=${archivedAgain.status}`);
+
+  const archivedSnooze = await snoozeFollowUp(kira?.id ?? "", "2026-08-01");
+  check("archived person follow-up action → 404", archivedSnooze.status === 404, `status=${archivedSnooze.status}`);
 
   const afterArchive = await getPeople();
   check(

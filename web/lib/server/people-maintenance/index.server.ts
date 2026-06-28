@@ -1,10 +1,26 @@
 import "server-only";
 
-import type { ContactSegment, Person, PersonKnownFact } from "@/lib/domain";
+import type { ContactSegment, ContactTouchpointType, Person, PersonKnownFact } from "@/lib/domain";
 import type { PersonPatch } from "@/lib/repositories";
 import { dataSource } from "@/lib/server/auth/current-user.server";
-import { archiveDbPerson, restoreDbPerson, updateDbPerson } from "./db.server";
-import { archiveMockPerson, restoreMockPerson, updateMockPerson } from "./mock.server";
+import {
+  archiveDbPerson,
+  logDbTouchpoint,
+  markDbFollowUpDone,
+  restoreDbPerson,
+  setDbNextFollowUp,
+  snoozeDbFollowUp,
+  updateDbPerson,
+} from "./db.server";
+import {
+  archiveMockPerson,
+  logMockTouchpoint,
+  markMockFollowUpDone,
+  restoreMockPerson,
+  setMockNextFollowUp,
+  snoozeMockFollowUp,
+  updateMockPerson,
+} from "./mock.server";
 
 const CONTACT_SEGMENTS = new Set<ContactSegment>([
   "client",
@@ -12,6 +28,15 @@ const CONTACT_SEGMENTS = new Set<ContactSegment>([
   "prospect",
   "investor",
   "personal",
+]);
+
+const TOUCHPOINT_TYPES = new Set<ContactTouchpointType>([
+  "call",
+  "email",
+  "meeting",
+  "message",
+  "note",
+  "other",
 ]);
 
 export type PeopleMaintenanceResult =
@@ -45,6 +70,48 @@ export async function restorePersonFromRequest(personId: string): Promise<People
   return dataSource() === "db"
     ? restoreDbPerson(personId)
     : restoreMockPerson(personId);
+}
+
+export async function setNextFollowUpFromRequest(
+  personId: string,
+  input: unknown,
+): Promise<PeopleMaintenanceResult> {
+  const normalized = normalizeFollowUpDate(input);
+  if (!normalized.ok) return normalized;
+
+  return dataSource() === "db"
+    ? setDbNextFollowUp(personId, normalized.date)
+    : setMockNextFollowUp(personId, normalized.date);
+}
+
+export async function markFollowUpDoneFromRequest(personId: string): Promise<PeopleMaintenanceResult> {
+  return dataSource() === "db"
+    ? markDbFollowUpDone(personId)
+    : markMockFollowUpDone(personId);
+}
+
+export async function snoozeFollowUpFromRequest(
+  personId: string,
+  input: unknown,
+): Promise<PeopleMaintenanceResult> {
+  const normalized = normalizeFollowUpDate(input);
+  if (!normalized.ok) return normalized;
+
+  return dataSource() === "db"
+    ? snoozeDbFollowUp(personId, normalized.date)
+    : snoozeMockFollowUp(personId, normalized.date);
+}
+
+export async function logTouchpointFromRequest(
+  personId: string,
+  input: unknown,
+): Promise<PeopleMaintenanceResult> {
+  const normalized = normalizeTouchpointInput(input);
+  if (!normalized.ok) return normalized;
+
+  return dataSource() === "db"
+    ? logDbTouchpoint(personId, normalized.touchType, normalized.occurredAt)
+    : logMockTouchpoint(personId, normalized.touchType, normalized.occurredAt);
 }
 
 function normalizePersonPatch(input: unknown):
@@ -93,6 +160,12 @@ function normalizePersonPatch(input: unknown):
     patch.lastContactAt = value.value;
   }
 
+  if ("lastTouchpointType" in input) {
+    const value = nullableTouchpointType(input.lastTouchpointType, "lastTouchpointType");
+    if (!value.ok) return value;
+    patch.lastTouchpointType = value.value;
+  }
+
   if ("nextFollowUpAt" in input) {
     const value = nullableDate(input.nextFollowUpAt, "nextFollowUpAt");
     if (!value.ok) return value;
@@ -106,6 +179,38 @@ function normalizePersonPatch(input: unknown):
 
   if (Object.keys(patch).length === 0) return invalid("No supported fields to update.");
   return { ok: true, patch };
+}
+
+function normalizeFollowUpDate(input: unknown):
+  | { ok: true; date: string }
+  | Extract<PeopleMaintenanceResult, { ok: false }> {
+  if (!isRecord(input)) return invalid("Request body must be an object.");
+  const rawDate = "nextFollowUpAt" in input ? input.nextFollowUpAt : input.date;
+  const value = nullableDate(rawDate, "nextFollowUpAt");
+  if (!value.ok) return value;
+  if (!value.value) return invalid("nextFollowUpAt is required.");
+  return { ok: true, date: value.value };
+}
+
+function normalizeTouchpointInput(input: unknown):
+  | { ok: true; touchType: ContactTouchpointType; occurredAt?: string }
+  | Extract<PeopleMaintenanceResult, { ok: false }> {
+  if (!isRecord(input)) return invalid("Request body must be an object.");
+  const touchType = nullableTouchpointType(input.touchType, "touchType");
+  if (!touchType.ok) return touchType;
+  if (!touchType.value) return invalid("touchType is required.");
+
+  if (!("occurredAt" in input)) {
+    return { ok: true, touchType: touchType.value };
+  }
+
+  const occurredAt = nullableDate(input.occurredAt, "occurredAt");
+  if (!occurredAt.ok) return occurredAt;
+  return {
+    ok: true,
+    touchType: touchType.value,
+    occurredAt: occurredAt.value ?? undefined,
+  };
 }
 
 function nullableStringField(
@@ -141,6 +246,21 @@ function nullableDate(
     return invalid(`${fieldName} must be a valid date.`);
   }
   return { ok: true, value: trimmed };
+}
+
+function nullableTouchpointType(
+  value: unknown,
+  fieldName: string,
+):
+  | { ok: true; value: ContactTouchpointType | null }
+  | Extract<PeopleMaintenanceResult, { ok: false }> {
+  if (value === null || value === "") return { ok: true, value: null };
+  if (typeof value !== "string") return invalid(`${fieldName} must be a supported touchpoint type or null.`);
+  const trimmed = value.trim();
+  if (!TOUCHPOINT_TYPES.has(trimmed as ContactTouchpointType)) {
+    return invalid(`${fieldName} is not supported.`);
+  }
+  return { ok: true, value: trimmed as ContactTouchpointType };
 }
 
 function invalid(error: string): Extract<PeopleMaintenanceResult, { ok: false }> {

@@ -69,8 +69,8 @@ docker rm -f keepsake-pg-test
 run. It connects with `DATABASE_URL`, upserts one dev owner, then upserts:
 
 - 5 people from `lib/mock.ts`, including business contact segment,
-  organization, role/title, source context, last touch, next follow-up,
-  and soft archive fields
+  organization, role/title, source context, last touch, lightweight
+  touchpoint type, next follow-up, and soft archive fields
 - 7 occasion nodes from `lib/mock.ts`
 - 4 delivery history rows from `lib/mock.ts`
 
@@ -114,7 +114,7 @@ pnpm test:db:fixtures
 |---|---|
 | `users` | `id = current_user_id()` |
 | `gmail_accounts` | `owner_id = current_user_id()` (sender account metadata + encrypted refresh token) |
-| `people` | `owner_id = current_user_id()`; `segment` defaults to `personal` for legacy rows; `archived_at` is a soft archive flag filtered by default People/Home reads |
+| `people` | `owner_id = current_user_id()`; `segment` defaults to `personal` for legacy rows; `last_touchpoint_type` is a lightweight checked enum for manual touch labels; `archived_at` is a soft archive flag filtered by default People/Home reads |
 | `occasion_nodes` | `owner_id = current_user_id()`; `(person_id, owner_id)` composite FK prevents cross-owner occasions |
 | `message_drafts` | `owner_id = current_user_id()` |
 | `deliveries` | `owner_id = current_user_id()` |

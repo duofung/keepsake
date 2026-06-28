@@ -220,6 +220,8 @@ CREATE TABLE people (
   known_facts_enc       bytea NOT NULL,  -- encrypted JSON.stringify(PersonKnownFact[])
   personal_taboos_enc   bytea NOT NULL,  -- encrypted JSON.stringify(string[])
   last_contact_at       date,
+  last_touchpoint_type  text
+                        CHECK (last_touchpoint_type IN ('call', 'email', 'meeting', 'message', 'note', 'other')),
   next_follow_up_at     date,
   archived_at           timestamptz,
 
@@ -254,6 +256,9 @@ COMMENT ON COLUMN people.segment IS
 
 COMMENT ON COLUMN people.archived_at IS
   'Soft archive timestamp. Default People/Home reads hide archived rows while delivery history remains.';
+
+COMMENT ON COLUMN people.last_touchpoint_type IS
+  'Lightweight manual touchpoint kind for People/Home/dossier framing. Not delivery history.';
 
 -- Note: Person.nextOccasionId from domain.ts is NOT stored. Derived per-read,
 -- see docs/DB_SCHEMA.md §6.

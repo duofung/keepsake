@@ -16,6 +16,7 @@ import type {
   Tone,
   CultureId,
   ContactSegment,
+  ContactTouchpointType,
 } from "../domain";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +94,7 @@ export interface PersonCreateInput {
   knownFacts?: PersonKnownFact[];
   personalTaboos?: string[];
   lastContactAt?: string | null;
+  lastTouchpointType?: ContactTouchpointType | null;
   nextFollowUpAt?: string | null;
   archivedAt?: string | null;
 }

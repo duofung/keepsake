@@ -5,7 +5,14 @@ import { useEffect, useState } from "react";
 import Icon from "./Icon";
 import Avatar from "./Avatar";
 import type { FormEvent, ReactNode } from "react";
-import type { ContactSegment, CultureRule, OccasionNode, Person, Relationship } from "@/lib/domain";
+import type {
+  ContactSegment,
+  ContactTouchpointType,
+  CultureRule,
+  OccasionNode,
+  Person,
+  Relationship,
+} from "@/lib/domain";
 import type { RemasterDashboardAccount } from "@/lib/remaster/read-model";
 import { nodeChipText, occasionIcon, occasionTintBg, urgencyLevel } from "@/lib/presentation";
 
@@ -29,11 +36,23 @@ type Props = {
   onUpdate: (personId: string, input: PersonMaintenanceInput) => Promise<Person>;
   onArchive: (personId: string) => Promise<void>;
   onRestore: (personId: string) => Promise<Person>;
+  onSetNextFollowUp: (personId: string, date: string) => Promise<Person>;
+  onMarkFollowUpDone: (personId: string) => Promise<Person>;
+  onSnoozeFollowUp: (personId: string, date: string) => Promise<Person>;
+  onLogTouchpoint: (personId: string, input: TouchpointLogInput) => Promise<Person>;
   onClose: () => void;
 };
 
+export type TouchpointLogInput = {
+  touchType: ContactTouchpointType;
+  occurredAt: string;
+};
+
+type FollowUpAction = "mark-done" | "set-next" | "snooze" | "log-touchpoint";
+
 export default function PersonDrawer({
-  person, account, relationship, culture, occasions, onUpdate, onArchive, onRestore, onClose,
+  person, account, relationship, culture, occasions, onUpdate, onArchive, onRestore,
+  onSetNextFollowUp, onMarkFollowUpDone, onSnoozeFollowUp, onLogTouchpoint, onClose,
 }: Props) {
   const open = !!person;
   return (
@@ -69,6 +88,10 @@ export default function PersonDrawer({
             onUpdate={onUpdate}
             onArchive={onArchive}
             onRestore={onRestore}
+            onSetNextFollowUp={onSetNextFollowUp}
+            onMarkFollowUpDone={onMarkFollowUpDone}
+            onSnoozeFollowUp={onSnoozeFollowUp}
+            onLogTouchpoint={onLogTouchpoint}
             onClose={onClose}
           />
         )}
@@ -78,13 +101,18 @@ export default function PersonDrawer({
 }
 
 function DrawerContent({
-  person, account, relationship, culture, occasions, onUpdate, onArchive, onRestore, onClose,
+  person, account, relationship, culture, occasions, onUpdate, onArchive, onRestore,
+  onSetNextFollowUp, onMarkFollowUpDone, onSnoozeFollowUp, onLogTouchpoint, onClose,
 }: {
   person: Person; account: RemasterDashboardAccount | null; relationship: Relationship; culture: CultureRule;
   occasions: OccasionNode[];
   onUpdate: (personId: string, input: PersonMaintenanceInput) => Promise<Person>;
   onArchive: (personId: string) => Promise<void>;
   onRestore: (personId: string) => Promise<Person>;
+  onSetNextFollowUp: (personId: string, date: string) => Promise<Person>;
+  onMarkFollowUpDone: (personId: string) => Promise<Person>;
+  onSnoozeFollowUp: (personId: string, date: string) => Promise<Person>;
+  onLogTouchpoint: (personId: string, input: TouchpointLogInput) => Promise<Person>;
   onClose: () => void;
 }) {
   const primary = occasions.find((o) => o.isPrimary) ?? occasions[0] ?? null;
@@ -104,6 +132,10 @@ function DrawerContent({
   const [saving, setSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [actionBusy, setActionBusy] = useState<FollowUpAction | null>(null);
+  const [actionDate, setActionDate] = useState(() => defaultFollowUpDate(person));
+  const [touchDate, setTouchDate] = useState(() => todayISO());
+  const [touchType, setTouchType] = useState<ContactTouchpointType>(person.lastTouchpointType ?? "email");
   const [error, setError] = useState<string | null>(null);
   const isArchived = Boolean(person.archivedAt);
 
@@ -112,6 +144,10 @@ function DrawerContent({
     setSaving(false);
     setArchiving(false);
     setRestoring(false);
+    setActionBusy(null);
+    setActionDate(defaultFollowUpDate(person));
+    setTouchDate(person.lastContactAt?.slice(0, 10) ?? todayISO());
+    setTouchType(person.lastTouchpointType ?? "email");
     setError(null);
   }, [person]);
 
@@ -161,6 +197,39 @@ function DrawerContent({
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not restore this contact.");
       setRestoring(false);
+    }
+  }
+
+  async function runFollowUpAction(action: FollowUpAction) {
+    if (isArchived) {
+      setError("Restore this contact before managing follow-up actions.");
+      return;
+    }
+
+    setActionBusy(action);
+    setError(null);
+    try {
+      let updated: Person;
+      if (action === "mark-done") {
+        updated = await onMarkFollowUpDone(person.id);
+      } else if (action === "set-next") {
+        if (!actionDate) throw new Error("Choose the next follow-up date first.");
+        updated = await onSetNextFollowUp(person.id, actionDate);
+      } else if (action === "snooze") {
+        if (!actionDate) throw new Error("Choose the snooze date first.");
+        updated = await onSnoozeFollowUp(person.id, actionDate);
+      } else {
+        if (!touchDate) throw new Error("Choose when the touchpoint happened.");
+        updated = await onLogTouchpoint(person.id, { touchType, occurredAt: touchDate });
+      }
+      setDraft(draftFromPerson(updated));
+      setActionDate(defaultFollowUpDate(updated));
+      setTouchDate(updated.lastContactAt?.slice(0, 10) ?? todayISO());
+      setTouchType(updated.lastTouchpointType ?? touchType);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not update follow-up action.");
+    } finally {
+      setActionBusy(null);
     }
   }
 
@@ -390,6 +459,98 @@ function DrawerContent({
               ))}
             </div>
           )}
+        </Section>
+
+        <Section title="FOLLOW-UP ACTIONS">
+          <div data-testid="person-follow-up-actions" style={{ display: "grid", gap: 10 }}>
+            {isArchived && (
+              <p style={{ margin: 0, color: "var(--gray-2)", fontSize: 12.25, lineHeight: 1.5 }}>
+                Restore this contact before marking follow-ups or logging touchpoints.
+              </p>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => void runFollowUpAction("mark-done")}
+                disabled={isArchived || Boolean(actionBusy)}
+                style={actionButtonStyle(isArchived || Boolean(actionBusy), true)}
+              >
+                <Icon name="i-check" /> {actionBusy === "mark-done" ? "Marking..." : "Mark done"}
+              </button>
+              <Link
+                href={`/workspace?person=${person.id}`}
+                onClick={onClose}
+                style={{
+                  ...actionLinkStyle,
+                  pointerEvents: isArchived ? "none" : "auto",
+                  opacity: isArchived ? 0.62 : 1,
+                }}
+              >
+                <Icon name="i-edit" /> Draft follow-up
+              </Link>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "end" }}>
+              <label style={maintenanceFieldStyle}>
+                <span style={maintenanceLabelStyle}>Next follow-up</span>
+                <input
+                  disabled={isArchived || Boolean(actionBusy)}
+                  type="date"
+                  value={actionDate}
+                  onChange={(event) => setActionDate(event.target.value)}
+                  style={maintenanceInputStyle}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void runFollowUpAction("set-next")}
+                disabled={isArchived || Boolean(actionBusy)}
+                style={compactActionButtonStyle(isArchived || Boolean(actionBusy))}
+              >
+                {actionBusy === "set-next" ? "Setting..." : "Set"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void runFollowUpAction("snooze")}
+                disabled={isArchived || Boolean(actionBusy)}
+                style={compactActionButtonStyle(isArchived || Boolean(actionBusy))}
+              >
+                {actionBusy === "snooze" ? "Snoozing..." : "Snooze"}
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1fr auto", gap: 8, alignItems: "end" }}>
+              <label style={maintenanceFieldStyle}>
+                <span style={maintenanceLabelStyle}>Touchpoint type</span>
+                <select
+                  disabled={isArchived || Boolean(actionBusy)}
+                  value={touchType}
+                  onChange={(event) => setTouchType(event.target.value as ContactTouchpointType)}
+                  style={maintenanceInputStyle}
+                >
+                  {TOUCHPOINT_TYPES.map((type) => (
+                    <option key={type} value={type}>{touchpointTypeText[type]}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={maintenanceFieldStyle}>
+                <span style={maintenanceLabelStyle}>Occurred</span>
+                <input
+                  disabled={isArchived || Boolean(actionBusy)}
+                  type="date"
+                  value={touchDate}
+                  onChange={(event) => setTouchDate(event.target.value)}
+                  style={maintenanceInputStyle}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void runFollowUpAction("log-touchpoint")}
+                disabled={isArchived || Boolean(actionBusy)}
+                style={compactActionButtonStyle(isArchived || Boolean(actionBusy))}
+              >
+                {actionBusy === "log-touchpoint" ? "Logging..." : "Log"}
+              </button>
+            </div>
+          </div>
         </Section>
 
         <Section title="NOTES / REMEMBER">
@@ -680,7 +841,12 @@ function buildBusinessContext(person: Person): string {
 }
 
 function fallbackLastTouch(person: Person): string {
-  if (person.lastContactAt) return `Last touch · ${person.lastContactAt.slice(0, 10)}`;
+  if (person.lastContactAt) {
+    const dateISO = person.lastContactAt.slice(0, 10);
+    return person.lastTouchpointType
+      ? `Last touch · ${touchpointTypeText[person.lastTouchpointType]} · ${dateISO}`
+      : `Last touch · ${dateISO}`;
+  }
   return "Last touch · No outreach yet";
 }
 
@@ -702,6 +868,7 @@ function daysUntilText(daysUntil: number): string {
 }
 
 const CONTACT_SEGMENTS: ContactSegment[] = ["client", "partner", "prospect", "investor", "personal"];
+const TOUCHPOINT_TYPES: ContactTouchpointType[] = ["email", "meeting", "call", "message", "note", "other"];
 
 const segmentText: Record<ContactSegment, string> = {
   client: "Client",
@@ -709,6 +876,15 @@ const segmentText: Record<ContactSegment, string> = {
   prospect: "Prospect",
   investor: "Investor",
   personal: "Personal",
+};
+
+const touchpointTypeText: Record<ContactTouchpointType, string> = {
+  call: "Call",
+  email: "Email",
+  meeting: "Meeting",
+  message: "Message",
+  note: "Note",
+  other: "Other",
 };
 
 function draftFromPerson(person: Person): PersonMaintenanceInput {
@@ -727,6 +903,62 @@ function draftFromPerson(person: Person): PersonMaintenanceInput {
 function segmentLabel(person: Person): string {
   return segmentText[person.segment ?? "personal"];
 }
+
+function defaultFollowUpDate(person: Person): string {
+  return person.nextFollowUpAt?.slice(0, 10) ?? addDaysISO(7);
+}
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDaysISO(days: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function actionButtonStyle(disabled: boolean, primary = false) {
+  return {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: primary ? "none" : "0.5px solid rgba(239, 224, 218, 0.9)",
+    background: primary ? "var(--heartline-purple-deep)" : "rgba(255,255,255,0.82)",
+    color: primary ? "#fff" : "var(--heartline-purple-deep)",
+    fontSize: 12.75,
+    fontWeight: 700,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.62 : 1,
+  } as const;
+}
+
+function compactActionButtonStyle(disabled: boolean) {
+  return {
+    ...actionButtonStyle(disabled),
+    minWidth: 66,
+    height: 36,
+    padding: "8px 10px",
+  } as const;
+}
+
+const actionLinkStyle = {
+  padding: "10px 12px",
+  borderRadius: 12,
+  background: "rgba(255,255,255,0.82)",
+  border: "0.5px solid rgba(239, 224, 218, 0.9)",
+  color: "var(--heartline-purple-deep)",
+  fontSize: 12.75,
+  fontWeight: 700,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  textDecoration: "none",
+} as const;
 
 const maintenanceFieldStyle = {
   display: "flex",

@@ -14,6 +14,14 @@ export type ContactSegment =
   | "investor"
   | "personal";
 
+export type ContactTouchpointType =
+  | "call"
+  | "email"
+  | "meeting"
+  | "message"
+  | "note"
+  | "other";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Relationship — partner / mother / friend / colleague…
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,6 +121,7 @@ export interface Person {
   personalTaboos: string[];// person-specific notes beyond culture rules
   nextOccasionId: ID | null;
   lastContactAt?: string;  // ISO — when no occasion, drives "last note · 2 mo ago"
+  lastTouchpointType?: ContactTouchpointType; // lightweight manual touchpoint kind
   nextFollowUpAt?: string; // ISO date for the lightweight maintenance follow-up target
   archivedAt?: string;     // ISO timestamp for soft archive; history rows remain
 }
