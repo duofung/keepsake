@@ -1,29 +1,56 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
 import { requireSessionUserOrRedirect } from "@/lib/server/auth/require-session.server";
 import { getRemasterDashboardOverview } from "@/lib/server/remaster-overview/index.server";
-import { deliveryStatusBadge, occasionIcon, urgencyLevel } from "@/lib/presentation";
-import type { RemasterDashboardAccount, RemasterFollowUpRhythmStatus } from "@/lib/remaster/read-model";
-
-const SOON_WINDOW_DAYS = 30;
+import type { ContactSegment } from "@/lib/domain";
+import type {
+  RemasterDashboardAccount,
+  RemasterDashboardActivity,
+  RemasterDashboardContact,
+} from "@/lib/remaster/read-model";
 
 export const dynamic = "force-dynamic";
 
-const metaColor: Record<string, string> = {
-  soon: "var(--heartline-purple-deep)",
-  mid: "var(--heartline-sage)",
-  far: "var(--gray-3)",
+type RelationshipTone = "Needs context" | "Going quiet" | "Moment coming up" | "Ready to draft" | "Steady";
+
+type RelationshipIssue = {
+  account: RemasterDashboardAccount;
+  tone: RelationshipTone;
+  issue: string;
+  detail: string;
+  priority: number;
+  isMaintenance: boolean;
 };
 
-const rhythmColor: Record<RemasterFollowUpRhythmStatus, string> = {
-  overdue: "#B94F4F",
-  today: "var(--heartline-purple-deep)",
-  this_week: "var(--heartline-rose-strong)",
-  unscheduled: "#9A6B43",
-  later: "var(--gray-3)",
+type ProfileGroup = {
+  label: string;
+  segments: ContactSegment[];
+  icon: string;
+};
+
+const profileGroups: ProfileGroup[] = [
+  { label: "Clients / prospects", segments: ["client", "prospect"], icon: "i-users" },
+  { label: "Partners", segments: ["partner"], icon: "i-heart-handshake" },
+  { label: "Investors", segments: ["investor"], icon: "i-star" },
+  { label: "Personal", segments: ["personal"], icon: "i-heart" },
+];
+
+const segmentLabel: Record<ContactSegment, string> = {
+  client: "Client",
+  partner: "Partner",
+  prospect: "Prospect",
+  investor: "Investor",
+  personal: "Personal",
+};
+
+const toneColor: Record<RelationshipTone, string> = {
+  "Needs context": "#9A6B43",
+  "Going quiet": "#B94F4F",
+  "Moment coming up": "var(--heartline-purple-deep)",
+  "Ready to draft": "var(--heartline-rose-strong)",
+  Steady: "var(--gray-2)",
 };
 
 export default async function HomePage() {
@@ -34,336 +61,318 @@ export default async function HomePage() {
   // throw. The redirect must always win.
   const user = await requireSessionUserOrRedirect("/");
   const overview = await getRemasterDashboardOverview();
-
   const activityById = new Map(
     [...overview.upcomingActivities, ...overview.recentActivities].map((activity) => [activity.id, activity]),
   );
+  const contactByAccountId = new Map(overview.contacts.map((contact) => [contact.accountId, contact]));
 
-  const accountsCount = overview.stats.accountsCount;
-  const contactsCount = overview.stats.contactsCount;
-  const upcomingActivitiesCount = overview.stats.upcomingActivitiesCount;
-  const reviewAccounts = overview.reviewAccounts.length > 0 ? overview.reviewAccounts : overview.accounts;
-  const reviewQueueCount = overview.stats.reviewQueueCount;
-  const focusAccount = reviewAccounts[0]
-    ?? null;
-  const focusActivity = focusAccount?.nextActivityId
-    ? activityById.get(focusAccount.nextActivityId) ?? null
-    : null;
-  const upcoming = overview.upcomingActivities
-    .filter((activity) => activity.daysUntil !== null && activity.daysUntil <= SOON_WINDOW_DAYS)
-    .slice(0, 3);
-  const recentOutreach = overview.recentActivities.slice(0, 2);
-  const reviewQueue = reviewAccounts
-    .filter((account) => account.followUpRhythm.isAttention)
-    .slice(0, 4);
-  const primaryReviewAccount = reviewQueue[0] ?? null;
-  const primaryUpcoming = upcoming[0] ?? null;
-  const latestOutreach = recentOutreach[0] ?? null;
-  const latestOutreachBadge = latestOutreach?.deliveryStatus
-    ? deliveryStatusBadge[latestOutreach.deliveryStatus]
-    : null;
-  const laterRhythm = reviewAccounts.filter((account) => account.followUpRhythm.status === "later").slice(0, 2);
+  const relationshipIssues = overview.accounts
+    .map((account) => buildRelationshipIssue(account, activityById))
+    .sort(compareRelationshipIssues);
+  const priorityRelationships = relationshipIssues.slice(0, 4);
+  const maintenanceCount = relationshipIssues.filter((issue) => issue.isMaintenance).length;
+  const recentSignals = buildRecentSignals(overview.recentActivities, relationshipIssues, contactByAccountId).slice(0, 4);
 
   return (
     <div className="ks-page">
-      <div className="ks-page-inner" style={{ width: "min(100%, 1060px)" }}>
-        <div style={headerRow}>
-          <div>
-            <p style={eyebrow}>ReMaster dashboard</p>
-            <h1 style={pageTitle}>
-              Good evening, {user.name}
-            </h1>
-            <p style={pageSubcopy}>
-              Track upcoming milestones, recent outreach, and follow-up gaps across {accountsCount} {accountsCount === 1 ? "account" : "accounts"}
-              {" / "}{contactsCount} {contactsCount === 1 ? "contact" : "contacts"}.
-              {" "}{upcomingActivitiesCount} upcoming {upcomingActivitiesCount === 1 ? "activity needs" : "activities need"} attention soon.
-              {" "}{reviewQueueCount} {reviewQueueCount === 1 ? "relationship is" : "relationships are"} in the active review queue.
-            </p>
-          </div>
-          <Link href="/people" className="heartline-button" style={{ whiteSpace: "nowrap" }}>
-            <Icon name="i-plus" /> Add contact
-          </Link>
-        </div>
-
-        <div style={homeGrid}>
-          <section className="heartline-card" style={heroCard}>
-            <div style={heroCopy}>
-              <span className="heartline-pill">
-                <Icon name="i-users" />
-                {focusAccount?.followUpRhythm.label ?? "Priority account"}
-              </span>
-              <h2 style={heroTitle}>
-                {focusAccount && focusAccount.followUpRhythm.status !== "later"
-                  ? `Review ${focusAccount.followUpRhythm.label.toLowerCase()} follow-up for ${focusAccount.name}`
-                  : focusAccount && focusActivity
-                    ? `Prepare ${focusActivity.touchpointLabel.toLowerCase()} for ${focusAccount.name}`
-                  : focusAccount
-                    ? `Plan the next touchpoint for ${focusAccount.name}`
-                    : "Start with a priority account"}
-              </h2>
-              <p style={heroBody}>
-                {focusAccount
-                  ? focusAccount.touchpointSummary
-                  : "Use ReMaster to turn static contacts into an ongoing touchpoint rhythm."}
-              </p>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "auto" }}>
-                <Link href={`/workspace?person=${focusAccount?.primaryContactId ?? ""}`} className="heartline-button" style={heroActionButton}>
-                  <Icon name="i-edit" /> Draft outreach
-                </Link>
-                <Link
-                  href={focusAccount ? `/people?review=${focusAccount.primaryContactId}` : "/people"}
-                  className="heartline-button heartline-button--soft"
-                  style={heroActionButton}
-                >
-                  <Icon name="i-users" /> Open dossier
-                </Link>
-              </div>
+      <div className="ks-page-inner" style={{ width: "min(100%, 1040px)" }}>
+        <header style={header}>
+          <p style={eyebrow}>ReMaster intelligence</p>
+          <div style={headerMain}>
+            <div>
+              <h1 style={pageTitle}>Good evening, {user.name}</h1>
+              <p style={headline}>Relationship profiles need attention</p>
             </div>
-            <div style={heroImageWrap}>
-              <Image
-                src="/images/heartline-hero.png"
-                alt="A desk with notes, a calendar, and correspondence planning materials"
-                fill
-                priority
-                sizes="(min-width: 1000px) 520px, 100vw"
-                style={{ objectFit: "cover" }}
-              />
+            <div style={profileCount}>
+              {overview.stats.accountsCount} active profiles · {maintenanceCount} need maintenance
+            </div>
+          </div>
+          <p style={pageSubcopy}>
+            A compact operating view for profile gaps, quiet relationships, and the next relationship action.
+          </p>
+        </header>
+
+        <main style={homeStack}>
+          <section aria-labelledby="profile-overview-title">
+            <SectionHeader
+              id="profile-overview-title"
+              eyebrowText="Relationship profile overview"
+              title="Where profile intelligence is thin"
+            />
+            <div data-testid="relationship-profile-overview" style={overviewGrid}>
+              {profileGroups.map((group) => {
+                const accounts = overview.accounts.filter((account) => group.segments.includes(account.segment));
+                const summary = profileGroupSummary(accounts, activityById);
+                return (
+                  <div key={group.label} data-profile-group={group.label} style={overviewRow}>
+                    <span style={overviewIcon}><Icon name={group.icon} /></span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={overviewLabel}>{group.label}</span>
+                      <span style={overviewMeta}>
+                        {accounts.length} {accounts.length === 1 ? "profile" : "profiles"} · {summary}
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </section>
 
-          <aside style={{ display: "grid", gap: 12, alignContent: "start" }}>
-            <section className="heartline-card" style={sideCard}>
-              <p className="heartline-section-label">FOLLOW-UP DASHBOARD</p>
-              <div style={dashboardPanel}>
-                <div style={touchpointGroupLabel}>Priority review queue</div>
-                {primaryReviewAccount === null ? (
-                  <div style={dashboardPrimaryRow}>
-                    <span style={dashboardIcon}>
-                      <Icon name="i-check" />
-                    </span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={dashboardTitle}>No active review items</span>
-                      <span style={dashboardMeta}>No overdue, due-today, or unscheduled contacts right now.</span>
-                    </span>
-                  </div>
-                ) : (
-                  <Link
-                    href={`/people?review=${primaryReviewAccount.primaryContactId}`}
-                    aria-label={`Review contact dossier for ${primaryReviewAccount.name}`}
-                    data-action-target="dossier"
-                    data-review-rhythm={primaryReviewAccount.followUpRhythm.status}
-                    data-review-rank={1}
-                    style={{
-                      ...dashboardPrimaryRow,
-                      borderColor: rhythmBorderColor(primaryReviewAccount.followUpRhythm.status),
-                      background: primaryReviewAccount.followUpRhythm.status === "overdue"
-                        ? "#FFF6F0"
-                        : "rgba(255, 248, 245, 0.82)",
-                    }}
-                  >
-                    <span style={{
-                      ...dashboardIcon,
-                      color: rhythmColor[primaryReviewAccount.followUpRhythm.status],
-                      background: primaryReviewAccount.followUpRhythm.status === "overdue"
-                        ? "rgba(213, 92, 92, 0.1)"
-                        : "var(--heartline-rose-wash)",
-                    }}>
-                      <Icon name={rhythmIcon(primaryReviewAccount)} />
-                    </span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{
-                        ...touchpointGroupLabel,
-                        color: rhythmColor[primaryReviewAccount.followUpRhythm.status],
-                      }}>{primaryReviewAccount.followUpRhythm.label}</span>
-                      <span style={dashboardTitle}>{primaryReviewAccount.name}</span>
-                      <span style={dashboardMeta}>
-                        {followUpDetail(primaryReviewAccount)}
-                        {reviewQueue.length > 1 ? ` · +${reviewQueue.length - 1} more` : ""}
-                      </span>
-                    </span>
-                    <span style={dashboardActionPill}>Review contact</span>
-                    <span style={momentArrow}><Icon name="i-chev" /></span>
-                  </Link>
-                )}
-
-                <div style={dashboardTileGrid}>
-                  <div style={dashboardTile}>
-                    <span style={touchpointGroupLabel}>Upcoming milestone</span>
-                    {primaryUpcoming ? (
-                      <>
-                        <span style={dashboardTitle}>{primaryUpcoming.subtitle.split(" · ")[0] ?? "Priority account"}</span>
-                        <span style={dashboardMeta}>
-                          {primaryUpcoming.title}
-                          {primaryUpcoming.daysUntil !== null ? ` · ${timingText(primaryUpcoming.daysUntil)}` : ""}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span style={dashboardTitle}>No urgent milestone</span>
-                        <span style={dashboardMeta}>Plan proactive outreach when ready.</span>
-                      </>
-                    )}
-                  </div>
-
-                  <div style={dashboardTile}>
-                    <span style={touchpointGroupLabel}>Recent outreach</span>
-                    {latestOutreach ? (
-                      <>
-                        <span style={dashboardTitle}>{latestOutreach.subtitle.split(" · ")[0] ?? "Contact"}</span>
-                        <span style={dashboardMeta}>
-                          <Icon name={latestOutreachBadge?.icon ?? "i-send"} /> {latestOutreach.touchpointSummary}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span style={dashboardTitle}>No outreach yet</span>
-                        <span style={dashboardMeta}>Draft a thoughtful first touch.</span>
-                      </>
-                    )}
-                  </div>
-
-                  {laterRhythm.length === 0 ? (
-                    <div style={dashboardTile}>
-                      <span style={touchpointGroupLabel}>Later rhythm</span>
-                      <span style={dashboardTitle}>Nothing later</span>
-                      <span style={dashboardMeta}>The active queue is fully near-term.</span>
-                    </div>
-                  ) : (
-                    <Link
-                      href={`/workspace?person=${laterRhythm[0].primaryContactId}`}
-                      data-review-rhythm={laterRhythm[0].followUpRhythm.status}
-                      style={dashboardTileLink}
-                    >
-                      <span style={touchpointGroupLabel}>Later rhythm</span>
-                      <span style={dashboardTitle}>{laterRhythm[0].name}</span>
-                      <span style={dashboardMeta}>{laterRhythm[0].followUpRhythm.label}</span>
-                    </Link>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <section className="heartline-card" style={quoteCard}>
-              <span style={quoteMark}>“</span>
-              <p style={quoteText}>
-                The best business relationship systems make follow-up feel timely, prepared, and personal.
-              </p>
-              <p style={quoteMeta}>ReMaster operating principle</p>
-            </section>
-          </aside>
-        </div>
-
-        <div style={{ marginTop: 28 }}>
-          <p className="heartline-section-label">TOUCHPOINTS TO REVIEW</p>
-          <div style={peopleGrid}>
-            {reviewAccounts.map((account) => {
-              const nextActivity = account.nextActivityId
-                ? activityById.get(account.nextActivityId) ?? null
-                : null;
-              const lvl = nextActivity?.daysUntil !== null && nextActivity?.daysUntil !== undefined
-                ? urgencyLevel(nextActivity.daysUntil)
-                : "far";
-              const icon = nextActivity?.occasionKind
-                ? occasionIcon[nextActivity.occasionKind]
-                : account.lastDeliveryStatus
-                  ? deliveryStatusBadge[account.lastDeliveryStatus].icon
-                  : "i-bulb";
-              return (
-                <Link
-                  key={account.id}
-                  href={`/people?review=${account.primaryContactId}`}
-                  aria-label={`Open dossier for ${account.name}`}
-                  data-action-target="dossier"
-                  data-review-rhythm={account.followUpRhythm.status}
+          <section aria-labelledby="priority-relationships-title">
+            <SectionHeader
+              id="priority-relationships-title"
+              eyebrowText="Priority relationships"
+              title="One reason to act"
+            />
+            <div data-testid="priority-relationships" style={priorityList}>
+              {priorityRelationships.map((item, index) => (
+                <article
+                  key={item.account.id}
+                  data-relationship-priority={index + 1}
+                  data-relationship-tone={item.tone}
                   style={{
-                    ...personCard,
-                    borderColor: account.followUpRhythm.isAttention
-                      ? rhythmBorderColor(account.followUpRhythm.status)
-                      : "rgba(239, 224, 218, 0.92)",
+                    ...priorityRow,
+                    borderColor: index === 0 ? "rgba(204, 120, 153, 0.34)" : "rgba(239, 224, 218, 0.88)",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <Avatar name={account.name} bg={account.avatarBg} fg={account.avatarFg} size={44} fontSize={16} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={personName}>
-                        {account.name}
-                        {account.starred && (
-                          <span style={{ color: "var(--amber)", fontSize: 12, display: "inline-flex" }}>
-                            <Icon name="i-star" fill />
-                          </span>
-                        )}
-                      </div>
-                      <div style={personTags}>
-                        <span style={{ ...miniTag, background: "var(--heartline-rose-wash)", color: "var(--heartline-purple-deep)" }}>
-                          {account.relationshipLabel}
-                        </span>
-                        <span style={miniTagMuted}>{account.secondaryLabel}</span>
-                      </div>
+                  <Avatar
+                    name={item.account.name}
+                    bg={item.account.avatarBg}
+                    fg={item.account.avatarFg}
+                    size={38}
+                    fontSize={14}
+                  />
+                  <div style={priorityBody}>
+                    <div style={priorityTitleRow}>
+                      <span style={priorityName}>{item.account.name}</span>
+                      <span style={segmentPill}>{segmentLabel[item.account.segment]}</span>
+                      <span style={{ ...tonePill, color: toneColor[item.tone] }}>{item.tone}</span>
                     </div>
+                    <div style={priorityIssue}>{item.issue}</div>
+                    <div style={priorityDetail}>{item.detail}</div>
                   </div>
-                  <div style={nextNode}>
-                    <span style={{ color: rhythmColor[account.followUpRhythm.status] ?? metaColor[lvl], fontSize: 14 }}>
-                      <Icon name={icon} />
-                    </span>
-                    <span style={{ color: rhythmColor[account.followUpRhythm.status] ?? metaColor[lvl] }}>
-                      {account.followUpRhythm.label} · {account.nextFollowUpLabel}
-                    </span>
+                  <div style={rowActions}>
+                    <Link href={`/people?review=${item.account.primaryContactId}`} style={quietAction}>
+                      Open profile
+                    </Link>
+                    <Link href={`/workspace?person=${item.account.primaryContactId}`} style={draftAction}>
+                      Draft outreach
+                    </Link>
                   </div>
-                  <div style={lastTouchLine}>{account.lastTouchLabel}</div>
-                  <div style={contextLine}>{account.sourceContext ?? account.contextLabel}</div>
-                  <div style={quickActions}>
-                    <span>Open dossier</span>
-                    <span>Draft from drawer</span>
-                  </div>
-                </Link>
-              );
-            })}
-            <Link href="/people" style={addCard}>
-              <span style={{ fontSize: 22 }}><Icon name="i-plus" /></span>
-              <span style={{ fontWeight: 650 }}>See all contacts</span>
-            </Link>
-          </div>
-        </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-labelledby="recent-signals-title">
+            <SectionHeader
+              id="recent-signals-title"
+              eyebrowText="Recent relationship signals"
+              title="Small signals, next action"
+            />
+            <div data-testid="recent-relationship-signals" style={signalList}>
+              {recentSignals.map((signal) => (
+                <div key={signal} style={signalRow}>
+                  <span style={signalDot} />
+                  <span>{signal}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        </main>
       </div>
     </div>
   );
 }
 
-function timingText(daysUntil: number): string {
-  if (daysUntil === 0) return "Today";
-  if (daysUntil === 1) return "Tomorrow";
-  return `In ${daysUntil} days`;
+function SectionHeader({ id, eyebrowText, title }: { id: string; eyebrowText: string; title: string }) {
+  return (
+    <div style={sectionHeader}>
+      <p style={sectionEyebrow}>{eyebrowText}</p>
+      <h2 id={id} style={sectionTitle}>{title}</h2>
+    </div>
+  );
 }
 
-function followUpDetail(account: RemasterDashboardAccount): string {
-  const next = account.nextFollowUpLabel.replace(/^Next follow-up ·\s*/, "");
-  const last = account.lastTouchLabel.replace(/^Last touch ·\s*/, "");
-  return `${next} · ${last}`;
+function buildRelationshipIssue(
+  account: RemasterDashboardAccount,
+  activityById: Map<string, RemasterDashboardActivity>,
+): RelationshipIssue {
+  const daysQuiet = daysSinceLastTouch(account);
+  const nextActivity = account.nextActivityId ? activityById.get(account.nextActivityId) ?? null : null;
+  const needsContext = needsProfileContext(account);
+
+  if (typeof daysQuiet === "number" && daysQuiet >= 42) {
+    return {
+      account,
+      tone: "Going quiet",
+      issue: `No touchpoint in ${daysQuiet} days`,
+      detail: "A lightweight outreach draft is probably enough to restart the thread.",
+      priority: 0,
+      isMaintenance: true,
+    };
+  }
+
+  if (account.followUpRhythm.status === "unscheduled") {
+    return {
+      account,
+      tone: "Needs context",
+      issue: "No next follow-up set",
+      detail: "Open the profile and choose the next relationship rhythm.",
+      priority: 1,
+      isMaintenance: true,
+    };
+  }
+
+  if (needsContext) {
+    return {
+      account,
+      tone: "Needs context",
+      issue: "Needs business context",
+      detail: "Add the missing role, organization, or source context before drafting.",
+      priority: 2,
+      isMaintenance: true,
+    };
+  }
+
+  if (nextActivity && typeof nextActivity.daysUntil === "number" && nextActivity.daysUntil <= 30) {
+    return {
+      account,
+      tone: "Moment coming up",
+      issue: `${nextActivity.title} ${daysUntilPhrase(nextActivity.daysUntil)}`,
+      detail: "Draft from the profile so the note stays specific.",
+      priority: 3,
+      isMaintenance: true,
+    };
+  }
+
+  if (account.lastDeliveryStatus === "opened") {
+    return {
+      account,
+      tone: "Ready to draft",
+      issue: "Opened your last note",
+      detail: "A short follow-up can continue the relationship while context is warm.",
+      priority: 4,
+      isMaintenance: false,
+    };
+  }
+
+  return {
+    account,
+    tone: "Steady",
+    issue: account.nextFollowUpLabel.replace(/^Next follow-up ·\s*/, ""),
+    detail: "No profile maintenance needed right now.",
+    priority: 5,
+    isMaintenance: false,
+  };
 }
 
-function rhythmIcon(account: RemasterDashboardAccount): string {
-  if (account.followUpRhythm.status === "overdue") return "i-alert";
-  if (account.followUpRhythm.status === "today") return "i-bell";
-  if (account.followUpRhythm.status === "unscheduled") return "i-bulb";
-  if (account.nextActivityId) return "i-clock";
-  if (account.lastDeliveryStatus) return deliveryStatusBadge[account.lastDeliveryStatus].icon;
-  return "i-clock";
+function compareRelationshipIssues(left: RelationshipIssue, right: RelationshipIssue): number {
+  if (left.priority !== right.priority) return left.priority - right.priority;
+
+  const leftRhythm = left.account.followUpRhythm.priority;
+  const rightRhythm = right.account.followUpRhythm.priority;
+  if (leftRhythm !== rightRhythm) return leftRhythm - rightRhythm;
+
+  if (left.account.starred !== right.account.starred) return left.account.starred ? -1 : 1;
+  return left.account.name.localeCompare(right.account.name);
 }
 
-function rhythmBorderColor(status: RemasterFollowUpRhythmStatus): string {
-  if (status === "overdue") return "rgba(213, 92, 92, 0.3)";
-  if (status === "today") return "rgba(135, 80, 180, 0.26)";
-  if (status === "this_week") return "rgba(204, 120, 153, 0.3)";
-  if (status === "unscheduled") return "rgba(217, 138, 78, 0.26)";
-  return "rgba(239, 224, 218, 0.92)";
+function profileGroupSummary(
+  accounts: RemasterDashboardAccount[],
+  activityById: Map<string, RemasterDashboardActivity>,
+): string {
+  if (accounts.length === 0) return "No profiles yet";
+
+  const incomplete = accounts.filter(needsProfileContext).length;
+  if (incomplete > 0) return `${incomplete} ${incomplete === 1 ? "needs" : "need"} context`;
+
+  const quiet = accounts.filter((account) => {
+    const days = daysSinceLastTouch(account);
+    return typeof days === "number" && days >= 42;
+  }).length;
+  if (quiet > 0) return `${quiet} going quiet`;
+
+  const due = accounts.filter((account) => account.followUpRhythm.isAttention).length;
+  if (due > 0) return `${due} follow-up ${due === 1 ? "due" : "due"}`;
+
+  const moments = accounts.filter((account) => {
+    const activity = account.nextActivityId ? activityById.get(account.nextActivityId) ?? null : null;
+    return activity && typeof activity.daysUntil === "number" && activity.daysUntil <= 30;
+  }).length;
+  if (moments > 0) return `${moments} meaningful ${moments === 1 ? "moment" : "moments"}`;
+
+  return "Profiles steady";
 }
 
-const headerRow: CSSProperties = {
+function buildRecentSignals(
+  recentActivities: RemasterDashboardActivity[],
+  issues: RelationshipIssue[],
+  contactByAccountId: Map<string, RemasterDashboardContact>,
+): string[] {
+  const signals: string[] = [];
+  const opened = recentActivities.find((activity) => activity.deliveryStatus === "opened");
+  if (opened) {
+    signals.push(`${signalSubject(opened)} opened your last note`);
+  }
+
+  const noFollowUp = issues.find((issue) => issue.account.followUpRhythm.status === "unscheduled");
+  if (noFollowUp) {
+    signals.push(`${noFollowUp.account.name} has no next follow-up set`);
+  }
+
+  const culturalContext = issues.find((issue) => {
+    const contact = contactByAccountId.get(issue.account.id);
+    return contact?.cultureLabel && contact.cultureLabel !== "None";
+  });
+  if (culturalContext) {
+    signals.push(`${culturalContext.account.name} has cultural context to respect`);
+  }
+
+  const needsContext = issues.find((issue) => issue.tone === "Needs context");
+  if (needsContext) {
+    signals.push(`${needsContext.account.name} needs profile context before the next action`);
+  }
+
+  return signals.length > 0 ? signals : ["Profiles are quiet. Review one relationship before drafting."];
+}
+
+function needsProfileContext(account: RemasterDashboardAccount): boolean {
+  return !account.organization || !account.roleTitle || !account.sourceContext;
+}
+
+function daysSinceLastTouch(account: RemasterDashboardAccount): number | null {
+  const dateISO = account.lastDeliveryAtISO?.slice(0, 10) ?? extractDate(account.lastTouchLabel);
+  if (!dateISO) return null;
+  const from = Date.parse(`${dateISO}T00:00:00.000Z`);
+  const now = Date.now();
+  if (!Number.isFinite(from)) return null;
+  return Math.max(0, Math.floor((now - from) / 86_400_000));
+}
+
+function extractDate(label: string): string | null {
+  return label.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? null;
+}
+
+function daysUntilPhrase(daysUntil: number): string {
+  if (daysUntil === 0) return "today";
+  if (daysUntil === 1) return "tomorrow";
+  return `in ${daysUntil} days`;
+}
+
+function signalSubject(activity: RemasterDashboardActivity): string {
+  return activity.subtitle.split(" · ")[0] ?? "A relationship";
+}
+
+const header: CSSProperties = {
+  marginBottom: 24,
+};
+
+const headerMain: CSSProperties = {
+  alignItems: "flex-end",
   display: "flex",
-  alignItems: "flex-start",
+  gap: 18,
   justifyContent: "space-between",
-  gap: 20,
-  marginBottom: 20,
 };
 
 const eyebrow: CSSProperties = {
@@ -376,363 +385,230 @@ const eyebrow: CSSProperties = {
 };
 
 const pageTitle: CSSProperties = {
+  color: "var(--ink-2)",
   fontSize: 27,
   fontWeight: 700,
-  color: "var(--ink-2)",
   letterSpacing: "0",
   margin: 0,
+};
+
+const headline: CSSProperties = {
+  color: "var(--ink)",
+  fontFamily: "Newsreader, Georgia, serif",
+  fontSize: 30,
+  lineHeight: 1.05,
+  margin: "8px 0 0",
+};
+
+const profileCount: CSSProperties = {
+  background: "rgba(255,255,255,0.72)",
+  border: "0.5px solid rgba(239, 224, 218, 0.86)",
+  borderRadius: 999,
+  color: "var(--heartline-purple-deep)",
+  flexShrink: 0,
+  fontSize: 12,
+  fontWeight: 720,
+  padding: "8px 12px",
 };
 
 const pageSubcopy: CSSProperties = {
+  color: "var(--gray-1)",
   fontSize: 13,
-  color: "var(--gray-1)",
-  lineHeight: 1.58,
-  margin: "8px 0 0",
-  maxWidth: 560,
+  lineHeight: 1.55,
+  margin: "10px 0 0",
+  maxWidth: 620,
 };
 
-const homeGrid: CSSProperties = {
+const homeStack: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1.08fr) minmax(270px, 0.72fr)",
-  gap: 14,
-  alignItems: "start",
+  gap: 24,
 };
 
-const heroCard: CSSProperties = {
-  borderRadius: 18,
-  display: "grid",
-  gridTemplateColumns: "minmax(238px, 0.92fr) minmax(230px, 0.78fr)",
-  gap: 10,
-  overflow: "hidden",
-  padding: 10,
-  boxSizing: "border-box",
-  height: 360,
-  minHeight: 0,
-  alignSelf: "start",
-};
-
-const heroCopy: CSSProperties = {
+const sectionHeader: CSSProperties = {
+  alignItems: "end",
   display: "flex",
-  flexDirection: "column",
-  minWidth: 0,
-  padding: "6px 2px 6px 8px",
+  justifyContent: "space-between",
+  marginBottom: 10,
 };
 
-const heroTitle: CSSProperties = {
-  color: "var(--ink-2)",
-  fontSize: 22,
-  fontWeight: 700,
-  letterSpacing: "0",
-  lineHeight: 1.14,
-  margin: "10px 0 6px",
-};
-
-const heroBody: CSSProperties = {
-  color: "var(--gray-1)",
-  fontSize: 11.75,
-  lineHeight: 1.45,
+const sectionEyebrow: CSSProperties = {
+  color: "var(--heartline-rose-strong)",
+  fontSize: 10.75,
+  fontWeight: 800,
+  letterSpacing: "0.08em",
   margin: 0,
-  maxWidth: 300,
+  textTransform: "uppercase",
 };
 
-const heroImageWrap: CSSProperties = {
-  position: "relative",
-  height: "100%",
-  minHeight: 0,
-  borderRadius: 13,
-  overflow: "hidden",
-  border: "0.5px solid rgba(239, 224, 218, 0.74)",
-  background: "#F9EDE8",
+const sectionTitle: CSSProperties = {
+  color: "var(--gray-2)",
+  fontSize: 12,
+  fontWeight: 620,
+  margin: 0,
 };
 
-const heroActionButton: CSSProperties = {
-  padding: "9px 11px",
-  whiteSpace: "nowrap",
-};
-
-const sideCard: CSSProperties = {
-  borderRadius: 18,
-  boxSizing: "border-box",
-  height: 232,
-  padding: 12,
-};
-
-const dashboardPanel: CSSProperties = {
+const overviewGrid: CSSProperties = {
   display: "grid",
-  gap: 8,
+  gap: 9,
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
 };
 
-const dashboardPrimaryRow: CSSProperties = {
+const overviewRow: CSSProperties = {
   alignItems: "center",
-  background: "rgba(255, 248, 245, 0.84)",
-  border: "0.5px solid rgba(239, 224, 218, 0.86)",
-  borderRadius: 15,
-  color: "inherit",
-  display: "flex",
-  gap: 8,
-  minHeight: 64,
-  padding: "8px 9px",
-  textDecoration: "none",
-};
-
-const dashboardTileGrid: CSSProperties = {
-  display: "grid",
-  gap: 8,
-  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-};
-
-const dashboardTile: CSSProperties = {
-  background: "rgba(255, 248, 245, 0.68)",
-  border: "0.5px solid rgba(239, 224, 218, 0.72)",
+  background: "rgba(255,255,255,0.74)",
+  border: "0.5px solid rgba(239, 224, 218, 0.84)",
   borderRadius: 14,
-  color: "inherit",
-  display: "grid",
-  gap: 2,
-  minHeight: 66,
-  padding: 8,
-  textDecoration: "none",
+  display: "flex",
+  gap: 10,
+  minHeight: 68,
+  padding: "10px 11px",
 };
 
-const dashboardTileLink: CSSProperties = {
-  ...dashboardTile,
-};
-
-const dashboardIcon: CSSProperties = {
+const overviewIcon: CSSProperties = {
   alignItems: "center",
   background: "var(--heartline-rose-wash)",
-  borderRadius: 12,
+  borderRadius: 11,
   color: "var(--heartline-purple-deep)",
-  display: "flex",
+  display: "inline-flex",
   flexShrink: 0,
-  fontSize: 13,
   height: 30,
   justifyContent: "center",
   width: 30,
 };
 
-const dashboardTitle: CSSProperties = {
-  color: "var(--ink)",
-  display: "block",
-  fontSize: 12,
-  fontWeight: 750,
-  lineHeight: 1.22,
-  marginTop: 2,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-};
-
-const dashboardMeta: CSSProperties = {
-  alignItems: "center",
-  color: "var(--gray-2)",
-  display: "flex",
-  fontSize: 10.25,
-  gap: 4,
-  lineHeight: 1.3,
-  minWidth: 0,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-};
-
-const dashboardActionPill: CSSProperties = {
-  alignItems: "center",
-  alignSelf: "center",
-  background: "#fff",
-  border: "0.5px solid rgba(239, 224, 218, 0.9)",
-  borderRadius: 999,
-  color: "var(--heartline-purple-deep)",
-  display: "inline-flex",
-  flexShrink: 0,
-  fontSize: 10.5,
-  fontWeight: 760,
-  padding: "5px 8px",
-  whiteSpace: "nowrap",
-};
-
-const momentRow: CSSProperties = {
-  alignItems: "center",
-  background: "rgba(255, 248, 245, 0.78)",
-  border: "0.5px solid rgba(239, 224, 218, 0.85)",
-  borderRadius: 15,
-  color: "inherit",
-  display: "flex",
-  gap: 10,
-  padding: 10,
-  textDecoration: "none",
-};
-
-const touchpointGroupLabel: CSSProperties = {
-  color: "var(--heartline-rose-strong)",
-  fontSize: 10.5,
-  fontWeight: 800,
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
-};
-
-const emptyTouchpointText: CSSProperties = {
-  color: "var(--gray-2)",
-  fontSize: 12,
-  lineHeight: 1.5,
-  margin: 0,
-};
-
-const momentIcon: CSSProperties = {
-  alignItems: "center",
-  background: "var(--heartline-rose-wash)",
-  borderRadius: 12,
-  color: "var(--heartline-purple-deep)",
-  display: "flex",
-  flexShrink: 0,
-  fontSize: 15,
-  height: 34,
-  justifyContent: "center",
-  width: 34,
-};
-
-const momentTitle: CSSProperties = {
+const overviewLabel: CSSProperties = {
   color: "var(--ink)",
   display: "block",
   fontSize: 12.5,
-  fontWeight: 700,
+  fontWeight: 760,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };
 
-const momentMeta: CSSProperties = {
+const overviewMeta: CSSProperties = {
   color: "var(--gray-2)",
   display: "block",
-  fontSize: 11,
+  fontSize: 11.25,
+  lineHeight: 1.35,
   marginTop: 2,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };
 
-const momentArrow: CSSProperties = {
-  color: "var(--gray-3)",
-  display: "inline-flex",
-  fontSize: 16,
-};
-
-const quoteCard: CSSProperties = {
-  borderRadius: 18,
-  boxSizing: "border-box",
-  minHeight: 108,
-  padding: "14px 16px 15px",
-  position: "relative",
-};
-
-const quoteMark: CSSProperties = {
-  color: "var(--heartline-rose)",
-  fontFamily: "Newsreader, Georgia, serif",
-  fontSize: 34,
-  left: 16,
-  lineHeight: 1,
-  position: "absolute",
-  top: 9,
-};
-
-const quoteText: CSSProperties = {
-  color: "var(--ink)",
-  fontFamily: "Newsreader, Georgia, serif",
-  fontSize: 15.5,
-  lineHeight: 1.28,
-  margin: "22px 0 8px",
-};
-
-const quoteMeta: CSSProperties = {
-  color: "var(--gray-2)",
-  fontSize: 11,
-  fontWeight: 650,
-  margin: 0,
-};
-
-const peopleGrid: CSSProperties = {
+const priorityList: CSSProperties = {
   display: "grid",
-  gap: 12,
-  gridTemplateColumns: "repeat(auto-fill, minmax(208px, 1fr))",
+  gap: 9,
 };
 
-const personCard: CSSProperties = {
-  background: "rgba(255, 255, 255, 0.9)",
-  border: "0.5px solid rgba(239, 224, 218, 0.92)",
-  borderRadius: 16,
-  boxShadow: "0 14px 34px -30px rgba(94, 54, 119, 0.42)",
-  color: "inherit",
-  display: "grid",
-  gap: 12,
-  minHeight: 150,
-  padding: 13,
-  textDecoration: "none",
-};
-
-const personName: CSSProperties = {
+const priorityRow: CSSProperties = {
   alignItems: "center",
-  color: "var(--ink)",
-  display: "flex",
-  fontSize: 13.5,
-  fontWeight: 750,
-  gap: 5,
+  background: "rgba(255,255,255,0.82)",
+  border: "0.5px solid rgba(239, 224, 218, 0.88)",
+  borderRadius: 15,
+  display: "grid",
+  gap: 12,
+  gridTemplateColumns: "38px minmax(0, 1fr) auto",
+  minHeight: 76,
+  padding: "11px 12px",
 };
 
-const personTags: CSSProperties = {
+const priorityBody: CSSProperties = {
+  minWidth: 0,
+};
+
+const priorityTitleRow: CSSProperties = {
+  alignItems: "center",
   display: "flex",
   flexWrap: "wrap",
-  gap: 5,
-  marginTop: 6,
+  gap: 6,
 };
 
-const miniTag: CSSProperties = {
+const priorityName: CSSProperties = {
+  color: "var(--ink)",
+  fontSize: 13.5,
+  fontWeight: 780,
+};
+
+const segmentPill: CSSProperties = {
+  background: "var(--soft)",
   borderRadius: 999,
+  color: "var(--gray-1)",
   fontSize: 10.5,
-  fontWeight: 650,
+  fontWeight: 680,
   padding: "3px 8px",
 };
 
-const miniTagMuted: CSSProperties = {
-  ...miniTag,
-  background: "var(--soft)",
-  color: "var(--gray-1)",
+const tonePill: CSSProperties = {
+  background: "rgba(255, 248, 245, 0.82)",
+  border: "0.5px solid rgba(239, 224, 218, 0.82)",
+  borderRadius: 999,
+  fontSize: 10.5,
+  fontWeight: 780,
+  padding: "3px 8px",
 };
 
-const nextNode: CSSProperties = {
-  alignItems: "center",
-  background: "rgba(255, 248, 245, 0.78)",
-  borderRadius: 13,
-  display: "flex",
-  fontSize: 11.5,
-  fontWeight: 650,
-  gap: 7,
-  padding: "8px 9px",
+const priorityIssue: CSSProperties = {
+  color: "var(--ink)",
+  fontSize: 13,
+  fontWeight: 660,
+  marginTop: 5,
 };
 
-const lastTouchLine: CSSProperties = {
-  color: "var(--gray-1)",
-  fontSize: 11.5,
-  fontWeight: 600,
-  lineHeight: 1.35,
-};
-
-const contextLine: CSSProperties = {
-  color: "var(--gray-3)",
-  fontSize: 11,
-  lineHeight: 1.35,
-};
-
-const quickActions: CSSProperties = {
+const priorityDetail: CSSProperties = {
   color: "var(--gray-2)",
-  display: "flex",
   fontSize: 11.5,
-  gap: 8,
+  lineHeight: 1.35,
+  marginTop: 3,
 };
 
-const addCard: CSSProperties = {
+const rowActions: CSSProperties = {
   alignItems: "center",
-  background: "rgba(252, 234, 240, 0.72)",
-  border: "0.5px dashed rgba(204, 120, 153, 0.42)",
-  borderRadius: 16,
-  color: "var(--heartline-purple-deep)",
   display: "flex",
-  flexDirection: "column",
   gap: 7,
-  justifyContent: "center",
-  minHeight: 150,
-  padding: 13,
+};
+
+const quietAction: CSSProperties = {
+  border: "0.5px solid rgba(239, 224, 218, 0.92)",
+  borderRadius: 999,
+  color: "var(--heartline-purple-deep)",
+  fontSize: 11.5,
+  fontWeight: 720,
+  padding: "7px 10px",
   textDecoration: "none",
+  whiteSpace: "nowrap",
+};
+
+const draftAction: CSSProperties = {
+  ...quietAction,
+  background: "var(--heartline-purple-deep)",
+  borderColor: "var(--heartline-purple-deep)",
+  color: "#fff",
+};
+
+const signalList: CSSProperties = {
+  background: "rgba(255,255,255,0.68)",
+  border: "0.5px solid rgba(239, 224, 218, 0.84)",
+  borderRadius: 15,
+  display: "grid",
+  padding: "4px 12px",
+};
+
+const signalRow: CSSProperties = {
+  alignItems: "center",
+  borderBottom: "0.5px solid rgba(239, 224, 218, 0.62)",
+  color: "var(--gray-1)",
+  display: "flex",
+  fontSize: 12.5,
+  gap: 9,
+  minHeight: 40,
+};
+
+const signalDot: CSSProperties = {
+  background: "var(--heartline-rose-strong)",
+  borderRadius: 999,
+  display: "inline-flex",
+  height: 6,
+  width: 6,
 };

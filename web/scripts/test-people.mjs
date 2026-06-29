@@ -424,11 +424,11 @@ try {
       && peoplePage.body.includes(`Last touch · Note · ${today}`),
   );
   check(
-    "Home reflects updated follow-up cadence",
+    "Home reflects updated relationship intelligence signal",
     homePage.body.includes("Kira Tan")
-      && homePage.body.includes("Next follow-up · Not scheduled")
-      && homePage.body.includes("Unscheduled")
-      && homePage.body.includes(`Last touch · Note · ${today}`),
+      && homePage.body.includes("No next follow-up set")
+      && homePage.body.includes("Needs context")
+      && homePage.body.includes("/people?review=p-kira"),
   );
   check(
     "People page keeps dossier drawer shell",

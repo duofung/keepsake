@@ -114,30 +114,62 @@ try {
   check("renders current user greeting", body.includes(`Good evening, ${testUser.name}`));
   check("does not render old hard-coded greeting", !body.includes("Good evening, Arthur"));
   check(
-    "renders ReMaster dashboard subtitle",
-    body.includes("Track upcoming milestones, recent outreach, and follow-up gaps across 5 accounts / 5 contacts."),
+    "renders relationship intelligence framing",
+    body.includes("ReMaster intelligence")
+      && body.includes("Relationship profiles need attention")
+      && body.includes("active profiles")
+      && body.includes("need maintenance"),
   );
-  check("renders upcoming moments count", body.includes("3 upcoming activities need attention soon."));
-  check("renders priority rhythm focus", body.includes("Review this week · in 5 days follow-up for Mom"));
-  check("renders later rhythm for lower-priority contacts", body.includes("Later · in 12 days"));
-  check("renders follow-up dashboard sections",
-    body.includes("FOLLOW-UP DASHBOARD")
-      && body.includes("Priority review queue")
-      && body.includes("Upcoming milestone")
-      && body.includes("Recent outreach")
-      && body.includes("Later rhythm"));
-  check("Home priority queue orders this-week before later",
-    body.indexOf('data-review-rhythm="this_week"') >= 0
-      && body.indexOf('data-review-rhythm="later"') > body.indexOf('data-review-rhythm="this_week"'));
-  check("Home review queue bridges to dossier action",
-    body.includes("/people?review=p-mom")
-      && body.includes('data-action-target="dossier"')
-      && body.includes("Review contact")
-      && body.includes("Open dossier"));
-  check("renders touchpoints grid label", body.includes("TOUCHPOINTS TO REVIEW"));
-  check("renders last touch copy", body.includes("Last touch · Opened · 2026-02-14"));
-  check("renders Add contact CTA", body.includes("Add contact"));
-  check("renders workspace CTA", body.includes("Draft outreach"));
+  check(
+    "renders relationship profile overview section",
+    body.includes('data-testid="relationship-profile-overview"')
+      && body.includes("Relationship profile overview")
+      && body.includes("Clients / prospects")
+      && body.includes("Partners")
+      && body.includes("Investors")
+      && body.includes("Personal"),
+  );
+  check(
+    "renders priority relationships section",
+    body.includes('data-testid="priority-relationships"')
+      && body.includes("Priority relationships")
+      && body.includes("One reason to act"),
+  );
+  check(
+    "renders recent relationship signals section",
+    body.includes('data-testid="recent-relationship-signals"')
+      && body.includes("Recent relationship signals")
+      && body.includes("Small signals, next action"),
+  );
+  check(
+    "renders missing-profile signal",
+    body.includes("Needs context") || body.includes("Needs business context"),
+  );
+  check(
+    "renders quiet relationship signal",
+    body.includes("Going quiet") && body.includes("No touchpoint in"),
+  );
+  check(
+    "renders next-action CTAs",
+    body.includes("Open profile") && body.includes("Draft outreach"),
+  );
+  check(
+    "priority relationships bridge to profile and workspace",
+    body.includes("/people?review=p-kira")
+      && body.includes("/workspace?person=p-kira"),
+  );
+  check(
+    "renders recent signal copy from existing data",
+    body.includes("Lin opened your last note")
+      && body.includes("has no next follow-up set")
+      && body.includes("has cultural context to respect"),
+  );
+  check(
+    "old milestone dashboard copy is replaced",
+    !body.includes("Track upcoming milestones, recent outreach")
+      && !body.includes("FOLLOW-UP DASHBOARD")
+      && !body.includes("TOUCHPOINTS TO REVIEW"),
+  );
 } catch (error) {
   process.stdout.write(`harness error: ${error?.message ?? error}\n`);
   if (serverError) {

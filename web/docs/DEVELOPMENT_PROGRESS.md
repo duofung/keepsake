@@ -26,7 +26,7 @@ Rules:
 | Workstream | Status | What Is Stable | Remaining Work |
 |---|---|---|---|
 | App shell + core UI | MVP demo-ready desktop | Full-screen desktop shell, Home, People, Workspace, History, Profile, preview-safe icon fallback, page smoke tests, and an end-to-end `pnpm test:mvp-demo` flow. | Mobile pass, deeper visual polish, interaction polish. |
-| ReMaster pivot / model blueprint | Compatibility runtime + business contact foundation + outreach workspace + touchpoint layer + dossier + maintenance/action loop + active/archive management + rhythm review layer + review-to-action bridge | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`, now including touchpoint labels for last touch, next follow-up, recent outreach, and a lightweight follow-up rhythm classification (`overdue`, `today`, `this_week`, `later`, `unscheduled`) with a sorted review queue. People has native business contact fields (`segment`, `organization`, `roleTitle`, `sourceContext`), update/archive/restore plus follow-up action routes, active/archived management, business segment tabs, a Needs attention / All active review layer, `/people?review=<personId>` dossier bridge, and a relationship dossier drawer that can edit active contacts inline, mark follow-ups done, snooze or set the next follow-up, log manual touchpoints, show rhythm summary, bridge to workspace drafting, and restore archived contacts; Workspace frames drafts as segment-aware business outreach with lightweight presets, and Home / People / History now read as a follow-up dashboard, action-ready relationship list, and touchpoint timeline. Profile + Sign-in and command-channel replies remain ReMaster-framed while keeping the current auth, Gmail, channel, worker, webhook, draft, and send contracts. | Plan native account/activity schema, backfill, and route deprecation later. |
+| ReMaster pivot / model blueprint | Compatibility runtime + business contact foundation + outreach workspace + touchpoint layer + dossier + maintenance/action loop + active/archive management + rhythm review layer + review-to-action bridge + relationship intelligence home | `README.md`, `CURRENT_ARCHITECTURE.md`, and `REMASTER_MODEL.md` define the business-first target model. `lib/remaster/read-model.ts` and `lib/server/remaster-overview/index.server.ts` derive `Account` / `Contact` / `Activity` read models from the current `PeoplePayload` + `Delivery[]`, now including touchpoint labels for last touch, next follow-up, recent outreach, and a lightweight follow-up rhythm classification (`overdue`, `today`, `this_week`, `later`, `unscheduled`) with a sorted review queue. People has native business contact fields (`segment`, `organization`, `roleTitle`, `sourceContext`), update/archive/restore plus follow-up action routes, active/archived management, business segment tabs, a Needs attention / All active review layer, `/people?review=<personId>` dossier bridge, and a relationship dossier drawer that can edit active contacts inline, mark follow-ups done, snooze or set the next follow-up, log manual touchpoints, show rhythm summary, bridge to workspace drafting, and restore archived contacts; Workspace frames drafts as segment-aware business outreach with lightweight presets; Home is now a minimal Relationship Intelligence surface for profile overview, priority relationships, and recent signals / next actions; People / History read as an action-ready relationship list and touchpoint timeline. Profile + Sign-in and command-channel replies remain ReMaster-framed while keeping the current auth, Gmail, channel, worker, webhook, draft, and send contracts. | Plan native account/activity schema, backfill, and route deprecation later. |
 | Domain model | Stable current runtime with contact segments and maintenance dates | `domain.ts`, presentation mapping, mock data, API contracts. `Person` remains the storage/API anchor but now carries business contact fields for client/partner/prospect/investor/personal classification plus lightweight `lastContactAt`, `lastTouchpointType`, `nextFollowUpAt`, and `archivedAt` maintenance/action fields. | Native account/contact split, stakeholder roles, imports, merge semantics. |
 | Mock seams | Stable | People payload, draft context, draft service, delivery history dispatchers default to mock. | Delete mock fallback only after DB mode is default and production-ready. |
 | DB schema/RLS | Stable | Postgres schema, catalog seed, local dev fixtures, RLS, transaction helper. | Future migrations for real auth/session, reminders, send queue details. |
@@ -69,12 +69,46 @@ Reference:
   `touchpointSummary`) plus follow-up rhythm classification
   (`overdue`, `today`, `this_week`, `later`, `unscheduled`) and a sorted
   review queue so these pages can show relationship cadence without a native
-  account/activity schema. Home can now bridge a review card into
-  `/people?review=<personId>`, where People opens the active contact dossier
-  and keeps archived contacts out of that active bridge. Profile and Sign-in have matching ReMaster
+  account/activity schema. Home now presents a minimal Relationship
+  Intelligence view: profile overview, priority relationship issues, and recent
+  signals / next actions derived from the same compatibility overview. It can
+  bridge a priority profile into `/people?review=<personId>`, where People opens
+  the active contact dossier and keeps archived contacts out of that active bridge. Profile and Sign-in have matching ReMaster
   framing, and command-channel replies now use ReMaster review-pointer
   language, but their auth, Gmail, channel, worker, webhook, and send contracts
   remain unchanged.
+
+### P13-A. Minimal Relationship Intelligence Home
+
+Status: implemented. Guarded by `pnpm test:home`, `pnpm test`,
+`pnpm build`, and `git diff --check`.
+
+Goal: make the first screen explain what ReMaster manages: relationship
+profiles, the profile gaps that need maintenance, and the next lightweight
+action, without turning Home into a heavy CRM or BI dashboard.
+
+Shipped:
+
+- Home is now organized around three compact sections: Relationship profile
+  overview, Priority relationships, and Recent relationship signals.
+- Priority rows show one core issue per profile, derived from the existing
+  compatibility read model: `Needs context`, `Going quiet`, `Moment coming up`,
+  `Ready to draft`, or steady profile status.
+- Home CTAs are limited to `Open profile` (`/people?review=<personId>`) and
+  `Draft outreach` (`/workspace?person=<personId>`).
+- The page no longer presents itself as a milestone / notification dashboard;
+  it uses existing account/contact/activity/touchpoint data only, with no new
+  schema, route, repository, or server seam.
+- `scripts/test-home.mjs` now asserts the Relationship Intelligence wording,
+  profile overview, priority relationships, recent signals, missing-context
+  signal, quiet-relationship signal, action CTAs, and removal of old dashboard
+  copy.
+
+Out of scope:
+
+- No schema change, API change, new route, new server seam, People drawer
+  redesign, Workspace redesign, AI chat panel, native account/activity schema,
+  mobile pass, payment/subscription, or domain/Vercel changes.
 
 ### P12-I. Business Operating Polish / Review-to-Action Bridge
 
