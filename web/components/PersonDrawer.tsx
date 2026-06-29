@@ -119,6 +119,7 @@ function DrawerContent({
   const businessLine = drawerBusinessLine(person, relationship);
   const lastTouch = account?.lastTouchLabel ?? fallbackLastTouch(person);
   const nextFollowUp = account?.nextFollowUpLabel ?? fallbackNextFollowUp(primary);
+  const rhythmSummary = account?.followUpRhythm.label ?? "Unscheduled";
   const touchpointSummary = account?.touchpointSummary ?? `${segmentLabel(person)} touchpoints · ${nextFollowUp} · ${lastTouch}`;
   const relationshipContext = buildRelationshipContext(person, relationship, culture);
   const businessContext = buildBusinessContext(person);
@@ -443,6 +444,7 @@ function DrawerContent({
           <div style={{ display: "grid", gap: 8 }}>
             <TouchpointRow icon="i-clock" label="Last touch" value={lastTouch.replace(/^Last touch ·\s*/, "")} />
             <TouchpointRow icon="i-bell" label="Next follow-up" value={nextFollowUp.replace(/^Next follow-up ·\s*/, "")} />
+            <TouchpointRow icon="i-bulb" label="Rhythm" value={rhythmSummary} />
             <TouchpointRow
               icon={primary ? occasionIcon[primary.kind] : "i-bulb"}
               label="Next activity"
@@ -463,6 +465,9 @@ function DrawerContent({
 
         <Section title="FOLLOW-UP ACTIONS">
           <div data-testid="person-follow-up-actions" style={{ display: "grid", gap: 10 }}>
+            <p data-testid="drawer-action-bridge" style={actionBridgeTextStyle}>
+              Review context, mark done, or draft outreach from this dossier.
+            </p>
             {isArchived && (
               <p style={{ margin: 0, color: "var(--gray-2)", fontSize: 12.25, lineHeight: 1.5 }}>
                 Restore this contact before marking follow-ups or logging touchpoints.
@@ -486,7 +491,7 @@ function DrawerContent({
                   opacity: isArchived ? 0.62 : 1,
                 }}
               >
-                <Icon name="i-edit" /> Draft follow-up
+                <Icon name="i-edit" /> Draft outreach
               </Link>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "end" }}>
@@ -644,7 +649,7 @@ function DrawerContent({
                   whiteSpace: "nowrap",
                 }}
               >
-                <Icon name="i-pencil" /> Draft next note
+                <Icon name="i-pencil" /> Draft outreach
               </Link>
             </div>
             <button
@@ -958,6 +963,13 @@ const actionLinkStyle = {
   justifyContent: "center",
   gap: 6,
   textDecoration: "none",
+} as const;
+
+const actionBridgeTextStyle = {
+  margin: 0,
+  color: "var(--gray-2)",
+  fontSize: 12.25,
+  lineHeight: 1.5,
 } as const;
 
 const maintenanceFieldStyle = {

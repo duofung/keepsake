@@ -118,13 +118,22 @@ try {
     body.includes("Track upcoming milestones, recent outreach, and follow-up gaps across 5 accounts / 5 contacts."),
   );
   check("renders upcoming moments count", body.includes("3 upcoming activities need attention soon."));
-  check("renders Lin touchpoint focus", body.includes("Prepare upcoming milestone for Lin"));
-  check("renders anniversary timing chip", body.includes("In 12 days"));
+  check("renders priority rhythm focus", body.includes("Review this week · in 5 days follow-up for Mom"));
+  check("renders later rhythm for lower-priority contacts", body.includes("Later · in 12 days"));
   check("renders follow-up dashboard sections",
     body.includes("FOLLOW-UP DASHBOARD")
+      && body.includes("Priority review queue")
       && body.includes("Upcoming milestone")
       && body.includes("Recent outreach")
-      && body.includes("Needs follow-up"));
+      && body.includes("Later rhythm"));
+  check("Home priority queue orders this-week before later",
+    body.indexOf('data-review-rhythm="this_week"') >= 0
+      && body.indexOf('data-review-rhythm="later"') > body.indexOf('data-review-rhythm="this_week"'));
+  check("Home review queue bridges to dossier action",
+    body.includes("/people?review=p-mom")
+      && body.includes('data-action-target="dossier"')
+      && body.includes("Review contact")
+      && body.includes("Open dossier"));
   check("renders touchpoints grid label", body.includes("TOUCHPOINTS TO REVIEW"));
   check("renders last touch copy", body.includes("Last touch · Opened · 2026-02-14"));
   check("renders Add contact CTA", body.includes("Add contact"));

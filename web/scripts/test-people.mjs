@@ -7,10 +7,13 @@
 // Run via: pnpm test:people
 
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { setTimeout as wait } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import ts from "typescript";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -125,8 +128,8 @@ async function getHomePage() {
   return { status: res.status, body: normalize(text) };
 }
 
-async function getPeoplePage() {
-  const res = await fetch(`${BASE}/people`, {
+async function getPeoplePage(path = "/people") {
+  const res = await fetch(`${BASE}${path}`, {
     headers: sessionCookie ? { cookie: `keepsake_session=${sessionCookie}` } : {},
   });
   const text = await res.text();
@@ -167,6 +170,41 @@ function check(name, cond, detail = "") {
   }
 }
 
+async function runRhythmClassificationAssertions() {
+  const tempDir = await mkdtemp(join(tmpdir(), "keepsake-remaster-rhythm-"));
+  try {
+    const source = await readFile(resolve(projectRoot, "lib/remaster/read-model.ts"), "utf8");
+    const outputPath = join(tempDir, "read-model.cjs");
+    await writeFile(outputPath, ts.transpileModule(source, {
+      fileName: "read-model.ts",
+      compilerOptions: {
+        esModuleInterop: true,
+        module: ts.ModuleKind.CommonJS,
+        moduleResolution: ts.ModuleResolutionKind.Node10,
+        target: ts.ScriptTarget.ES2022,
+      },
+    }).outputText);
+
+    const require = createRequire(import.meta.url);
+    const { classifyFollowUpRhythm } = require(outputPath);
+    const todayISO = "2026-06-28";
+    const cases = [
+      ["overdue", { nextFollowUpAt: "2026-06-27" }],
+      ["today", { nextFollowUpAt: "2026-06-28" }],
+      ["this_week", { nextFollowUpAt: "2026-07-02" }],
+      ["later", { nextFollowUpAt: "2026-07-20" }],
+      ["unscheduled", {}],
+    ];
+
+    for (const [statusName, person] of cases) {
+      const rhythm = classifyFollowUpRhythm(person, { todayISO });
+      check(`rhythm classification includes ${statusName}`, rhythm.status === statusName, `got ${rhythm.status}`);
+    }
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
+}
+
 const nextBin = resolve(projectRoot, "node_modules/.bin/next");
 const child = spawn(nextBin, ["dev", "--port", String(PORT)], {
   cwd: projectRoot,
@@ -194,6 +232,7 @@ child.on("exit", (code) => {
 
 try {
   process.stdout.write(`booting next dev on :${PORT}…\n`);
+  await runRhythmClassificationAssertions();
   await waitForReady();
   process.stdout.write(`server ready, running assertions:\n`);
 
@@ -313,6 +352,7 @@ try {
   await mintSession();
   const peoplePage = await getPeoplePage();
   const homePage = await getHomePage();
+  const peopleClientSource = await readFile(resolve(projectRoot, "app/people/PeopleClient.tsx"), "utf8");
   const drawerSource = await readFile(resolve(projectRoot, "components/PersonDrawer.tsx"), "utf8");
 
   check("GET /people → 200", peoplePage.status === 200, `status=${peoplePage.status}`);
@@ -334,6 +374,24 @@ try {
     ["All", "Clients", "Partners", "Prospects", "Investors", "Personal"].every((label) => (
       peoplePage.body.includes(label)
     )),
+  );
+  check(
+    "People page renders review queue filter",
+    peoplePage.body.includes('data-testid="people-review-queue"')
+      && peoplePage.body.includes("Needs attention")
+      && peoplePage.body.includes("All active"),
+  );
+  check(
+    "People page renders review queue dossier bridge",
+    peoplePage.body.includes('data-testid="people-review-action"')
+      && peoplePage.body.includes('data-action-target="dossier"')
+      && peoplePage.body.includes("Open dossier"),
+  );
+  check(
+    "People page reflects urgency ordering",
+    peoplePage.body.indexOf('data-review-rank="1"') >= 0
+      && peoplePage.body.indexOf("Mom", peoplePage.body.indexOf('data-review-rank="1"')) >= 0
+      && peoplePage.body.indexOf("Mom", peoplePage.body.indexOf('data-review-rank="1"')) < peoplePage.body.indexOf("Kira Tan", peoplePage.body.indexOf('data-review-rank="1"')),
   );
   check(
     "People page renders business sections",
@@ -362,17 +420,31 @@ try {
   check(
     "People page reflects updated follow-up cadence",
     peoplePage.body.includes("Next follow-up · Not scheduled")
+      && peoplePage.body.includes("Unscheduled")
       && peoplePage.body.includes(`Last touch · Note · ${today}`),
   );
   check(
     "Home reflects updated follow-up cadence",
     homePage.body.includes("Kira Tan")
       && homePage.body.includes("Next follow-up · Not scheduled")
+      && homePage.body.includes("Unscheduled")
       && homePage.body.includes(`Last touch · Note · ${today}`),
   );
   check(
     "People page keeps dossier drawer shell",
     peoplePage.body.includes('data-testid="person-dossier-drawer"'),
+  );
+  check(
+    "People review item opens the dossier drawer",
+    peopleClientSource.includes('data-testid="people-review-action"')
+      && peopleClientSource.includes("onClick={() => setOpenId(account.primaryContactId)}"),
+  );
+  check(
+    "People supports Home review query bridge with active guard",
+    peopleClientSource.includes("useSearchParams")
+      && peopleClientSource.includes("reviewPersonId")
+      && peopleClientSource.includes("targetIsActive")
+      && peopleClientSource.includes("setOpenId(reviewPersonId)"),
   );
   check(
     "People drawer source anchors business dossier sections",
@@ -383,10 +455,14 @@ try {
       'data-testid="person-maintenance-form"',
       "RELATIONSHIP CONTEXT",
       "TOUCHPOINTS",
+      "Rhythm",
       "NOTES / REMEMBER",
       "FOLLOW-UP ACTIONS",
       'data-testid="person-follow-up-actions"',
+      "drawer-action-bridge",
+      "Review context, mark done, or draft outreach",
       "Mark done",
+      "Draft outreach",
       "Set",
       "Snooze",
       "Log",
@@ -422,6 +498,12 @@ try {
   const archivedPeoplePage = await getPeoplePage();
   check("GET /people after archive → 200", archivedPeoplePage.status === 200, `status=${archivedPeoplePage.status}`);
   check("archived person leaves /people", !archivedPeoplePage.body.includes("Kira Tan"));
+  const archivedBridgePage = await getPeoplePage("/people?review=p-kira");
+  check(
+    "archived person does not leak through review bridge",
+    archivedBridgePage.status === 200 && !archivedBridgePage.body.includes("Kira Tan"),
+    `status=${archivedBridgePage.status}`,
+  );
   check(
     "People page active count drops after archive",
     archivedPeoplePage.body.includes("4 active contacts"),

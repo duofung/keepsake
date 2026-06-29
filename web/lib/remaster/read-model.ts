@@ -15,6 +15,18 @@ export type RemasterAccountMode = "contact-led";
 export type RemasterRelationshipType = "partner" | "personal" | "network" | "colleague";
 export type RemasterActivityType = "milestone" | "follow_up_due" | "outbound_delivery";
 export type RemasterActivityStatus = "upcoming" | "completed" | "failed";
+export type RemasterFollowUpRhythmStatus = "overdue" | "today" | "this_week" | "later" | "unscheduled";
+export type RemasterFollowUpRhythmSource = "manual" | "occasion" | "none";
+
+export interface RemasterFollowUpRhythm {
+  status: RemasterFollowUpRhythmStatus;
+  source: RemasterFollowUpRhythmSource;
+  label: string;
+  dueDateISO: string | null;
+  daysUntil: number | null;
+  priority: number;
+  isAttention: boolean;
+}
 
 export interface RemasterDashboardAccount {
   id: ID;
@@ -38,6 +50,7 @@ export interface RemasterDashboardAccount {
   lastTouchLabel: string;
   nextFollowUpLabel: string;
   touchpointSummary: string;
+  followUpRhythm: RemasterFollowUpRhythm;
 }
 
 export interface RemasterDashboardContact {
@@ -70,6 +83,7 @@ export interface RemasterDashboardActivity {
 
 export interface RemasterDashboardOverview {
   accounts: RemasterDashboardAccount[];
+  reviewAccounts: RemasterDashboardAccount[];
   contacts: RemasterDashboardContact[];
   upcomingActivities: RemasterDashboardActivity[];
   recentActivities: RemasterDashboardActivity[];
@@ -77,6 +91,7 @@ export interface RemasterDashboardOverview {
     accountsCount: number;
     contactsCount: number;
     upcomingActivitiesCount: number;
+    reviewQueueCount: number;
   };
 }
 
@@ -85,6 +100,14 @@ const relationshipTypeByGroup: Record<RelationshipGroup, RemasterRelationshipTyp
   Family: "personal",
   Friends: "network",
   Colleagues: "colleague",
+};
+
+const followUpRhythmPriority: Record<RemasterFollowUpRhythmStatus, number> = {
+  overdue: 0,
+  today: 1,
+  this_week: 2,
+  unscheduled: 3,
+  later: 4,
 };
 
 export function buildRemasterDashboardOverview(
@@ -120,6 +143,7 @@ export function buildRemasterDashboardOverview(
       nextOccasion,
     });
   });
+  const reviewAccounts = accounts.slice().sort(compareRemasterAccountsByRhythm);
 
   const contacts = payload.people.map((person) => {
     const culture = cultureById.get(person.cultureId);
@@ -166,6 +190,7 @@ export function buildRemasterDashboardOverview(
 
   return {
     accounts,
+    reviewAccounts,
     contacts,
     upcomingActivities,
     recentActivities,
@@ -176,8 +201,62 @@ export function buildRemasterDashboardOverview(
         const days = activity.daysUntil;
         return days !== null && days >= 0 && days <= 30;
       }).length,
+      reviewQueueCount: reviewAccounts.filter((account) => account.followUpRhythm.isAttention).length,
     },
   };
+}
+
+export function classifyFollowUpRhythm(
+  person: Pick<Person, "nextFollowUpAt" | "archivedAt">,
+  options: {
+    todayISO?: string;
+    fallbackDateISO?: string | null;
+    fallbackDaysUntil?: number | null;
+  } = {},
+): RemasterFollowUpRhythm {
+  const manualDate = normalizeDateISO(person.nextFollowUpAt);
+  const today = options.todayISO ?? todayISO();
+  const dueDateISO = manualDate ?? normalizeDateISO(options.fallbackDateISO);
+  const source: RemasterFollowUpRhythmSource = manualDate
+    ? "manual"
+    : dueDateISO || typeof options.fallbackDaysUntil === "number"
+      ? "occasion"
+      : "none";
+
+  if (!dueDateISO && typeof options.fallbackDaysUntil !== "number") {
+    return buildFollowUpRhythm("unscheduled", source, null, null);
+  }
+
+  const daysUntil = manualDate
+    ? daysBetweenISO(today, manualDate)
+    : typeof options.fallbackDaysUntil === "number"
+      ? options.fallbackDaysUntil
+      : dueDateISO
+        ? daysBetweenISO(today, dueDateISO)
+        : null;
+
+  if (daysUntil === null) {
+    return buildFollowUpRhythm("unscheduled", source, dueDateISO, null);
+  }
+  if (daysUntil < 0) return buildFollowUpRhythm("overdue", source, dueDateISO, daysUntil);
+  if (daysUntil === 0) return buildFollowUpRhythm("today", source, dueDateISO, daysUntil);
+  if (daysUntil <= 7) return buildFollowUpRhythm("this_week", source, dueDateISO, daysUntil);
+  return buildFollowUpRhythm("later", source, dueDateISO, daysUntil);
+}
+
+export function compareRemasterAccountsByRhythm(
+  left: RemasterDashboardAccount,
+  right: RemasterDashboardAccount,
+): number {
+  const priority = left.followUpRhythm.priority - right.followUpRhythm.priority;
+  if (priority !== 0) return priority;
+
+  const leftDays = left.followUpRhythm.daysUntil ?? Number.POSITIVE_INFINITY;
+  const rightDays = right.followUpRhythm.daysUntil ?? Number.POSITIVE_INFINITY;
+  if (leftDays !== rightDays) return leftDays - rightDays;
+
+  if (left.starred !== right.starred) return left.starred ? -1 : 1;
+  return left.name.localeCompare(right.name);
 }
 
 function buildAccount(
@@ -193,6 +272,10 @@ function buildAccount(
   const segment = contactSegment(person);
   const lastTouchLabel = buildLastTouchLabel(person, options.latestDelivery);
   const nextFollowUpLabel = buildNextFollowUpLabel(person, options.nextOccasion, options.latestDelivery);
+  const followUpRhythm = classifyFollowUpRhythm(person, {
+    fallbackDateISO: options.nextOccasion?.dateISO ?? null,
+    fallbackDaysUntil: options.nextOccasion?.daysUntil ?? null,
+  });
   return {
     id: accountIdForPerson(person.id),
     primaryContactId: person.id,
@@ -215,6 +298,7 @@ function buildAccount(
     lastTouchLabel,
     nextFollowUpLabel,
     touchpointSummary: buildTouchpointSummary(segment, nextFollowUpLabel, lastTouchLabel, person.sourceContext),
+    followUpRhythm,
   };
 }
 
@@ -374,4 +458,63 @@ function daysUntilText(daysUntil: number): string {
   if (daysUntil === 0) return "today";
   if (daysUntil === 1) return "tomorrow";
   return `in ${daysUntil} days`;
+}
+
+function buildFollowUpRhythm(
+  status: RemasterFollowUpRhythmStatus,
+  source: RemasterFollowUpRhythmSource,
+  dueDateISO: string | null,
+  daysUntil: number | null,
+): RemasterFollowUpRhythm {
+  return {
+    status,
+    source,
+    label: followUpRhythmLabel(status, dueDateISO, daysUntil),
+    dueDateISO,
+    daysUntil,
+    priority: followUpRhythmPriority[status],
+    isAttention: status !== "later",
+  };
+}
+
+function followUpRhythmLabel(
+  status: RemasterFollowUpRhythmStatus,
+  dueDateISO: string | null,
+  daysUntil: number | null,
+): string {
+  switch (status) {
+    case "overdue": {
+      const days = Math.abs(daysUntil ?? 0);
+      if (days <= 1) return "Overdue · yesterday";
+      return `Overdue · ${days} days`;
+    }
+    case "today":
+      return "Due today";
+    case "this_week":
+      if (daysUntil === 1) return "This week · tomorrow";
+      if (typeof daysUntil === "number") return `This week · in ${daysUntil} days`;
+      return "This week";
+    case "later":
+      if (typeof daysUntil === "number") return `Later · ${daysUntilText(daysUntil)}`;
+      return dueDateISO ? `Later · ${dueDateISO}` : "Later";
+    case "unscheduled":
+      return "Unscheduled";
+  }
+}
+
+function normalizeDateISO(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const candidate = value.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(candidate) ? candidate : null;
+}
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function daysBetweenISO(fromISO: string, toISO: string): number {
+  const from = Date.parse(`${fromISO}T00:00:00.000Z`);
+  const to = Date.parse(`${toISO}T00:00:00.000Z`);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return 0;
+  return Math.round((to - from) / 86_400_000);
 }

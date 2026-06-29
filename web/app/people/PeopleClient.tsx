@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Icon from "@/components/Icon";
 import Avatar from "@/components/Avatar";
 import PersonDrawer, { type PersonMaintenanceInput, type TouchpointLogInput } from "@/components/PersonDrawer";
@@ -8,11 +9,16 @@ import type { FormEvent } from "react";
 import type {
   ContactSegment,
   ContactTouchpointType,
+  OccasionNode,
   Person,
   PeoplePayload,
   Relationship,
   RelationshipGroup,
 } from "@/lib/domain";
+import {
+  classifyFollowUpRhythm,
+  compareRemasterAccountsByRhythm,
+} from "@/lib/remaster/read-model";
 import type {
   RemasterDashboardAccount,
   RemasterDashboardActivity,
@@ -23,6 +29,7 @@ import { deliveryStatusBadge, occasionIcon, urgencyLevel } from "@/lib/presentat
 
 type AccountTab = "All" | ContactSegment;
 type ContactArchiveView = "active" | "archived";
+type ReviewMode = "all" | "attention";
 
 const segmentIcon: Record<ContactSegment, string> = {
   client: "i-users",
@@ -74,6 +81,14 @@ const metaColor: Record<string, string> = {
   far: "var(--gray-3)",
 };
 
+const rhythmTone = {
+  overdue: "#B94F4F",
+  today: "var(--heartline-purple-deep)",
+  this_week: "var(--heartline-rose-strong)",
+  unscheduled: "#9A6B43",
+  later: "var(--gray-3)",
+} as const;
+
 const LOCAL_PEOPLE_KEY = "keepsake.localPeople.v1";
 
 const avatarPalette = [
@@ -91,11 +106,15 @@ type Props = {
 };
 
 export default function PeopleClient({ overview, payload }: Props) {
+  const searchParams = useSearchParams();
+  const reviewPersonId = searchParams.get("review");
   const { relationships, cultures, occasions } = payload;
   const [people, setPeople] = useState<Person[]>(() => payload.people.map(normalizePerson));
   const [openId, setOpenId] = useState<string | null>(null);
   const [tab, setTab] = useState<AccountTab>("All");
   const [contactView, setContactView] = useState<ContactArchiveView>("active");
+  const [reviewMode, setReviewMode] = useState<ReviewMode>("all");
+  const [handledReviewPersonId, setHandledReviewPersonId] = useState<string | null>(null);
   const [archivedLoaded, setArchivedLoaded] = useState(false);
   const [loadingArchived, setLoadingArchived] = useState(false);
   const [archiveViewError, setArchiveViewError] = useState<string | null>(null);
@@ -151,6 +170,15 @@ export default function PeopleClient({ overview, payload }: Props) {
     [overview.recentActivities, overview.upcomingActivities],
   );
 
+  const primaryOccasionByPersonId = useMemo(
+    () => new Map(
+      occasions
+        .filter((occasion) => occasion.isPrimary)
+        .map((occasion) => [occasion.personId, occasion]),
+    ),
+    [occasions],
+  );
+
   const activePeople = useMemo(
     () => people.filter((person) => !person.archivedAt),
     [people],
@@ -160,6 +188,17 @@ export default function PeopleClient({ overview, payload }: Props) {
     () => people.filter((person) => Boolean(person.archivedAt)),
     [people],
   );
+
+  useEffect(() => {
+    if (!reviewPersonId || handledReviewPersonId === reviewPersonId) return;
+    const targetIsActive = activePeople.some((person) => person.id === reviewPersonId);
+    setHandledReviewPersonId(reviewPersonId);
+    if (!targetIsActive) return;
+    setContactView("active");
+    setReviewMode("all");
+    setTab("All");
+    setOpenId(reviewPersonId);
+  }, [activePeople, handledReviewPersonId, reviewPersonId]);
 
   const viewPeople = contactView === "archived" ? archivedPeople : activePeople;
 
@@ -175,15 +214,33 @@ export default function PeopleClient({ overview, payload }: Props) {
     return viewPeople.flatMap((person) => {
       const relationship = relationshipById.get(person.relationshipId);
       const culture = cultureById.get(person.cultureId);
+      const primaryOccasion = primaryOccasionByPersonId.get(person.id) ?? null;
       if (!relationship) return [];
       const base = serverAccountByContactId.get(person.id) ?? null;
       return [
         base
-          ? mergeAccountWithPerson(base, person, relationship, culture?.label ?? null)
-          : buildCompatibilityAccount(person, relationship, culture?.label ?? null),
+          ? mergeAccountWithPerson(base, person, relationship, culture?.label ?? null, primaryOccasion)
+          : buildCompatibilityAccount(person, relationship, culture?.label ?? null, primaryOccasion),
       ];
-    });
-  }, [cultureById, overview.accounts, relationshipById, viewPeople]);
+    }).sort(compareRemasterAccountsByRhythm);
+  }, [cultureById, overview.accounts, primaryOccasionByPersonId, relationshipById, viewPeople]);
+
+  const attentionCount = useMemo(
+    () => accounts.filter((account) => account.followUpRhythm.isAttention).length,
+    [accounts],
+  );
+
+  const reviewAccounts = useMemo(
+    () => accounts.filter((account) => account.followUpRhythm.isAttention).slice(0, 3),
+    [accounts],
+  );
+
+  const filteredAccounts = useMemo(
+    () => (contactView === "active" && reviewMode === "attention"
+      ? accounts.filter((account) => account.followUpRhythm.isAttention)
+      : accounts),
+    [accounts, contactView, reviewMode],
+  );
 
   const grouped = useMemo(() => {
     const out: Record<ContactSegment, RemasterDashboardAccount[]> = {
@@ -193,18 +250,18 @@ export default function PeopleClient({ overview, payload }: Props) {
       investor: [],
       personal: [],
     };
-    for (const account of accounts) {
+    for (const account of filteredAccounts) {
       out[accountSegment(account)].push(account);
     }
     return out;
-  }, [accounts]);
+  }, [filteredAccounts]);
 
   const tabs = useMemo(
     () => TAB_ORDER.map((id) => ({
       id,
-      n: tabCount(id, accounts, grouped),
+      n: tabCount(id, filteredAccounts, grouped),
     })),
-    [accounts, grouped],
+    [filteredAccounts, grouped],
   );
 
   const visibleEntries = useMemo(() => {
@@ -490,6 +547,7 @@ export default function PeopleClient({ overview, payload }: Props) {
             <p style={{ fontSize: 12.5, color: "var(--gray-2)", marginTop: 5 }}>
               {activePeople.length} active {activePeople.length === 1 ? "contact" : "contacts"}
               {" · "}{archivedLoaded || archivedPeople.length > 0 ? `${archivedPeople.length} archived` : "archived view available"}
+              {contactView === "active" ? ` · ${attentionCount} need attention` : ""}
               {" · "}client, partner, prospect, investor, and personal segments
             </p>
           </div>
@@ -523,6 +581,7 @@ export default function PeopleClient({ overview, payload }: Props) {
               onClick={() => {
                 setContactView(view);
                 setTab("All");
+                if (view === "archived") setReviewMode("all");
               }}
               style={{
                 border: "none",
@@ -547,6 +606,132 @@ export default function PeopleClient({ overview, payload }: Props) {
           ))}
         </div>
       </div>
+
+      {contactView === "active" && (
+        <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 0, paddingBottom: 8, width: "min(100%, 1000px)" }}>
+          <div
+            data-testid="people-review-queue"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(220px, 0.68fr) minmax(0, 1fr)",
+              gap: 10,
+              alignItems: "stretch",
+            }}
+          >
+            <div style={{
+              display: "inline-flex",
+              gap: 4,
+              padding: 4,
+              borderRadius: 16,
+              background: "rgba(255,255,255,0.74)",
+              border: "0.5px solid rgba(239, 224, 218, 0.88)",
+              alignSelf: "start",
+            }}>
+              {(["all", "attention"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={reviewMode === mode}
+                  onClick={() => {
+                    setReviewMode(mode);
+                    setTab("All");
+                  }}
+                  style={{
+                    border: "none",
+                    borderRadius: 12,
+                    background: reviewMode === mode ? "var(--heartline-rose-wash)" : "transparent",
+                    color: reviewMode === mode ? "var(--heartline-purple-deep)" : "var(--gray-2)",
+                    fontSize: 12.25,
+                    fontWeight: reviewMode === mode ? 700 : 560,
+                    padding: "8px 11px",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <Icon name={mode === "attention" ? "i-bell" : "i-users"} />
+                  {mode === "attention" ? "Needs attention" : "All active"}
+                  <span style={{ fontSize: 11, color: reviewMode === mode ? "var(--heartline-rose-strong)" : "var(--gray-3)" }}>
+                    {mode === "attention" ? attentionCount : activePeople.length}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            }}>
+              {reviewAccounts.length === 0 ? (
+                <div style={{
+                  gridColumn: "1 / -1",
+                  borderRadius: 16,
+                  background: "rgba(255,255,255,0.72)",
+                  border: "0.5px solid rgba(239, 224, 218, 0.86)",
+                  padding: "10px 12px",
+                  color: "var(--gray-2)",
+                  fontSize: 12.25,
+                }}>
+                  Review queue is clear. Later follow-ups stay in All active.
+                </div>
+              ) : reviewAccounts.map((account, index) => (
+                <button
+                  key={account.id}
+                  type="button"
+                  aria-label={`Open dossier for ${account.name}`}
+                  data-testid="people-review-action"
+                  data-action-target="dossier"
+                  data-review-rhythm={account.followUpRhythm.status}
+                  data-review-rank={index + 1}
+                  onClick={() => setOpenId(account.primaryContactId)}
+                  style={{
+                    border: `0.5px solid ${rhythmBorderColor(account.followUpRhythm.status)}`,
+                    borderRadius: 16,
+                    background: account.followUpRhythm.status === "overdue" ? "#FFF6F0" : "rgba(255,255,255,0.78)",
+                    padding: "10px 11px",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    minWidth: 0,
+                  }}
+                >
+                  <span style={{
+                    display: "block",
+                    color: rhythmColor(account.followUpRhythm.status),
+                    fontSize: 10.5,
+                    fontWeight: 780,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    marginBottom: 3,
+                  }}>
+                    {account.followUpRhythm.label}
+                  </span>
+                  <span style={{ display: "block", color: "var(--ink)", fontSize: 12.5, fontWeight: 720, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {account.name}
+                  </span>
+                  <span style={{ display: "block", color: "var(--gray-2)", fontSize: 11, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {account.nextFollowUpLabel.replace(/^Next follow-up ·\s*/, "")}
+                  </span>
+                  <span style={{
+                    alignItems: "center",
+                    color: "var(--heartline-purple-deep)",
+                    display: "inline-flex",
+                    fontSize: 11,
+                    fontWeight: 760,
+                    gap: 5,
+                    marginTop: 8,
+                  }}>
+                    <Icon name="i-edit" /> Open dossier
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="ks-page-inner ks-page-inner--people" style={{ paddingTop: 0, paddingBottom: 8, display: "flex", gap: 7, flexWrap: "wrap", width: "min(100%, 1000px)" }}>
         {tabs.map((t) => (
@@ -608,6 +793,8 @@ export default function PeopleClient({ overview, payload }: Props) {
           }}>
             {contactView === "archived"
               ? "No archived contacts in this segment. Active relationships stay in the default view."
+              : reviewMode === "attention"
+                ? "No active contacts need attention in this segment. Switch to All active to see later follow-ups."
               : "No active contacts in this segment yet."}
           </div>
         )}
@@ -636,10 +823,15 @@ export default function PeopleClient({ overview, payload }: Props) {
                   <button
                     type="button"
                     key={account.id}
+                    aria-label={`Open dossier for ${account.name}`}
+                    data-action-target="dossier"
+                    data-review-rhythm={account.followUpRhythm.status}
                     onClick={() => setOpenId(account.primaryContactId)}
                     style={{
                       background: "rgba(255,255,255,0.9)",
-                      border: "0.5px solid rgba(239, 224, 218, 0.92)",
+                      border: `0.5px solid ${account.followUpRhythm.isAttention && !archived
+                        ? rhythmBorderColor(account.followUpRhythm.status)
+                        : "rgba(239, 224, 218, 0.92)"}`,
                       borderRadius: 18,
                       padding: 16,
                       transition: ".18s",
@@ -700,6 +892,18 @@ export default function PeopleClient({ overview, payload }: Props) {
                         {activitySummary.text}
                       </div>
                       <div style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        marginTop: 8,
+                        color: rhythmColor(account.followUpRhythm.status),
+                        fontSize: 11.25,
+                        fontWeight: 720,
+                      }}>
+                        <Icon name={account.followUpRhythm.status === "unscheduled" ? "i-bulb" : "i-clock"} />
+                        {account.followUpRhythm.label}
+                      </div>
+                      <div style={{
                         display: "grid", gap: 3, marginTop: 8,
                         color: "var(--gray-2)", fontSize: 11.25, lineHeight: 1.35,
                       }}>
@@ -758,12 +962,17 @@ function buildCompatibilityAccount(
   person: Person,
   relationship: Relationship,
   cultureLabel: string | null,
+  primaryOccasion: OccasionNode | null,
 ): RemasterDashboardAccount {
   const segment = contactSegment(person);
   const lastTouchLabel = lastTouchLabelForPerson(person, "Last touch · No outreach yet");
   const nextFollowUpLabel = nextFollowUpLabelForPerson(person, person.nextOccasionId
     ? "Next follow-up · Scheduled"
     : "Next follow-up · Not scheduled");
+  const followUpRhythm = classifyFollowUpRhythm(person, {
+    fallbackDateISO: primaryOccasion?.dateISO ?? null,
+    fallbackDaysUntil: primaryOccasion?.daysUntil ?? null,
+  });
   return {
     id: `account-${person.id}`,
     primaryContactId: person.id,
@@ -786,6 +995,7 @@ function buildCompatibilityAccount(
     lastTouchLabel,
     nextFollowUpLabel,
     touchpointSummary: `${segmentLabel[segment]} touchpoints · ${nextFollowUpLabel} · ${lastTouchLabel} · ${person.sourceContext ?? person.since ?? "Business context not set"}`,
+    followUpRhythm,
   };
 }
 
@@ -794,10 +1004,15 @@ function mergeAccountWithPerson(
   person: Person,
   relationship: Relationship,
   cultureLabel: string | null,
+  primaryOccasion: OccasionNode | null,
 ): RemasterDashboardAccount {
   const segment = contactSegment(person);
   const lastTouchLabel = lastTouchLabelForPerson(person, account.lastTouchLabel);
   const nextFollowUpLabel = nextFollowUpLabelForPerson(person, account.nextFollowUpLabel);
+  const followUpRhythm = classifyFollowUpRhythm(person, {
+    fallbackDateISO: primaryOccasion?.dateISO ?? account.followUpRhythm.dueDateISO,
+    fallbackDaysUntil: primaryOccasion?.daysUntil ?? account.followUpRhythm.daysUntil,
+  });
   return {
     ...account,
     name: person.name,
@@ -815,6 +1030,7 @@ function mergeAccountWithPerson(
     lastTouchLabel,
     nextFollowUpLabel,
     touchpointSummary: `${segmentLabel[segment]} touchpoints · ${nextFollowUpLabel} · ${lastTouchLabel}${person.sourceContext ? ` · ${person.sourceContext}` : ""}`,
+    followUpRhythm,
   };
 }
 
@@ -873,6 +1089,18 @@ function accountActivitySummary(
     icon: "i-bulb",
     level: "far" as const,
   };
+}
+
+function rhythmColor(status: RemasterDashboardAccount["followUpRhythm"]["status"]): string {
+  return rhythmTone[status];
+}
+
+function rhythmBorderColor(status: RemasterDashboardAccount["followUpRhythm"]["status"]): string {
+  if (status === "overdue") return "rgba(213, 92, 92, 0.3)";
+  if (status === "today") return "rgba(135, 80, 180, 0.26)";
+  if (status === "this_week") return "rgba(204, 120, 153, 0.3)";
+  if (status === "unscheduled") return "rgba(217, 138, 78, 0.26)";
+  return "rgba(239, 224, 218, 0.92)";
 }
 
 function secondaryAccountLabel(account: RemasterDashboardAccount) {
